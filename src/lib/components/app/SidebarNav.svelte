@@ -49,7 +49,7 @@
 </script>
 
 <nav class="sidebar-nav" class:collapsed aria-label="Main navigation">
-  {#each navItems as item, i (item.view)}
+  {#each navItems as item (item.view)}
     <SidebarItemButton
       label={labels[item.labelKey]}
       icon={item.icon}
