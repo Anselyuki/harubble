@@ -86,7 +86,7 @@ fn select_accent_color(image: &RgbaImage) -> Option<[u8; 3]> {
 
         let (_, saturation, lightness) = rgb_to_hsl(rgb);
         let luminance = relative_luminance(rgb);
-        if saturation < 0.16 || luminance < 0.06 || luminance > 0.94 {
+        if saturation < 0.16 || !(0.06..=0.94).contains(&luminance) {
             continue;
         }
 
@@ -119,7 +119,7 @@ fn normalize_accent(rgb: [u8; 3]) -> [u8; 3] {
     } else {
         hsl_to_rgb(
             hue,
-            saturation.max(0.42).min(0.8),
+            saturation.clamp(0.42, 0.8),
             lightness.clamp(0.32, 0.54),
         )
     };

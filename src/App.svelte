@@ -11,8 +11,99 @@
   import TagEditorView from '$lib/components/app/TagEditorView.svelte';
   import CollectionDetailPanel from '$lib/components/app/CollectionDetailPanel.svelte';
   import CollectionFormDialog from '$lib/components/app/CollectionFormDialog.svelte';
+  import AlbumOverview from '$lib/components/app/AlbumOverview.svelte';
+  import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
+  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+
+  import {
+    createSidebarAnimator,
+    type SidebarAnimator,
+  } from '$lib/design/sidebar-animator';
 
   const runtime = createAppRuntime();
+
+  let animator: SidebarAnimator | null = null;
+  let logoCharEls: HTMLSpanElement[] = $state([]);
+  let shellEl: HTMLElement | null = $state(null);
+  let sidebarEl: HTMLElement | null = $state(null);
+  let navRegionEl: HTMLElement | null = $state(null);
+  let collectionsRegionEl: HTMLElement | null = $state(null);
+  let collectionsCollapsedEl: HTMLElement | null = $state(null);
+  let bottomLabelEl: HTMLSpanElement | null = $state(null);
+  let logoContainerEl: HTMLDivElement | null = $state(null);
+
+  let contentCollapsed = $state(runtime.sidebarCollapsed);
+  let contentInteractive = $state(!runtime.sidebarCollapsed);
+  let layoutCollapsed = $state(runtime.sidebarCollapsed);
+
+  function handleCharsReady(els: HTMLSpanElement[]) {
+    logoCharEls = els;
+  }
+
+  function onContentInteractive(interactive: boolean) {
+    contentInteractive = interactive;
+  }
+  function onContentSwitch(collapsed: boolean) {
+    contentCollapsed = collapsed;
+  }
+  function onLayoutSwitch(collapsed: boolean) {
+    layoutCollapsed = collapsed;
+  }
+
+  /* eslint-disable @typescript-eslint/no-unnecessary-condition -- $state(null) refs are populated by bind:this at runtime */
+  $effect(() => {
+    if (
+      shellEl &&
+      sidebarEl &&
+      logoContainerEl &&
+      bottomLabelEl &&
+      navRegionEl &&
+      collectionsRegionEl &&
+      collectionsCollapsedEl &&
+      logoCharEls.length === 12
+    ) {
+      if (animator) return;
+      animator = createSidebarAnimator({
+        shellEl,
+        sidebarEl,
+        logoCharEls,
+        logoContainerEl,
+        navRegionEl,
+        collectionsRegionEl,
+        collectionsCollapsedEl,
+        bottomLabelEl,
+        initialCollapsed: runtime.sidebarCollapsed,
+        onContentInteractive,
+        onContentSwitch,
+        onLayoutSwitch,
+      });
+    }
+  });
+  /* eslint-enable @typescript-eslint/no-unnecessary-condition */
+
+  let prevCollapsed: boolean | null = null;
+  $effect(() => {
+    const curr = runtime.sidebarCollapsed;
+    if (!animator) return;
+    if (prevCollapsed === null) {
+      prevCollapsed = curr;
+      return;
+    }
+    if (curr === prevCollapsed) return;
+    prevCollapsed = curr;
+    if (curr) {
+      animator.collapse();
+    } else {
+      animator.expand();
+    }
+  });
+
+  $effect(() => {
+    return () => {
+      animator?.dispose();
+      animator = null;
+    };
+  });
 </script>
 
 {#if runtime.isMacOS}
@@ -25,33 +116,49 @@
 
 <StatusToastHost />
 
-<div class="app-shell" class:macos-overlay={runtime.isMacOS}>
+<div
+  class="app-shell"
+  class:macos-overlay={runtime.isMacOS}
+  bind:this={shellEl}
+>
   <AppSidebar
     isMacOS={runtime.isMacOS}
     currentView={runtime.currentView}
-    searchQuery={runtime.librarySearchQuery}
+    {contentCollapsed}
+    {contentInteractive}
+    {layoutCollapsed}
     onNavigate={(view) => {
       runtime.shellStore.currentView = view;
     }}
-    onSearchQueryChange={runtime.libraryController.setSearchQuery}
-    albums={runtime.albums}
-    selectedAlbumCid={runtime.selectedAlbumCid}
-    reducedMotion={runtime.prefersReducedMotion}
-    loadingAlbums={runtime.loadingAlbums}
-    errorMsg={runtime.errorMsg}
-    searchScope={runtime.librarySearchScope}
-    searchLoading={runtime.librarySearchLoading}
-    searchResponse={runtime.librarySearchResponse}
-    onSearchScopeChange={runtime.libraryController.setSearchScope}
-    onSelectAlbum={runtime.handleSelectAlbum}
-    onSelectSearchResult={runtime.handleSelectSearchResult}
     collections={runtime.collectionController.collections}
     selectedCollectionId={runtime.collectionController.selectedCollectionId}
-    collectionsLoading={runtime.collectionController.isLoading}
-    onCollectionSelect={runtime.collectionController.selectCollection}
-    onCollectionCreate={runtime.collectionController.openCreateDialog}
-    onCollectionImport={runtime.collectionController.handleImport}
+    isCollectionsLoading={runtime.collectionController.isLoading}
+    onSelectCollection={runtime.collectionController.selectCollection}
+    onCreateCollection={runtime.collectionController.openCreateDialog}
+    onRequestExpand={runtime.toggleSidebar}
+    bind:sidebarEl
+    bind:navRegionEl
+    bind:collectionsRegionEl
+    bind:collectionsCollapsedEl
+    bind:bottomLabelEl
+    bind:logoContainerEl
+    onCharsReady={handleCharsReady}
   />
+
+  <button
+    type="button"
+    class="sidebar-toggle-btn"
+    onclick={runtime.toggleSidebar}
+    aria-label={runtime.sidebarCollapsed
+      ? 'Expand sidebar'
+      : 'Collapse sidebar'}
+  >
+    {#if runtime.sidebarCollapsed}
+      <ChevronRightIcon size={14} />
+    {:else}
+      <ChevronLeftIcon size={14} />
+    {/if}
+  </button>
 
   <section class="main-region">
     {#if runtime.isMacOS}
@@ -67,9 +174,17 @@
       isRefreshing={runtime.isRefreshing}
       settingsOpen={runtime.settingsOpen}
       downloadPanelOpen={runtime.downloadPanelOpen}
+      searchQuery={runtime.librarySearchQuery}
+      searchScope={runtime.librarySearchScope}
+      currentView={runtime.currentView}
       onRefresh={runtime.handleRefresh}
       onOpenDownloads={runtime.handleToggleDownloads}
       onOpenSettings={runtime.handleToggleSettings}
+      onSearchQueryChange={runtime.libraryController.setSearchQuery}
+      onSearchScopeChange={runtime.libraryController.setSearchScope}
+      onNavigate={(view) => {
+        runtime.shellStore.currentView = view;
+      }}
     />
 
     {#if runtime.currentView === 'home'}
@@ -100,6 +215,17 @@
         collections={runtime.collectionController.collections}
         onAddToCollection={(colId, songCid) =>
           runtime.collectionController.handleAddSongs(colId, [songCid])}
+      />
+    {:else if runtime.currentView === 'overview'}
+      <AlbumOverview
+        albums={runtime.albums}
+        selectedAlbumCid={runtime.selectedAlbumCid}
+        reducedMotion={runtime.prefersReducedMotion}
+        searchQuery={runtime.librarySearchQuery}
+        searchLoading={runtime.librarySearchLoading}
+        searchResponse={runtime.librarySearchResponse}
+        onSelectAlbum={runtime.handleSelectAlbum}
+        onSelectSearchResult={runtime.handleSelectSearchResult}
       />
     {:else}
       <LibraryView {runtime} />

@@ -17,11 +17,10 @@ fn migrate_legacy_app_data(app_data_dir: &Path) {
         .map(|p| p.join("com.siren.music-download"));
 
     if let Some(old_dir) = old_app_data_dir {
-        if old_dir.is_dir() && !app_data_dir.exists() {
-            if fs::rename(&old_dir, app_data_dir).is_ok() {
-                rename_db_in_dir(app_data_dir);
-                return;
-            }
+        if old_dir.is_dir() && !app_data_dir.exists() && fs::rename(&old_dir, app_data_dir).is_ok()
+        {
+            rename_db_in_dir(app_data_dir);
+            return;
         }
     }
 

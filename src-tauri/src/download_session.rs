@@ -151,8 +151,9 @@ impl DownloadSessionStore {
             .and_then(|_| temp_file.as_file().sync_all())
             .map_err(|error| error.to_string())?;
 
-        temp_file.persist(&self.path).map_err(|error| match error {
-            tempfile::PersistError { error, .. } => error.to_string(),
+        temp_file.persist(&self.path).map_err(|error| {
+            let tempfile::PersistError { error, .. } = error;
+            error.to_string()
         })?;
 
         Ok(())

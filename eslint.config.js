@@ -78,6 +78,7 @@ export default [
       'build/**',
       '.claude/**',
       'src/lib/paraglide/**',
+      'src/paraglide/**',
     ],
   },
   {

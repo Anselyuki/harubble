@@ -10,9 +10,58 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: 检测变更类型
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 检测文件变更
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'src/**'
+              - 'src-tauri/**'
+              - 'crates/**'
+              - 'scripts/**'
+              - 'package.json'
+              - 'bun.lockb'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '**/*.config.*'
+              - '.github/**'
+              - 'project.inlang/**'
+              - '!project.inlang/README.md'
+
+  docs-lint:
+    name: docs-lint
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: 检查文档格式
+        run: bunx prettier --check "**/*.md"
+
   quality:
     name: quality
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
 
     steps:
       - name: Checkout repository
@@ -48,7 +97,8 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    needs: quality
+    needs: [changes, quality]
+    if: needs.changes.outputs.code == 'true'
 
     steps:
       - name: Checkout repository

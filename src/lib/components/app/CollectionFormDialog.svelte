@@ -81,14 +81,14 @@
         />
       </label>
     </div>
-    <Dialog.Footer>
+    <div class="form-actions">
       <Button variant="outline" onclick={onClose} disabled={submitting}>
         取消
       </Button>
       <Button onclick={handleSubmit} disabled={!isValid || submitting}>
         {submitLabel}
       </Button>
-    </Dialog.Footer>
+    </div>
   </Dialog.Content>
 </Dialog.Root>
 
@@ -108,5 +108,12 @@
     font-size: 13px;
     font-weight: 500;
     color: var(--text-secondary);
+  }
+
+  .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding-top: 8px;
   }
 </style>

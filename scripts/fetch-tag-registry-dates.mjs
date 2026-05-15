@@ -24,7 +24,7 @@ function extractCore(name) {
 function normalizeForMatch(name) {
   return name
     .replace(/\s+/g, '')
-    .replace(/[·・\-]/g, '')
+    .replace(/[·・-]/g, '')
     .toLowerCase();
 }
 

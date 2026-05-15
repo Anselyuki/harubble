@@ -14,6 +14,7 @@ pub trait PlaybackBackend: Send {
     fn negotiate_output_format(&self, source_format: AudioFormat) -> Result<AudioFormat>;
 
     /// 启动音频播放流。
+    #[allow(clippy::too_many_arguments)]
     fn play_stream(
         &mut self,
         format: AudioFormat,

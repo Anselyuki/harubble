@@ -488,6 +488,7 @@ impl DownloadService {
     ///
     /// 调用方可按需传入进度、输出路径或错误信息；对于已经进入终态的任务，若尝试
     /// 切换到其他状态会返回 `None`，以避免状态回退破坏不变量。
+    #[allow(clippy::too_many_arguments)]
     pub fn update_task_state(
         &mut self,
         job_id: &str,
@@ -625,6 +626,7 @@ fn validate_request(request: &CreateDownloadJobRequest) -> Result<(), DownloadSe
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_task(
     id_generator: &IdGenerator,
     job_id: &str,
@@ -896,7 +898,7 @@ mod tests {
         assert!(matches!(task.format, OutputFormat::Mp3));
         assert!(!task.download_lyrics);
         assert_eq!(
-            task.output_path.as_ref().map(|p| Path::new(p)),
+            task.output_path.as_ref().map(Path::new),
             Some(Path::new("/tmp/Album/Song.flac"))
         );
     }
@@ -939,7 +941,7 @@ mod tests {
             service.state.jobs[0].tasks[0]
                 .output_path
                 .as_ref()
-                .map(|p| Path::new(p)),
+                .map(Path::new),
             Some(Path::new("/tmp/root/Album/Song.flac"))
         );
     }

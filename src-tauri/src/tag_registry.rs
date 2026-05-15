@@ -247,25 +247,6 @@ impl TagRegistryService {
         }
     }
 
-    /// 获取所有 tag 维度，按指定 locale 解析展示名。
-    ///
-    /// 返回值顺序与注册表中 `tagDimensions` 数组顺序一致。
-    ///
-    /// # 参数
-    ///
-    /// - `locale`：目标语种，解析时按 locale → zh-CN → en-US → 第一个可用项的顺序回退。
-    pub(crate) fn get_dimensions(&self, locale: Locale) -> Vec<TagDimensionResolved> {
-        let registry = self.registry.read().expect("tag registry RwLock poisoned");
-        registry
-            .tag_dimensions
-            .iter()
-            .map(|dim| TagDimensionResolved {
-                key: dim.key.clone(),
-                label: resolve_locale_str(&dim.label, locale),
-            })
-            .collect()
-    }
-
     /// 获取适用于专辑粒度的 tag 维度，过滤掉 `scope = "song"` 的维度。
     ///
     /// 用于主页按维度分组浏览专辑的场景，避免展示仅适用于单曲的维度（如 "event"）。
@@ -891,17 +872,6 @@ mod tests {
             song_index: Arc::new(RwLock::new(song_index)),
             cache_path: PathBuf::from("/tmp/test_tag_registry.json"),
         }
-    }
-
-    #[test]
-    fn get_dimensions_returns_localized_labels() {
-        let svc = make_service_with(make_registry());
-        let dims = svc.get_dimensions(Locale::ZhCN);
-        assert_eq!(dims.len(), 2);
-        assert_eq!(dims[0].key, "faction");
-        assert_eq!(dims[0].label, "阵营");
-        assert_eq!(dims[1].key, "character");
-        assert_eq!(dims[1].label, "角色");
     }
 
     #[test]

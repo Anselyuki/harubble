@@ -16,7 +16,7 @@ const ALLOWED_HOSTS: &[&str] = &[
 const ALLOWED_SUFFIXES: &[&str] = &[".hycdn.cn", ".hypergryph.com"];
 
 fn is_host_allowed(host: &str) -> bool {
-    ALLOWED_HOSTS.iter().any(|&h| host == h)
+    ALLOWED_HOSTS.contains(&host)
         || ALLOWED_SUFFIXES
             .iter()
             .any(|&suffix| host.ends_with(suffix))

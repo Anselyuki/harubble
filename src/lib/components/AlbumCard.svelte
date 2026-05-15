@@ -8,6 +8,7 @@
 
   interface Props {
     album: Album;
+    layout?: 'list' | 'grid';
     selected?: boolean;
     reducedMotion?: boolean;
     onclick?: () => void;
@@ -15,6 +16,7 @@
 
   let {
     album,
+    layout = 'list',
     selected = false,
     reducedMotion = false,
     onclick,
@@ -34,7 +36,7 @@
 
 <button
   type="button"
-  class={`album-card${selected ? ' selected' : ''}${reducedMotion ? ' is-reduced-motion' : ''}`}
+  class={`album-card album-card--${layout}${selected ? ' selected' : ''}${reducedMotion ? ' is-reduced-motion' : ''}`}
   onclick={handleActivate}
 >
   <div
@@ -210,5 +212,55 @@
     color: var(--accent);
     background: rgba(var(--accent-rgb), 0.1);
     border: 1px solid rgba(var(--accent-rgb), 0.12);
+  }
+
+  /* ── Grid layout variant ── */
+
+  :global(.album-card.album-card--grid) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px;
+    margin-bottom: 0;
+  }
+
+  :global(.album-card.album-card--grid) .album-cover-wrapper {
+    width: 100%;
+    height: 0;
+    padding-bottom: 100%;
+    border-radius: 12px;
+  }
+
+  :global(.album-card.album-card--grid) .album-cover-placeholder {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 28px;
+  }
+
+  :global(.album-card.album-card--grid) .album-info {
+    padding: 0 4px 4px;
+  }
+
+  :global(.album-card.album-card--grid) .album-name {
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  :global(.album-card.album-card--grid) .album-artists {
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  :global(.album-card.album-card--grid) .album-download-badge {
+    margin-top: 4px;
+  }
+
+  :global(
+    .album-card.album-card--grid:hover:not(.selected):not(.is-reduced-motion)
+  ) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
   }
 </style>

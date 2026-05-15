@@ -87,6 +87,7 @@ impl PlaybackInput {
     ///
     /// `source_format` 为探测得到的源格式，`target_format` 为输出后端协商后的目标格式。
     /// 返回的线程句柄会在内部持续写入 `sample_buffer`，直到解码结束、出错或收到停止信号。
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_decode_worker(
         &self,
         source_format: AudioFormat,
@@ -264,31 +265,29 @@ impl Read for GrowingFileReader {
             return Ok(0);
         }
 
-        loop {
-            let (lock, condvar) = &*self.state;
-            let mut state = lock.lock().unwrap();
+        let (lock, condvar) = &*self.state;
+        let mut state = lock.lock().unwrap();
 
-            while self.position >= state.available_len && !state.complete && state.error.is_none() {
-                state = condvar.wait(state).unwrap();
-            }
-
-            if let Some(error) = &state.error {
-                return Err(io::Error::new(io::ErrorKind::Other, error.clone()));
-            }
-
-            if self.position >= state.available_len {
-                return Ok(0);
-            }
-
-            let available = (state.available_len - self.position) as usize;
-            drop(state);
-
-            let read_len = available.min(buf.len());
-            self.file.seek(SeekFrom::Start(self.position))?;
-            let written = self.file.read(&mut buf[..read_len])?;
-            self.position += written as u64;
-            return Ok(written);
+        while self.position >= state.available_len && !state.complete && state.error.is_none() {
+            state = condvar.wait(state).unwrap();
         }
+
+        if let Some(error) = &state.error {
+            return Err(io::Error::other(error.clone()));
+        }
+
+        if self.position >= state.available_len {
+            return Ok(0);
+        }
+
+        let available = (state.available_len - self.position) as usize;
+        drop(state);
+
+        let read_len = available.min(buf.len());
+        self.file.seek(SeekFrom::Start(self.position))?;
+        let written = self.file.read(&mut buf[..read_len])?;
+        self.position += written as u64;
+        Ok(written)
     }
 }
 
@@ -301,7 +300,7 @@ impl Seek for GrowingFileReader {
                 let (lock, _) = &*self.state;
                 let state = lock.lock().unwrap();
                 if let Some(error) = &state.error {
-                    return Err(io::Error::new(io::ErrorKind::Other, error.clone()));
+                    return Err(io::Error::other(error.clone()));
                 }
                 let end = state.expected_total_len.unwrap_or(state.available_len);
                 end as i128 + offset as i128
@@ -497,6 +496,7 @@ pub fn inspect_audio_reader(reader: BoxedAudioReader, hint: Hint) -> Result<Audi
     Ok(open_audio_reader(reader, hint)?.audio_format)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_decode_worker(
     reader: BoxedAudioReader,
     hint: Hint,
@@ -561,7 +561,7 @@ fn spawn_decode_worker(
                             let channels = audio_buf.spec().channels.count();
                             if decoded_samples
                                 .as_ref()
-                                .map_or(true, |buffer| buffer.capacity() < required_samples)
+                                .is_none_or(|buffer| buffer.capacity() < required_samples)
                             {
                                 decoded_samples = Some(SymphoniaSampleBuffer::<f32>::new(
                                     audio_buf.capacity() as u64,

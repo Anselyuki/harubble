@@ -623,6 +623,7 @@ fn score_text_match(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn score_compact_match(
     full_value: Option<&str>,
     initials_value: Option<&str>,

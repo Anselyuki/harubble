@@ -665,7 +665,7 @@ mod tests {
         let s1_tags = songs_to_tag_map(&local.songs);
         assert!(s1_tags
             .get("S1")
-            .map_or(true, |ts| !ts.tags.contains_key("mood")));
+            .is_none_or(|ts| !ts.tags.contains_key("mood")));
     }
     #[test]
     fn compute_merged_combines_remote_and_local() {

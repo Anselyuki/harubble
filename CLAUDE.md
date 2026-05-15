@@ -65,7 +65,13 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - UI 展示组件不要直接调用 `invoke` / `listen`；统一走 bridge、controller 或具备明确边界的 shell 层
 - 组件的 `font-family` 统一通过 `--font-body` / `--font-display` / `--font-mono` CSS 变量引用，不直接硬编码字体名；字体方案详见 `docs/reference/frontend-guide.md` 的「字体方案」小节
 - 如果改了歌词、下载设置或播放器交互，同时检查 `src/App.svelte` 和 `src/lib/components/AudioPlayer.svelte` 的状态同步
-- **动画编排**：当前所有动画均使用 CSS transitions / CSS @keyframes / Svelte 内置 `transition:fade|fly` 实现。如果后续需要更复杂的编排能力（stagger 序列、layout animation、shared element transition），可考虑引入 `@humanspeak/svelte-motion` 或同类库；遇到此类需求时应主动向用户提供"纯 CSS/Svelte 方案"与"引入动画库方案"的对比选项，由用户决定取舍
+- **动画编排**：复杂动画编排（stagger 序列、layout animation、FLIP）使用 GSAP，适配层位于 `src/lib/design/gsap.ts`；简单的状态过渡仍可使用 CSS transitions 或 Svelte 内置 transition
+- **动画曲线**：所有 GSAP 动画统一使用 iOS 风格的缓动曲线（已在 `src/lib/design/gsap.ts` 中注册为 CustomEase）：
+  - `ios`：标准 ease-in-out（`0.25, 0.1, 0.25, 1.0`）
+  - `ios-in`：ease-in（`0.42, 0, 1, 1`）
+  - `ios-out`：ease-out（`0, 0, 0.58, 1`）
+  - `ios-spring`：弹性出场（`0.22, 0.61, 0.36, 1`），用于主要的位移和布局动画
+  - 不要使用 GSAP 内置的 `power2.out` / `power3.out` 等曲线，统一使用上述 iOS 曲线
 
 ### 后端与文档
 

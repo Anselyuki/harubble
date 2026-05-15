@@ -451,9 +451,7 @@ fn next_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        append_json_line, read_records, FrontendExposure, LogFileKind, LogLevel, LogViewerQuery,
-    };
+    use super::{append_json_line, read_records, FrontendExposure, LogLevel};
     use serde_json::json;
     use tempfile::tempdir;
 

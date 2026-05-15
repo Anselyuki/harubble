@@ -395,17 +395,18 @@ img[data-image-state='error'] {
 /* 主容器 */
 .app-shell {
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: var(--sidebar-width, 248px) 1fr;
   width: 100vw;
   height: 100vh;
   gap: 0;
+  overflow: hidden;
   background: var(--bg-primary);
 }
 
 /* 侧边栏 */
 .sidebar {
   position: relative;
-  width: 248px;
+  width: var(--sidebar-width, 248px);
   min-width: 0;
   background:
     linear-gradient(180deg, var(--surface-tint-strong) 0%, transparent 40%),
@@ -415,6 +416,38 @@ img[data-image-state='error'] {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.sidebar-toggle-btn {
+  position: absolute;
+  left: var(--sidebar-width, 248px);
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.sidebar-toggle-btn:hover {
+  background: var(--hover-bg-elevated);
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-toggle-btn {
+    transition: none;
+  }
 }
 
 .section-title {
@@ -846,14 +879,24 @@ img[data-image-state='error'] {
 .top-actions {
   position: fixed;
   top: 16px;
+  left: 16px;
   right: 16px;
   z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.top-actions > * {
+  pointer-events: auto;
 }
 
 .macos-window-drag-region {
   position: fixed;
   top: 0;
-  left: 0;
+  left: var(--sidebar-width, 248px);
   right: 0;
   height: 56px;
   z-index: 90;
@@ -1016,6 +1059,7 @@ img[data-image-state='error'] {
 @media (max-width: 900px) {
   .top-actions {
     top: 12px;
+    left: 12px;
     right: 12px;
   }
 
@@ -2239,8 +2283,18 @@ img[data-image-state='error'] {
 .top-actions {
   position: absolute;
   top: 18px;
+  left: 18px;
   right: 18px;
   z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.top-actions > * {
+  pointer-events: auto;
 }
 
 .top-toolbar {
@@ -2533,6 +2587,7 @@ img[data-image-state='error'] {
 @media (max-width: 900px) {
   .top-actions {
     top: 12px;
+    left: 12px;
     right: 12px;
   }
 

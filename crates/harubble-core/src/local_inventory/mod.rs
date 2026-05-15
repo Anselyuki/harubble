@@ -304,17 +304,11 @@ pub fn aggregate_album_download_badge(
         return missing_album_badge(inventory_version);
     }
 
-    if statuses
-        .iter()
-        .any(|status| *status == LocalTrackDownloadStatus::Mismatch)
-    {
+    if statuses.contains(&LocalTrackDownloadStatus::Mismatch) {
         return album_badge_for_status(LocalTrackDownloadStatus::Mismatch, inventory_version);
     }
 
-    if statuses
-        .iter()
-        .any(|status| *status == LocalTrackDownloadStatus::Partial)
-    {
+    if statuses.contains(&LocalTrackDownloadStatus::Partial) {
         return album_badge_for_status(LocalTrackDownloadStatus::Partial, inventory_version);
     }
 
@@ -324,10 +318,7 @@ pub fn aggregate_album_download_badge(
         .count();
 
     if downloaded_count == 0 {
-        if statuses
-            .iter()
-            .any(|status| *status == LocalTrackDownloadStatus::Unknown)
-        {
+        if statuses.contains(&LocalTrackDownloadStatus::Unknown) {
             return album_badge_for_status(LocalTrackDownloadStatus::Unknown, inventory_version);
         }
         return missing_album_badge(inventory_version);
@@ -344,17 +335,11 @@ pub fn aggregate_album_download_badge(
         return album_badge_for_status(LocalTrackDownloadStatus::Verified, inventory_version);
     }
 
-    if statuses
-        .iter()
-        .any(|status| *status == LocalTrackDownloadStatus::Unverifiable)
-    {
+    if statuses.contains(&LocalTrackDownloadStatus::Unverifiable) {
         return album_badge_for_status(LocalTrackDownloadStatus::Unverifiable, inventory_version);
     }
 
-    if statuses
-        .iter()
-        .any(|status| *status == LocalTrackDownloadStatus::Detected)
-    {
+    if statuses.contains(&LocalTrackDownloadStatus::Detected) {
         return album_badge_for_status(LocalTrackDownloadStatus::Detected, inventory_version);
     }
 

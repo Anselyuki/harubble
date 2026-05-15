@@ -5,18 +5,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// 应用支持的界面语言
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Locale {
+    #[default]
     #[serde(rename = "zh-CN")]
     ZhCN,
     #[serde(rename = "en-US")]
     EnUS,
-}
-
-impl Default for Locale {
-    fn default() -> Self {
-        Self::ZhCN
-    }
 }
 
 /// 统一应用偏好模型（TOML 序列化格式：camelCase 字段名）

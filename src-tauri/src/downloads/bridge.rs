@@ -313,7 +313,7 @@ async fn run_download_phase(
     service: &Arc<tokio::sync::Mutex<harubble_core::DownloadService>>,
     api: &Arc<harubble_core::ApiClient>,
     task: &InternalDownloadTask,
-    out_dir: &PathBuf,
+    out_dir: &Path,
     cancellation_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<WritePayload, TaskExecutionResult> {
     let service_for_progress = Arc::clone(service);

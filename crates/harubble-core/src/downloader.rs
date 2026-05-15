@@ -320,6 +320,7 @@ pub async fn download_album_cover(
 ///
 /// 这是一个便捷封装：它会顺序执行下载阶段 helper 与 [`write_payload_to_disk`]。
 /// 如果需要流水线式执行，请分别调用这两个阶段。
+#[allow(clippy::too_many_arguments)]
 pub async fn download_song(
     client: &ApiClient,
     song: &SongDetail,
@@ -355,6 +356,7 @@ pub async fn download_song(
 ///
 /// 该函数只执行网络相关 I/O，不触碰本地文件系统；返回的载荷可以交给独立的
 /// 写入线程或阻塞任务去执行 [`write_payload_to_disk`]。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn download_song_payload(
     client: &ApiClient,
     song: &SongDetail,

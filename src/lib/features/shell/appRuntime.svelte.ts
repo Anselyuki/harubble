@@ -61,6 +61,7 @@ import type {
   AppErrorEvent,
   LogLevel,
   SearchLibraryResultItem,
+  ThemePalette,
 } from '$lib/types';
 import { applyThemePalette, DEFAULT_THEME_PALETTE } from '$lib/theme';
 import { envStore } from '$lib/features/env/store.svelte';
@@ -331,6 +332,7 @@ export function createAppRuntime() {
   let selectedAlbumArtworkUrl = $state<string | null>(null);
   let albumStageElement = $state<HTMLElement | null>(null);
   let activeThemeArtworkUrl: string | null = null;
+  let cachedAlbumPalette = $state<ThemePalette | null>(null);
   let activeAlbumStageArtworkUrl: string | null = null;
   const lastObservedSettings = {
     format: settingsState.format,
@@ -602,7 +604,7 @@ export function createAppRuntime() {
     const paletteRequestSeq = ++themeRequestSeq;
 
     if (!artworkUrl) {
-      applyThemePalette(DEFAULT_THEME_PALETTE);
+      cachedAlbumPalette = null;
       return;
     }
 
@@ -610,12 +612,22 @@ export function createAppRuntime() {
       try {
         const palette = await extractImageTheme(artworkUrl);
         if (paletteRequestSeq !== themeRequestSeq) return;
-        applyThemePalette(palette);
+        cachedAlbumPalette = palette;
       } catch {
         if (paletteRequestSeq !== themeRequestSeq) return;
-        applyThemePalette(DEFAULT_THEME_PALETTE);
+        cachedAlbumPalette = null;
       }
     })();
+  });
+
+  $effect(() => {
+    const shouldApplyAlbumTheme =
+      shellStore.currentView === 'library' || fullscreenOpen;
+    if (shouldApplyAlbumTheme && cachedAlbumPalette) {
+      applyThemePalette(cachedAlbumPalette);
+    } else {
+      applyThemePalette(DEFAULT_THEME_PALETTE);
+    }
   });
 
   $effect(() => {
@@ -1238,6 +1250,12 @@ export function createAppRuntime() {
       return currentSong
         ? downloadController.isSongDownloadInteractionBlocked(currentSong.cid)
         : false;
+    },
+    get sidebarCollapsed() {
+      return shellStore.sidebarCollapsed;
+    },
+    toggleSidebar() {
+      shellStore.toggleSidebar();
     },
     settingsState,
     shellStore,
