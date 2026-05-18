@@ -223,3 +223,111 @@
     </svg>
   </button>
 </div>
+
+<style>
+  .volume-capsule {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: var(--control-button-size, 34px);
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    z-index: 20;
+    white-space: nowrap;
+  }
+
+  .capsule-value {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-subtle);
+    width: 3.5ch;
+    text-align: right;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .capsule-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    min-width: 0;
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(
+      to right,
+      var(--icon-active) 0%,
+      var(--icon-active) var(--volume-percent),
+      var(--surface-highlight, rgba(120, 120, 128, 0.28)) var(--volume-percent),
+      var(--surface-highlight, rgba(120, 120, 128, 0.28)) 100%
+    );
+    outline: none;
+    cursor: pointer;
+    transition: opacity 150ms ease;
+  }
+
+  .capsule-slider.muted-slider {
+    opacity: 0.4;
+  }
+
+  .capsule-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--thumb-bg);
+    border: 1.5px solid var(--thumb-border);
+    box-shadow: 0 1px 3px var(--thumb-shadow);
+    cursor: pointer;
+  }
+
+  .capsule-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--thumb-bg);
+    border: 1.5px solid var(--thumb-border);
+    box-shadow: 0 1px 3px var(--thumb-shadow);
+    cursor: pointer;
+  }
+
+  .capsule-mute {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    padding: 4px;
+    border-radius: 50%;
+    color: var(--icon-default);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    transition:
+      color 150ms ease,
+      background-color 150ms ease;
+  }
+
+  .capsule-mute:hover {
+    color: var(--icon-active);
+    background: rgba(var(--accent-rgb), 0.08);
+  }
+
+  .capsule-icon {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.85;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+</style>
