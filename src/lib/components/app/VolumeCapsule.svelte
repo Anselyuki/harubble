@@ -205,10 +205,16 @@
     gap: 8px;
     padding: 0 calc(var(--control-button-size, 34px) + 4px) 0 12px;
     border-radius: 999px;
-    background: var(--player-shell-bg, var(--surface));
+    background: #ffffff;
     border: 1px solid var(--surface-border);
     z-index: 10;
     white-space: nowrap;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .volume-capsule {
+      background: #1c1c1e;
+    }
   }
 
   .capsule-value {
