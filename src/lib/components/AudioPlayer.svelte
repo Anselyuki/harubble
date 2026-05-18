@@ -654,7 +654,6 @@
             {muted}
             {rightControlsRef}
             {onVolumeChange}
-            {onToggleMute}
             onClose={() => {
               capsuleVisible = false;
             }}
@@ -1322,5 +1321,7 @@
 
   .volume-toggle {
     flex-shrink: 0;
+    position: relative;
+    z-index: 15;
   }
 </style>

@@ -13,18 +13,11 @@
     muted: boolean;
     rightControlsRef: HTMLElement | null;
     onVolumeChange?: (gain: number) => void | Promise<void>;
-    onToggleMute?: () => void;
     onClose?: () => void;
   }
 
-  let {
-    volume,
-    muted,
-    rightControlsRef,
-    onVolumeChange,
-    onToggleMute,
-    onClose,
-  }: Props = $props();
+  let { volume, muted, rightControlsRef, onVolumeChange, onClose }: Props =
+    $props();
 
   let capsuleState = $state<CapsuleState>('closed');
   let capsuleRef = $state<HTMLElement | null>(null);
@@ -36,12 +29,6 @@
   let sliderPreview = $state<number | null>(null);
   const shownPos = $derived(sliderPreview ?? sliderPos);
   const displayPercent = $derived(muted ? 0 : Math.round(shownPos * 100));
-
-  const volumeIcon = $derived.by(() => {
-    if (muted || volume === 0) return 'muted' as const;
-    if (gainToSlider(volume) < 0.5) return 'low' as const;
-    return 'high' as const;
-  });
 
   function handleSliderInput(event: Event) {
     sliderPreview = Number((event.currentTarget as HTMLInputElement).value);
@@ -201,27 +188,6 @@
     style="--volume-percent:{shownPos * 100}%"
     class:muted-slider={muted}
   />
-  <button
-    type="button"
-    class="capsule-mute"
-    aria-label={muted ? m.player_aria_unmute() : m.player_aria_mute()}
-    onclick={() => onToggleMute?.()}
-  >
-    <svg class="capsule-icon" viewBox="0 0 24 24" aria-hidden="true">
-      {#if volumeIcon === 'muted'}
-        <path d="M11 5 6 9H2v6h4l5 4V5z"></path>
-        <line x1="23" y1="9" x2="17" y2="15"></line>
-        <line x1="17" y1="9" x2="23" y2="15"></line>
-      {:else if volumeIcon === 'low'}
-        <path d="M11 5 6 9H2v6h4l5 4V5z"></path>
-        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-      {:else}
-        <path d="M11 5 6 9H2v6h4l5 4V5z"></path>
-        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
-      {/if}
-    </svg>
-  </button>
 </div>
 
 <style>
@@ -237,11 +203,11 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 12px;
+    padding: 0 calc(var(--control-button-size, 34px) + 4px) 0 12px;
     border-radius: 999px;
-    background: var(--surface);
+    background: var(--player-shell-bg, var(--surface));
     border: 1px solid var(--surface-border);
-    z-index: 20;
+    z-index: 10;
     white-space: nowrap;
   }
 
@@ -298,36 +264,5 @@
     border: 1.5px solid var(--thumb-border);
     box-shadow: 0 1px 3px var(--thumb-shadow);
     cursor: pointer;
-  }
-
-  .capsule-mute {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    padding: 4px;
-    border-radius: 50%;
-    color: var(--icon-default);
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    transition:
-      color 150ms ease,
-      background-color 150ms ease;
-  }
-
-  .capsule-mute:hover {
-    color: var(--icon-active);
-    background: rgba(var(--accent-rgb), 0.08);
-  }
-
-  .capsule-icon {
-    width: 16px;
-    height: 16px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.85;
-    stroke-linecap: round;
-    stroke-linejoin: round;
   }
 </style>
