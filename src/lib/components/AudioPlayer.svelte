@@ -3,6 +3,7 @@
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import LyricsBubble from '$lib/components/app/LyricsBubble.svelte';
+  import VolumeCapsule from '$lib/components/app/VolumeCapsule.svelte';
   import type { LyricLine } from '$lib/features/player/lyrics';
   type RepeatMode = 'all' | 'one';
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
@@ -33,6 +34,10 @@
     playlistActive?: boolean;
     downloadState?: SongDownloadState;
     downloadDisabled?: boolean;
+    volume?: number;
+    muted?: boolean;
+    onVolumeChange?: (gain: number) => void | Promise<void>;
+    onToggleMute?: () => void;
     onPrevious?: () => void;
     onTogglePlay?: () => void;
     onSeek?: (positionSecs: number) => void | Promise<void>;
@@ -65,6 +70,10 @@
     playlistActive = false,
     downloadState = 'idle',
     downloadDisabled = false,
+    volume = 1,
+    muted = false,
+    onVolumeChange,
+    onToggleMute,
     onPrevious,
     onTogglePlay,
     onSeek,
@@ -195,6 +204,37 @@
       downloadState === 'idle' &&
       !downloadDisabled
   );
+  let capsuleComponent = $state<ReturnType<typeof VolumeCapsule> | null>(null);
+  let rightControlsRef = $state<HTMLElement | null>(null);
+  let capsuleVisible = $state(false);
+  let volumeGroupRef = $state<HTMLElement | null>(null);
+  function handleVolumeButtonClick() {
+    if (!capsuleVisible) {
+      capsuleVisible = true;
+    } else {
+      capsuleComponent?.toggle();
+    }
+  }
+  $effect(() => {
+    if (capsuleVisible && capsuleComponent) {
+      capsuleComponent.expand();
+    }
+  });
+  function handleVolumeGroupEnter() {
+    if (capsuleVisible && capsuleComponent) {
+      capsuleComponent.expand();
+    }
+  }
+  function handleVolumeGroupLeave() {
+    if (capsuleVisible && capsuleComponent) {
+      capsuleComponent.scheduleCollapse();
+    }
+  }
+  const volumeIcon = $derived.by(() => {
+    if (muted || volume === 0) return 'muted' as const;
+    if (volume < 0.25) return 'low' as const;
+    return 'high' as const;
+  });
   const remainingLabel = $derived.by(() =>
     duration > 0 ? `-${formatTime(remainingProgress)}` : '0:00'
   );
@@ -461,7 +501,12 @@
       </div>
     </div>
 
-    <div class="right-controls" role="group" aria-label={labels.ariaExtras}>
+    <div
+      class="right-controls"
+      role="group"
+      aria-label={labels.ariaExtras}
+      bind:this={rightControlsRef}
+    >
       <div
         class="time-readout"
         aria-label={m.player_aria_progress({
@@ -570,6 +615,52 @@
           </svg>
         {/if}
       </button>
+
+      <div
+        class="volume-group"
+        role="group"
+        aria-label={m.player_aria_volume()}
+        bind:this={volumeGroupRef}
+        onmouseenter={handleVolumeGroupEnter}
+        onmouseleave={handleVolumeGroupLeave}
+      >
+        <button
+          type="button"
+          class="icon-button volume-toggle"
+          aria-label={muted ? m.player_aria_unmute() : m.player_aria_mute()}
+          aria-expanded={capsuleVisible}
+          onclick={handleVolumeButtonClick}
+        >
+          <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true">
+            {#if volumeIcon === 'muted'}
+              <path d="M11 5 6 9H2v6h4l5 4V5z"></path>
+              <line x1="23" y1="9" x2="17" y2="15"></line>
+              <line x1="17" y1="9" x2="23" y2="15"></line>
+            {:else if volumeIcon === 'low'}
+              <path d="M11 5 6 9H2v6h4l5 4V5z"></path>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            {:else}
+              <path d="M11 5 6 9H2v6h4l5 4V5z"></path>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            {/if}
+          </svg>
+        </button>
+
+        {#if capsuleVisible}
+          <VolumeCapsule
+            bind:this={capsuleComponent}
+            {volume}
+            {muted}
+            {rightControlsRef}
+            {onVolumeChange}
+            {onToggleMute}
+            onClose={() => {
+              capsuleVisible = false;
+            }}
+          />
+        {/if}
+      </div>
     </div>
   </section>
 {/if}
@@ -1220,5 +1311,16 @@
       width: 100%;
       gap: 1px;
     }
+  }
+
+  .volume-group {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-right: 2px;
+  }
+
+  .volume-toggle {
+    flex-shrink: 0;
   }
 </style>
