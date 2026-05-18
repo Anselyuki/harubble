@@ -122,7 +122,7 @@
     if (capsuleState === 'closed' || capsuleState === 'collapsing') return;
     if (!capsuleRef) return;
 
-    const shrinkDuration = getMotionDuration(300);
+    const shrinkDuration = getMotionDuration(799);
 
     killTweens(capsuleRef);
     capsuleState = 'collapsing';
