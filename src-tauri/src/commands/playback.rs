@@ -102,7 +102,17 @@ pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerState, Strin
 /// 适用于音量滑杆提交、恢复用户偏好音量，或外部媒体控制同步音量场景。
 /// 入参 `volume` 预期为 `0.0..=1.0` 范围内的浮点值；返回值为经过裁剪后的实际音量。
 /// 该接口具备幂等性：传入相同有效音量时结果稳定；若传入越界值会被自动裁剪，调用方不应假设返回值一定等于原始输入。
+/// 音量变化会自动持久化到偏好文件，下次启动时恢复。
 #[tauri::command]
 pub fn set_playback_volume(state: State<'_, AppState>, volume: f64) -> Result<f64, String> {
-    Ok(state.player.set_volume(volume))
+    let actual = state.player.set_volume(volume);
+    let mut prefs = state.preferences();
+    if (prefs.volume - actual).abs() > 0.001 {
+        prefs.volume = actual;
+        let locale = prefs.locale;
+        let store = state.preferences_store();
+        let _ = store.save(&prefs, locale);
+        state.set_preferences(prefs);
+    }
+    Ok(actual)
 }

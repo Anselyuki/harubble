@@ -165,6 +165,7 @@ export interface ThemePalette {
   accentHoverHex: string;
   accentRgb: [number, number, number];
   accentHoverRgb: [number, number, number];
+  waveColors: [number, number, number][];
 }
 
 export type OutputFormat = 'flac' | 'wav' | 'mp3';
@@ -306,6 +307,7 @@ export interface AppPreferences {
   notifyOnPlaybackChange: boolean;
   logLevel: LogLevel;
   locale: Locale;
+  volume: number;
 }
 
 export type AppErrorLevel = 'warn' | 'error';

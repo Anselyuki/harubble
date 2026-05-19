@@ -7,6 +7,7 @@ export const DEFAULT_THEME_PALETTE: ThemePalette = {
   accentHoverHex: '#ff3b5c',
   accentRgb: [250, 45, 72],
   accentHoverRgb: [255, 59, 92],
+  waveColors: [[250, 45, 72]],
 };
 
 function toLinearRgbChannel(value: number): number {
@@ -79,7 +80,7 @@ export function applyThemePalette(
   palette: ThemePalette = DEFAULT_THEME_PALETTE
 ): void {
   const root = document.documentElement;
-  const nextValues = {
+  const nextValues: Record<string, string> = {
     '--accent': palette.accentHex,
     '--accent-hover': palette.accentHoverHex,
     '--accent-rgb': palette.accentRgb.join(', '),
@@ -91,6 +92,12 @@ export function applyThemePalette(
       palette.accentHoverRgb
     ),
   };
+
+  const colors = palette.waveColors ?? [palette.accentRgb];
+  for (let i = 0; i < 4; i++) {
+    const rgb = colors[i % colors.length];
+    nextValues[`--wave-color-${i}`] = `${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
+  }
 
   for (const [property, value] of Object.entries(nextValues)) {
     if (root.style.getPropertyValue(property) !== value) {

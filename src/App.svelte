@@ -253,6 +253,10 @@
       playbackOrder={runtime.playbackOrder}
       downloadState={runtime.currentSongDownloadState}
       downloadDisabled={runtime.currentSongDownloadDisabled}
+      volume={runtime.playerController.volume}
+      muted={runtime.playerController.muted}
+      onVolumeChange={runtime.playerController.setVolume}
+      onToggleMute={runtime.playerController.toggleMute}
       onPrevious={runtime.playerController.playPrevious}
       onTogglePlay={runtime.isPlaying
         ? runtime.playerController.pause
@@ -296,6 +300,9 @@
         onDownload={runtime.handleCurrentSongDownload}
         downloadState={runtime.currentSongDownloadState}
         downloadDisabled={runtime.currentSongDownloadDisabled}
+        volume={runtime.playerController.volume}
+        onVolumeChange={runtime.playerController.setVolume}
+        onToggleMute={runtime.playerController.toggleMute}
         onClose={runtime.playerController.toggleFullscreen}
       />
     {/if}

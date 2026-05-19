@@ -110,6 +110,7 @@ impl AppState {
             tag_editor,
             collection,
         };
+        state.player.set_volume_silent(state.preferences().volume);
         if loaded_download_session.should_persist {
             state.persist_download_snapshot(&loaded_download_session.snapshot);
         }

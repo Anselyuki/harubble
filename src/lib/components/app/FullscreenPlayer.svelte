@@ -48,6 +48,9 @@
     onDownload: () => void | Promise<void>;
     downloadState: SongDownloadState;
     downloadDisabled: boolean;
+    volume?: number;
+    onVolumeChange?: (gain: number) => void | Promise<void>;
+    onToggleMute?: () => void;
     onClose: () => void;
   }
 
@@ -76,6 +79,9 @@
     onDownload,
     downloadState,
     downloadDisabled,
+    volume = 1,
+    onVolumeChange,
+    onToggleMute,
     onClose,
   }: Props = $props();
 
@@ -205,6 +211,21 @@
       if (event.key === 'Escape') {
         event.preventDefault();
         onClose();
+        return;
+      }
+      if (event.key === 'ArrowUp' && onVolumeChange) {
+        event.preventDefault();
+        void onVolumeChange(Math.min(1, volume + 0.05));
+        return;
+      }
+      if (event.key === 'ArrowDown' && onVolumeChange) {
+        event.preventDefault();
+        void onVolumeChange(Math.max(0, volume - 0.05));
+        return;
+      }
+      if ((event.key === 'm' || event.key === 'M') && onToggleMute) {
+        event.preventDefault();
+        onToggleMute();
       }
     }
     document.addEventListener('keydown', handleKeyDown);

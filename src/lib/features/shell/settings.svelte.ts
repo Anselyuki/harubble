@@ -21,6 +21,7 @@ export interface SettingsState {
   notifyOnPlaybackChange: boolean;
   logLevel: LogLevel;
   locale: Locale;
+  volume: number;
   settingsLogRefreshToken: number;
   prefsReady: boolean;
   isSaving: boolean;
@@ -102,6 +103,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       if (!state.dirty.locale) {
         state.locale = prefs.locale;
       }
+      state.volume = prefs.volume;
       deps.onLocaleChanged?.(prefs.locale);
       state.persistedSnapshot = getPreferencesSnapshot(prefs);
       state.lastSaveFailedSnapshot = '';
@@ -149,6 +151,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       notifyOnPlaybackChange: state.notifyOnPlaybackChange,
       logLevel: state.logLevel,
       locale: state.locale,
+      volume: state.volume,
     };
 
     state.isSaving = true;

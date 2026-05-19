@@ -30,6 +30,9 @@ pub struct AppPreferences {
     pub(crate) log_level: String,
     #[serde(default)]
     pub(crate) locale: Locale,
+    /// 应用级播放音量，范围 `0.0..=1.0`，独立于系统音量。
+    #[serde(default = "default_volume")]
+    pub(crate) volume: f64,
 }
 
 impl AppPreferences {
@@ -71,6 +74,10 @@ impl AppPreferences {
 
 fn default_log_level() -> String {
     LogLevel::Error.as_str().to_string()
+}
+
+fn default_volume() -> f64 {
+    1.0
 }
 
 fn validate_explicit_export_path(path: &Path, locale: Locale) -> Result<(), String> {
@@ -121,6 +128,7 @@ impl Default for AppPreferences {
             notify_on_playback_change: true,
             log_level: default_log_level(),
             locale: Locale::default(),
+            volume: default_volume(),
         }
     }
 }
@@ -222,6 +230,7 @@ impl PreferencesStore {
             notify_on_playback_change: true,
             log_level: default_log_level(),
             locale: Locale::default(),
+            volume: default_volume(),
         };
         if let Err(e) = self.save(&default_prefs, load_locale) {
             if let Some(log_center) = log_center {

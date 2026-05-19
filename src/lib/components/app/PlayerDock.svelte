@@ -20,7 +20,17 @@
     border-radius: 0;
     border: 0;
     background: var(--surface-dock);
+  }
+
+  .player-dock-wrap :global(.am-player)::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: inherit;
     backdrop-filter: blur(24px) saturate(1.2);
     -webkit-backdrop-filter: blur(24px) saturate(1.2);
+    pointer-events: none;
   }
 </style>

@@ -204,14 +204,8 @@
       downloadState === 'idle' &&
       !downloadDisabled
   );
-  let capsuleComponent = $state<ReturnType<typeof VolumeCapsule> | null>(null);
+  let capsuleOpen = $state(false);
   let rightControlsRef = $state<HTMLElement | null>(null);
-  function handleVolumeGroupEnter() {
-    capsuleComponent?.expand();
-  }
-  function handleVolumeGroupLeave() {
-    capsuleComponent?.scheduleCollapse();
-  }
   const remainingLabel = $derived.by(() =>
     duration > 0 ? `-${formatTime(remainingProgress)}` : '0:00'
   );
@@ -597,14 +591,13 @@
         class="volume-group"
         role="group"
         aria-label={m.player_aria_volume()}
-        onmouseenter={handleVolumeGroupEnter}
-        onmouseleave={handleVolumeGroupLeave}
       >
         <VolumeCapsule
-          bind:this={capsuleComponent}
           {volume}
           {muted}
-          {rightControlsRef}
+          open={capsuleOpen}
+          onopen={() => (capsuleOpen = true)}
+          onclose={() => (capsuleOpen = false)}
           {onVolumeChange}
           {onToggleMute}
         />
@@ -649,7 +642,6 @@
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     box-shadow: none;
-    isolation: isolate;
     display: grid;
     grid-template-columns: var(--transport-width) minmax(0, 1fr) auto;
     gap: 2px;
@@ -689,7 +681,6 @@
 
   .right-controls {
     position: relative;
-    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -1265,6 +1256,9 @@
     position: relative;
     display: flex;
     align-items: center;
+    width: var(--control-button-size, 34px);
+    height: var(--control-button-size, 34px);
+    flex-shrink: 0;
     margin-right: 2px;
   }
 </style>

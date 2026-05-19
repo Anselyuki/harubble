@@ -54,6 +54,8 @@
       {#if actions}
         <span
           class="collapsible-group-actions"
+          role="toolbar"
+          tabindex={-1}
           onclick={handleActionsClick}
           onkeydown={handleActionsKeydown}
         >

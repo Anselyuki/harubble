@@ -35,6 +35,10 @@
     playbackOrder: PlaybackQueueEntry[];
     downloadState: SongDownloadState;
     downloadDisabled: boolean;
+    volume: number;
+    muted: boolean;
+    onVolumeChange: (gain: number) => void | Promise<void>;
+    onToggleMute: () => void;
     onPrevious: () => void | Promise<void>;
     onTogglePlay: () => void | Promise<void>;
     onSeek: (positionSecs: number) => void | Promise<void>;
@@ -151,6 +155,10 @@
         playlistActive={props.playlistOpen}
         downloadState={props.downloadState}
         downloadDisabled={props.downloadDisabled}
+        volume={props.volume}
+        muted={props.muted}
+        onVolumeChange={props.onVolumeChange}
+        onToggleMute={props.onToggleMute}
         reducedMotion={props.reducedMotion}
         onPrevious={props.onPrevious}
         onTogglePlay={props.onTogglePlay}

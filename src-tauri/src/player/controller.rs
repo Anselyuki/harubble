@@ -563,6 +563,15 @@ impl AudioPlayer {
         safe_volume
     }
 
+    /// 静默设置播放器音量，不触发事件广播。
+    ///
+    /// 仅用于应用启动阶段从偏好恢复音量，此时 Tauri 状态尚未注册，无法发送事件。
+    pub fn set_volume_silent(&self, volume: f64) {
+        let safe_volume = volume.clamp(0.0, 1.0);
+        *self.volume.lock().unwrap() = safe_volume;
+        self.state.lock().unwrap().volume = safe_volume;
+    }
+
     fn sync_media_controls(&self, progress_only: bool) {
         sync_media_session(&self.media_session, &self.state, progress_only);
     }

@@ -296,9 +296,10 @@
     position: absolute;
     left: 0;
     bottom: 100%;
-    margin-bottom: 0;
+    margin-bottom: -4px;
     overflow: hidden;
-    height: 44px;
+    height: 52px;
+    padding-right: 4px;
     pointer-events: none;
     z-index: 1;
   }
@@ -307,16 +308,21 @@
     display: flex;
     align-items: baseline;
     margin-left: 6px;
+    padding: 4px 4px 4px 0;
     font-family: var(--font-brand);
     font-size: 36px;
-    color: var(--icon-active);
+    letter-spacing: 1px;
+    color: #fff;
+    -webkit-text-stroke: 4px var(--icon-active);
+    paint-order: stroke fill;
+    -webkit-text-fill-color: #fff;
     pointer-events: none;
     transform: translateY(100%);
   }
 
   .volume-badge-unit {
     font-size: 18px;
-    margin-left: 1px;
+    margin-left: 5px;
   }
 
   .capsule-slider {

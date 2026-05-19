@@ -20,6 +20,8 @@ pub struct ThemePalette {
     pub accent_rgb: [u8; 3],
     /// 悬停态强调色的 RGB 三通道字节值。
     pub accent_hover_rgb: [u8; 3],
+    /// 从封面中提取的多个代表色（用于波形可视化等场景），最多 4 个。
+    pub wave_colors: Vec<[u8; 3]>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -60,7 +62,8 @@ pub fn extract_theme_palette(bytes: &[u8]) -> Result<ThemePalette> {
         .context("Failed to decode album artwork")?
         .to_rgba8();
     let sampled = image::imageops::resize(&image, SAMPLE_SIZE, SAMPLE_SIZE, FilterType::Triangle);
-    let accent_rgb = select_accent_color(&sampled).unwrap_or(DEFAULT_ACCENT_RGB);
+    let (accent_rgb, wave_colors) = select_colors(&sampled);
+    let accent_rgb = accent_rgb.unwrap_or(DEFAULT_ACCENT_RGB);
     let accent_hover_rgb = derive_hover_color(accent_rgb);
 
     Ok(ThemePalette {
@@ -68,10 +71,13 @@ pub fn extract_theme_palette(bytes: &[u8]) -> Result<ThemePalette> {
         accent_hover_hex: rgb_to_hex(accent_hover_rgb),
         accent_rgb,
         accent_hover_rgb,
+        wave_colors,
     })
 }
 
-fn select_accent_color(image: &RgbaImage) -> Option<[u8; 3]> {
+const WAVE_COLOR_COUNT: usize = 4;
+
+fn select_colors(image: &RgbaImage) -> (Option<[u8; 3]>, Vec<[u8; 3]>) {
     let mut buckets: HashMap<(u8, u8, u8), BucketAccumulator> = HashMap::new();
     let mut fallback = BucketAccumulator::default();
 
@@ -102,13 +108,28 @@ fn select_accent_color(image: &RgbaImage) -> Option<[u8; 3]> {
         buckets.entry(key).or_default().add(rgb, weight);
     }
 
-    let selected = buckets
-        .values()
-        .max_by(|left, right| left.weight.total_cmp(&right.weight))
-        .and_then(BucketAccumulator::average_rgb)
-        .or_else(|| fallback.average_rgb())?;
+    let mut sorted_buckets: Vec<&BucketAccumulator> = buckets.values().collect();
+    sorted_buckets.sort_by(|a, b| b.weight.total_cmp(&a.weight));
 
-    Some(normalize_accent(selected))
+    let accent = sorted_buckets
+        .first()
+        .and_then(|b| b.average_rgb())
+        .or_else(|| fallback.average_rgb())
+        .map(normalize_accent);
+
+    let wave_colors: Vec<[u8; 3]> = sorted_buckets
+        .iter()
+        .take(WAVE_COLOR_COUNT)
+        .filter_map(|b| b.average_rgb())
+        .collect();
+
+    let wave_colors = if wave_colors.is_empty() {
+        vec![accent.unwrap_or(DEFAULT_ACCENT_RGB)]
+    } else {
+        wave_colors
+    };
+
+    (accent, wave_colors)
 }
 
 fn normalize_accent(rgb: [u8; 3]) -> [u8; 3] {

@@ -10,6 +10,7 @@ import {
   resumePlayback,
   seekCurrentPlayback,
   getPlayerState,
+  setPlaybackVolume,
   clearResponseCache,
   extractImageTheme,
   getImageDataUrl,
@@ -146,6 +147,7 @@ export function createAppRuntime() {
     seekCurrentPlayback: async (positionSecs) => {
       await seekCurrentPlayback(positionSecs);
     },
+    setPlaybackVolume,
     getSongLyrics,
     notifyError,
   });
@@ -312,6 +314,7 @@ export function createAppRuntime() {
     notifyOnPlaybackChange: true,
     logLevel: 'error' as LogLevel,
     locale: 'zh-CN' as Locale,
+    volume: 1,
     settingsLogRefreshToken: 0,
     prefsReady: false,
     isSaving: false,
