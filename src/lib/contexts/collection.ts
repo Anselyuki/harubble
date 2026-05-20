@@ -20,10 +20,16 @@ export interface CollectionContext {
     name: string,
     description: string
   ) => Promise<void>;
-  handleDelete: () => Promise<void>;
-  handleExport: () => Promise<void>;
-  handleRemoveSongs: (songCids: string[]) => Promise<void>;
-  handleReorderSongs: (songCids: string[]) => Promise<void>;
+  handleDelete: (id: string) => Promise<void>;
+  handleExport: (id: string) => Promise<void>;
+  handleRemoveSongs: (
+    collectionId: string,
+    songCids: string[]
+  ) => Promise<void>;
+  handleReorderSongs: (
+    collectionId: string,
+    songCids: string[]
+  ) => Promise<void>;
   handleAddSongs: (collectionId: string, songCids: string[]) => Promise<void>;
   loadCollections: () => Promise<void>;
 }

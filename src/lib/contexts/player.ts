@@ -36,8 +36,8 @@ export interface PlayerContext {
   seek: (positionSecs: number) => void;
   playPrevious: () => void;
   playNext: () => void;
-  toggleShuffle: () => void;
-  toggleRepeat: () => void;
+  toggleShuffle: (next: boolean) => void;
+  toggleRepeat: (next: 'all' | 'one') => void;
   toggleLyrics: () => void;
   togglePlaylist: () => void;
   toggleFullscreen: () => void;

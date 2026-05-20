@@ -2,6 +2,7 @@ import { getContext, setContext } from 'svelte';
 import type {
   Album,
   AlbumDetail,
+  LibrarySearchScope,
   SearchLibraryResponse,
   SearchLibraryResultItem,
 } from '$lib/types';
@@ -24,7 +25,7 @@ export interface LibraryContext {
   readonly selectionModeEnabled: boolean;
   readonly selectedSongCids: string[];
   setSearchQuery: (query: string) => void;
-  setSearchScope: (scope: string) => void;
+  setSearchScope: (scope: LibrarySearchScope) => void;
   handleSelectAlbum: (album: Album) => void | Promise<void>;
   handleSelectSearchResult: (
     item: SearchLibraryResultItem
