@@ -1,10 +1,10 @@
-export interface SidebarItemActivationOptions {
+interface SidebarItemActivationOptions {
   collapsed: boolean;
   expandOnCollapsedClick: boolean;
   hasRequestExpand: boolean;
 }
 
-export type SidebarItemActivation = 'activate' | 'expand';
+type SidebarItemActivation = 'activate' | 'expand';
 
 export function getSidebarItemActivation({
   collapsed,

@@ -8,7 +8,7 @@ export interface CapsuleAnimatorRefs {
   iconBtn: HTMLButtonElement | null;
 }
 
-export interface CapsuleAnimator {
+interface CapsuleAnimator {
   expand(onComplete: () => void): void;
   collapse(onComplete: () => void): void;
   showBadge(): void;

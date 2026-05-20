@@ -17,8 +17,6 @@ export interface TrackDownloadBadge {
 
 export type LocalInventoryStatus = 'idle' | 'scanning' | 'completed' | 'failed';
 
-export type VerificationMode = 'none' | 'whenAvailable' | 'strict';
-
 export interface LocalInventorySnapshot {
   rootOutputDir: string;
   status: LocalInventoryStatus;
@@ -29,15 +27,6 @@ export interface LocalInventorySnapshot {
   matchedTrackCount: number;
   verifiedTrackCount: number;
   lastError: string | null;
-}
-
-export interface LocalInventoryScanProgressEvent {
-  rootOutputDir: string;
-  inventoryVersion: string;
-  filesScanned: number;
-  matchedTrackCount: number;
-  verifiedTrackCount: number;
-  currentPath: string | null;
 }
 
 export interface AlbumDownloadBadge {
@@ -352,12 +341,6 @@ export interface LogFileStatus {
   hasSessionLog: boolean;
   hasPersistentLog: boolean;
 }
-
-export type NotificationPermissionState =
-  | 'granted'
-  | 'denied'
-  | 'prompt'
-  | 'prompt-with-rationale';
 
 export interface SeriesGroup {
   series: string;

@@ -8,7 +8,7 @@ const WARM_ALBUM_LIMIT = 10;
 
 type CacheType = 'albums' | 'songs' | 'lyrics' | 'themes' | 'covers';
 
-export type CacheStatsSnapshot = Record<
+type CacheStatsSnapshot = Record<
   CacheType,
   {
     size: number;
@@ -18,7 +18,7 @@ export type CacheStatsSnapshot = Record<
   }
 >;
 
-export interface CacheEntry<T> {
+interface CacheEntry<T> {
   data: T;
   timestamp: number;
   lastAccessedAt: number;
@@ -638,10 +638,6 @@ export function createInventoryCacheTag(
   return `tag:inventory:${inventoryVersion ?? 'unversioned'}`;
 }
 
-export function createScopedCacheKey(type: CacheType, key: string): string {
-  return `${type}:${key}`;
-}
-
 export async function clearCache(): Promise<void> {
   await cacheManager.clearAll();
 }
@@ -652,10 +648,6 @@ export async function invalidateKey(key: string): Promise<void> {
 
 export async function invalidateByTag(tag: string): Promise<void> {
   await cacheManager.invalidateByTag(tag);
-}
-
-export function getCacheStats(): CacheStatsSnapshot {
-  return cacheManager.getCacheStats();
 }
 
 export async function warmCacheManager(): Promise<void> {

@@ -40,7 +40,7 @@ import { gsap, Flip, reducedMotionQuery } from '$lib/design/gsap';
 import { runExpand } from './sidebar-animator-expand';
 import { runCollapse } from './sidebar-animator-collapse';
 
-export interface SidebarAnimatorConfig {
+interface SidebarAnimatorConfig {
   shellEl: HTMLElement;
   sidebarEl: HTMLElement;
   logoCharEls: HTMLSpanElement[];
@@ -63,7 +63,7 @@ export interface SidebarAnimator {
   dispose(): void;
 }
 
-export type AnimationParams = ReturnType<typeof getAnimationParams>;
+type AnimationParams = ReturnType<typeof getAnimationParams>;
 
 export interface AnimatorContext {
   config: SidebarAnimatorConfig;
@@ -105,30 +105,7 @@ const COLLAPSED_WIDTH = '56px';
 const EXPANDED_WIDTH_VALUE = Number.parseFloat(EXPANDED_WIDTH);
 const COLLAPSED_WIDTH_VALUE = Number.parseFloat(COLLAPSED_WIDTH);
 
-export function getLogoCenterPinX(
-  collapsedWidth: number,
-  currentWidth: number
-): number {
-  const offset = -(currentWidth - collapsedWidth) / 2;
-  return Object.is(offset, -0) ? 0 : offset;
-}
-
-export function getLogoCenterPinFrame(
-  collapsedWidth: number,
-  expandedWidth: number,
-  progress: number
-): { width: number; x: number } {
-  const clampedProgress = Math.min(Math.max(progress, 0), 1);
-  const width =
-    collapsedWidth + (expandedWidth - collapsedWidth) * clampedProgress;
-
-  return {
-    width,
-    x: getLogoCenterPinX(collapsedWidth, width),
-  };
-}
-
-export function getPinnedLogoWidthFrame(
+function getPinnedLogoWidthFrame(
   collapsedWidth: number,
   expandedWidth: number,
   progress: number,
@@ -163,24 +140,22 @@ export function getCenterLockTransform(
   };
 }
 
-export function resolveLogoGlyphEl(charEl: HTMLSpanElement): HTMLElement {
+function resolveLogoGlyphEl(charEl: HTMLSpanElement): HTMLElement {
   return charEl.querySelector<HTMLElement>('[data-logo-glyph]') ?? charEl;
 }
 
-export function getLogoFlipTargets(
+function getLogoFlipTargets(
   charEls: HTMLSpanElement[],
   _glyphEls: HTMLElement[]
 ): HTMLElement[] {
   return charEls;
 }
 
-export function getLogoSlotClearProps(): string {
+function getLogoSlotClearProps(): string {
   return 'all';
 }
 
-export function getLogoGlyphClearProps(
-  target: 'collapsed' | 'expanded'
-): string {
+function getLogoGlyphClearProps(target: 'collapsed' | 'expanded'): string {
   const props = [
     'gridArea',
     'height',
@@ -203,7 +178,7 @@ export function getLogoGlyphClearProps(
   return props.join(',');
 }
 
-export function collectSidebarItemLabelEls(
+function collectSidebarItemLabelEls(
   regions: HTMLElement[],
   extraLabelEls: HTMLSpanElement[] = []
 ): HTMLSpanElement[] {

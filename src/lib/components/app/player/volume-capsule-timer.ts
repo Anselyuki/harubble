@@ -1,4 +1,4 @@
-export interface CollapseTimer {
+interface CollapseTimer {
   readonly pending: boolean;
   schedule(): void;
   cancel(): void;
