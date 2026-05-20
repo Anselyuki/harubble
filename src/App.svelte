@@ -233,80 +233,10 @@
         <LibraryView {runtime} />
       {/if}
 
-      <PlayerFlyoutStack
-        song={runtime.currentSong}
-        isPlaying={runtime.isPlaying}
-        isPaused={runtime.isPaused}
-        hasPrevious={runtime.playerHasPrevious}
-        hasNext={runtime.playerHasNext}
-        progress={runtime.progress}
-        duration={runtime.duration}
-        isLoading={runtime.isLoading}
-        reducedMotion={runtime.prefersReducedMotion}
-        isShuffled={runtime.shuffleEnabled}
-        repeatMode={runtime.repeatMode}
-        lyricsOpen={runtime.lyricsOpen}
-        playlistOpen={runtime.playlistOpen}
-        lyricsLoading={runtime.lyricsLoading}
-        lyricsError={runtime.lyricsError}
-        lyricsLines={runtime.lyricsLines}
-        lyricsUnavailable={runtime.lyricsUnavailable}
-        activeLyricIndex={runtime.activeLyricIndex}
-        playbackOrder={runtime.playbackOrder}
-        downloadState={runtime.currentSongDownloadState}
-        downloadDisabled={runtime.currentSongDownloadDisabled}
-        volume={runtime.playerController.volume}
-        muted={runtime.playerController.muted}
-        onVolumeChange={runtime.playerController.setVolume}
-        onToggleMute={runtime.playerController.toggleMute}
-        onPrevious={runtime.playerController.playPrevious}
-        onTogglePlay={runtime.isPlaying
-          ? runtime.playerController.pause
-          : runtime.playerController.resume}
-        onSeek={runtime.playerController.seek}
-        onNext={runtime.playerController.playNext}
-        onShuffleChange={runtime.playerController.toggleShuffle}
-        onRepeatModeChange={runtime.playerController.toggleRepeat}
-        onToggleLyrics={runtime.playerController.toggleLyrics}
-        onTogglePlaylist={runtime.playerController.togglePlaylist}
-        onToggleFullscreen={runtime.playerController.toggleFullscreen}
-        onDownload={runtime.handleCurrentSongDownload}
-        onPlayQueueEntry={runtime.playerController.playQueueEntry}
-      />
+      <PlayerFlyoutStack />
 
       {#if runtime.fullscreenOpen && runtime.currentSong}
-        <FullscreenPlayer
-          song={runtime.currentSong}
-          isPlaying={runtime.isPlaying}
-          isPaused={runtime.isPaused}
-          isLoading={runtime.isLoading}
-          hasPrevious={runtime.playerHasPrevious}
-          hasNext={runtime.playerHasNext}
-          progress={runtime.progress}
-          duration={runtime.duration}
-          isShuffled={runtime.shuffleEnabled}
-          repeatMode={runtime.repeatMode}
-          lyricsLoading={runtime.lyricsLoading}
-          lyricsError={runtime.lyricsError}
-          lyricsLines={runtime.lyricsLines}
-          activeLyricIndex={runtime.activeLyricIndex}
-          reducedMotion={runtime.prefersReducedMotion}
-          onPrevious={runtime.playerController.playPrevious}
-          onTogglePlay={runtime.isPlaying
-            ? runtime.playerController.pause
-            : runtime.playerController.resume}
-          onSeek={runtime.playerController.seek}
-          onNext={runtime.playerController.playNext}
-          onShuffleChange={runtime.playerController.toggleShuffle}
-          onRepeatModeChange={runtime.playerController.toggleRepeat}
-          onDownload={runtime.handleCurrentSongDownload}
-          downloadState={runtime.currentSongDownloadState}
-          downloadDisabled={runtime.currentSongDownloadDisabled}
-          volume={runtime.playerController.volume}
-          onVolumeChange={runtime.playerController.setVolume}
-          onToggleMute={runtime.playerController.toggleMute}
-          onClose={runtime.playerController.toggleFullscreen}
-        />
+        <FullscreenPlayer />
       {/if}
 
       <AppSideSheets

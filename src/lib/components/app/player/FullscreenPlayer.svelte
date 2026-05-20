@@ -4,7 +4,38 @@
   import { getImageDataUrl } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import type { LyricLine } from '$lib/features/player/lyrics';
+  import {
+    getPlayerContext,
+    getDownloadContext,
+    getShellContext,
+  } from '$lib/contexts';
+
+  const player = getPlayerContext();
+  const download = getDownloadContext();
+  const shell = getShellContext();
+
+  // song is guaranteed non-null by the {#if} guard in App.svelte
+  const song = $derived(player.currentSong!);
+
+  const downloadState = $derived(
+    player.currentSong
+      ? download.getSongDownloadState(player.currentSong.cid)
+      : 'idle'
+  );
+  const downloadDisabled = $derived(
+    player.currentSong
+      ? download.isSongDownloadInteractionBlocked(player.currentSong.cid)
+      : false
+  );
+  const onTogglePlay = $derived(
+    player.isPlaying ? player.pause : player.resume
+  );
+
+  function handleDownload() {
+    if (player.currentSong) {
+      void download.handleSongDownload(player.currentSong.cid);
+    }
+  }
 
   let dialogEl: HTMLDivElement | undefined = $state();
 
@@ -13,77 +44,6 @@
       dialogEl.focus();
     }
   });
-
-  type RepeatMode = 'all' | 'one';
-  type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
-
-  interface Song {
-    name: string;
-    artists: string[];
-    coverUrl: string | null;
-  }
-
-  interface Props {
-    song: Song;
-    isPlaying: boolean;
-    isPaused: boolean;
-    isLoading: boolean;
-    hasPrevious: boolean;
-    hasNext: boolean;
-    progress: number;
-    duration: number;
-    isShuffled: boolean;
-    repeatMode: RepeatMode;
-    lyricsLoading: boolean;
-    lyricsError: string;
-    lyricsLines: LyricLine[];
-    activeLyricIndex: number;
-    reducedMotion: boolean;
-    onPrevious: () => void | Promise<void>;
-    onTogglePlay: () => void | Promise<void>;
-    onSeek: (positionSecs: number) => void | Promise<void>;
-    onNext: () => void | Promise<void>;
-    onShuffleChange: (next: boolean) => void | Promise<void>;
-    onRepeatModeChange: (next: RepeatMode) => void | Promise<void>;
-    onDownload: () => void | Promise<void>;
-    downloadState: SongDownloadState;
-    downloadDisabled: boolean;
-    volume?: number;
-    onVolumeChange?: (gain: number) => void | Promise<void>;
-    onToggleMute?: () => void;
-    onClose: () => void;
-  }
-
-  let {
-    song,
-    isPlaying,
-    isPaused,
-    isLoading,
-    hasPrevious,
-    hasNext,
-    progress,
-    duration,
-    isShuffled,
-    repeatMode,
-    lyricsLoading,
-    lyricsError,
-    lyricsLines,
-    activeLyricIndex,
-    reducedMotion,
-    onPrevious,
-    onTogglePlay,
-    onSeek,
-    onNext,
-    onShuffleChange,
-    onRepeatModeChange,
-    onDownload,
-    downloadState,
-    downloadDisabled,
-    volume = 1,
-    onVolumeChange,
-    onToggleMute,
-    onClose,
-  }: Props = $props();
 
   let lyricsListRef = $state<HTMLElement | null>(null);
   let seekPreview = $state<number | null>(null);
@@ -107,7 +67,7 @@
     return `${minute}:${second.toString().padStart(2, '0')}`;
   }
 
-  function nextRepeatMode(mode: RepeatMode): RepeatMode {
+  function nextRepeatMode(mode: 'all' | 'one'): 'all' | 'one' {
     return mode === 'all' ? 'one' : 'all';
   }
 
@@ -116,7 +76,7 @@
   }
 
   function dur(base: number): number {
-    return reducedMotion ? 0 : base;
+    return shell.prefersReducedMotion ? 0 : base;
   }
 
   function dockTransition(
@@ -134,10 +94,10 @@
     };
   }
 
-  const safeDuration = $derived(duration > 0 ? duration : 1);
-  const shownProgress = $derived(seekPreview ?? progress);
+  const safeDuration = $derived(player.duration > 0 ? player.duration : 1);
+  const shownProgress = $derived(seekPreview ?? player.progress);
   const progressRatio = $derived(clamp(shownProgress / safeDuration, 0, 1));
-  const canSeek = $derived(duration > 0 && !isLoading);
+  const canSeek = $derived(player.duration > 0 && !player.isLoading);
 
   const labels = $derived.by(() => {
     void localeState.current;
@@ -155,7 +115,7 @@
     song.artists.length ? song.artists.join(' · ') : labels.unknownArtist
   );
   const repeatLabel = $derived(
-    repeatMode === 'one' ? labels.repeatOne : labels.repeatAll
+    player.repeatMode === 'one' ? labels.repeatOne : labels.repeatAll
   );
 
   const downloadButtonLabel = $derived.by(() => {
@@ -171,7 +131,7 @@
     }
   });
   const canDownload = $derived(
-    !isLoading && downloadState === 'idle' && !downloadDisabled
+    !player.isLoading && downloadState === 'idle' && !downloadDisabled
   );
 
   $effect(() => {
@@ -196,13 +156,13 @@
   });
 
   $effect(() => {
-    if (activeLyricIndex < 0 || !lyricsListRef) return;
-    const el = lyricsListRef.children[activeLyricIndex] as
+    if (player.activeLyricIndex < 0 || !lyricsListRef) return;
+    const el = lyricsListRef.children[player.activeLyricIndex] as
       | HTMLElement
       | undefined;
     el?.scrollIntoView({
       block: 'center',
-      behavior: reducedMotion ? 'instant' : 'smooth',
+      behavior: shell.prefersReducedMotion ? 'instant' : 'smooth',
     });
   });
 
@@ -210,22 +170,22 @@
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        player.toggleFullscreen();
         return;
       }
-      if (event.key === 'ArrowUp' && onVolumeChange) {
+      if (event.key === 'ArrowUp') {
         event.preventDefault();
-        void onVolumeChange(Math.min(1, volume + 0.05));
+        player.setVolume(Math.min(1, player.volume + 0.05));
         return;
       }
-      if (event.key === 'ArrowDown' && onVolumeChange) {
+      if (event.key === 'ArrowDown') {
         event.preventDefault();
-        void onVolumeChange(Math.max(0, volume - 0.05));
+        player.setVolume(Math.max(0, player.volume - 0.05));
         return;
       }
-      if ((event.key === 'm' || event.key === 'M') && onToggleMute) {
+      if (event.key === 'm' || event.key === 'M') {
         event.preventDefault();
-        onToggleMute();
+        player.toggleMute();
       }
     }
     document.addEventListener('keydown', handleKeyDown);
@@ -236,7 +196,7 @@
     if (
       !draggingSeek &&
       seekPreview !== null &&
-      Math.abs(seekPreview - progress) < 0.25
+      Math.abs(seekPreview - player.progress) < 0.25
     ) {
       seekPreview = null;
     }
@@ -261,19 +221,19 @@
   function handleSeekInput(event: Event) {
     if (!canSeek) return;
     draggingSeek = true;
-    seekPreview = clamp(readRangeValue(event), 0, duration || 0);
+    seekPreview = clamp(readRangeValue(event), 0, player.duration || 0);
   }
 
-  async function handleSeekChange(event: Event) {
+  function handleSeekChange(event: Event) {
     draggingSeek = false;
     if (!canSeek) {
       seekPreview = null;
       return;
     }
-    const target = clamp(readRangeValue(event), 0, duration);
+    const target = clamp(readRangeValue(event), 0, player.duration);
     seekPreview = target;
     try {
-      await onSeek(target);
+      player.seek(target);
     } catch {
       seekPreview = null;
     }
@@ -288,7 +248,7 @@
   tabindex="-1"
   bind:this={dialogEl}
   transition:dockTransition={{ duration: dur(380) }}
-  onkeydown={(e) => e.key === 'Escape' && onClose()}
+  onkeydown={(e) => e.key === 'Escape' && player.toggleFullscreen()}
 >
   <div
     class="fullscreen-drag-region"
@@ -313,7 +273,7 @@
     type="button"
     class="fullscreen-close"
     aria-label={labels.close}
-    onclick={onClose}
+    onclick={player.toggleFullscreen}
   >
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M18 6 6 18"></path>
@@ -368,7 +328,7 @@
         aria-label={downloadButtonLabel}
         title={downloadButtonLabel}
         disabled={!canDownload}
-        onclick={() => onDownload()}
+        onclick={() => handleDownload()}
       >
         {#if downloadState === 'creating'}
           <svg class="fs-spin" viewBox="0 0 24 24" aria-hidden="true">
@@ -405,7 +365,7 @@
       />
       <div class="fullscreen-times">
         <span>{formatTime(shownProgress)}</span>
-        <span>{formatTime(duration)}</span>
+        <span>{formatTime(player.duration)}</span>
       </div>
     </div>
     <div class="fullscreen-controls">
@@ -413,9 +373,9 @@
         type="button"
         class="fs-btn"
         aria-label={m.player_aria_shuffle()}
-        aria-pressed={isShuffled}
-        disabled={isLoading}
-        onclick={() => onShuffleChange(!isShuffled)}
+        aria-pressed={player.shuffleEnabled}
+        disabled={player.isLoading}
+        onclick={() => player.toggleShuffle(!player.shuffleEnabled)}
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M5 7h2.2c1.5 0 2.8.6 3.8 1.6L19 16.6"></path>
@@ -429,8 +389,8 @@
         type="button"
         class="fs-btn"
         aria-label={m.player_aria_previous()}
-        disabled={!hasPrevious || isLoading}
-        onclick={() => onPrevious()}
+        disabled={!player.hasPrevious || player.isLoading}
+        onclick={() => player.playPrevious()}
       >
         <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
           <rect x="4.75" y="6.15" width="1.95" height="11.7" rx="0.75"></rect>
@@ -442,16 +402,16 @@
       <button
         type="button"
         class="fs-btn fs-play"
-        class:playing={isPlaying}
-        aria-label={isPlaying
+        class:playing={player.isPlaying}
+        aria-label={player.isPlaying
           ? m.player_aria_pause()
-          : isPaused
+          : player.isPaused
             ? m.player_aria_resume()
             : m.player_aria_play()}
-        disabled={isLoading}
+        disabled={player.isLoading}
         onclick={() => onTogglePlay()}
       >
-        {#if isPlaying}
+        {#if player.isPlaying}
           <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
             <rect x="7.15" y="5.95" width="3.4" height="12.1" rx="1.25"></rect>
             <rect x="13.45" y="5.95" width="3.4" height="12.1" rx="1.25"></rect>
@@ -467,8 +427,8 @@
         type="button"
         class="fs-btn"
         aria-label={m.player_aria_next()}
-        disabled={!hasNext || isLoading}
-        onclick={() => onNext()}
+        disabled={!player.hasNext || player.isLoading}
+        onclick={() => player.playNext()}
       >
         <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
           <rect x="17.3" y="6.15" width="1.95" height="11.7" rx="0.75"></rect>
@@ -481,16 +441,16 @@
         type="button"
         class="fs-btn"
         aria-label={m.player_aria_repeat_toggle({ mode: repeatLabel })}
-        aria-pressed={repeatMode === 'one'}
-        disabled={isLoading}
-        onclick={() => onRepeatModeChange(nextRepeatMode(repeatMode))}
+        aria-pressed={player.repeatMode === 'one'}
+        disabled={player.isLoading}
+        onclick={() => player.toggleRepeat(nextRepeatMode(player.repeatMode))}
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M5 8h10.8"></path>
           <path d="m13.3 5.4 2.7 2.6-2.7 2.6"></path>
           <path d="M19 16H8.2"></path>
           <path d="m10.7 18.6-2.7-2.6 2.7-2.6"></path>
-          {#if repeatMode === 'one'}
+          {#if player.repeatMode === 'one'}
             <circle
               cx="12"
               cy="12"
@@ -507,15 +467,15 @@
   </div>
 
   <div class="fullscreen-right">
-    {#if lyricsLoading}
+    {#if player.lyricsLoading}
       <div class="fullscreen-lyrics-empty">{labels.lyricsLoading}</div>
-    {:else if lyricsError}
-      <div class="fullscreen-lyrics-empty">{lyricsError}</div>
-    {:else if lyricsLines.length > 0}
+    {:else if player.lyricsError}
+      <div class="fullscreen-lyrics-empty">{player.lyricsError}</div>
+    {:else if player.lyricsLines.length > 0}
       <div class="fullscreen-lyrics" bind:this={lyricsListRef}>
-        {#each lyricsLines as line, index (line.id)}
+        {#each player.lyricsLines as line, index (line.id)}
           <p
-            class={`fullscreen-lyric-line${index === activeLyricIndex ? ' active' : ''}`}
+            class={`fullscreen-lyric-line${index === player.activeLyricIndex ? ' active' : ''}`}
           >
             {line.text}
           </p>

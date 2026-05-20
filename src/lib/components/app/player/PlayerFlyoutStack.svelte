@@ -3,62 +3,42 @@
   import PlayerDock from '$lib/components/app/player/PlayerDock.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import type { PlaybackQueueEntry } from '$lib/types';
-  import type { LyricLine } from '$lib/features/player/lyrics';
-  interface Song {
-    cid: string;
-    name: string;
-    artists: string[];
-    coverUrl: string | null;
-  }
-  type RepeatMode = 'all' | 'one';
+  import {
+    getPlayerContext,
+    getDownloadContext,
+    getShellContext,
+  } from '$lib/contexts';
+
+  const player = getPlayerContext();
+  const download = getDownloadContext();
+  const shell = getShellContext();
+
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
-  interface Props {
-    song: Song | null;
-    isPlaying: boolean;
-    isPaused: boolean;
-    hasPrevious: boolean;
-    hasNext: boolean;
-    progress: number;
-    duration: number;
-    isLoading: boolean;
-    reducedMotion: boolean;
-    isShuffled: boolean;
-    repeatMode: RepeatMode;
-    lyricsOpen: boolean;
-    playlistOpen: boolean;
-    lyricsLoading: boolean;
-    lyricsError: string;
-    lyricsLines: LyricLine[];
-    lyricsUnavailable: boolean;
-    activeLyricIndex: number;
-    playbackOrder: PlaybackQueueEntry[];
-    downloadState: SongDownloadState;
-    downloadDisabled: boolean;
-    volume: number;
-    muted: boolean;
-    onVolumeChange: (gain: number) => void | Promise<void>;
-    onToggleMute: () => void;
-    onPrevious: () => void | Promise<void>;
-    onTogglePlay: () => void | Promise<void>;
-    onSeek: (positionSecs: number) => void | Promise<void>;
-    onNext: () => void | Promise<void>;
-    onShuffleChange: (next: boolean) => void | Promise<void>;
-    onRepeatModeChange: (next: RepeatMode) => void | Promise<void>;
-    onToggleLyrics: () => void | Promise<void>;
-    onTogglePlaylist: () => void | Promise<void>;
-    onToggleFullscreen: () => void | Promise<void>;
-    onDownload: () => void | Promise<void>;
-    onPlayQueueEntry: (
-      entry: PlaybackQueueEntry,
-      order: PlaybackQueueEntry[],
-      index: number
-    ) => void | Promise<void>;
+
+  const downloadState = $derived(
+    (player.currentSong
+      ? download.getSongDownloadState(player.currentSong.cid)
+      : 'idle') as SongDownloadState
+  );
+  const downloadDisabled = $derived(
+    player.currentSong
+      ? download.isSongDownloadInteractionBlocked(player.currentSong.cid)
+      : false
+  );
+  const onTogglePlay = $derived(
+    player.isPlaying ? player.pause : player.resume
+  );
+
+  function handleDownload() {
+    if (player.currentSong) {
+      void download.handleSongDownload(player.currentSong.cid);
+    }
   }
-  let props: Props = $props();
+
   function dur(base: number): number {
-    return props.reducedMotion ? 0 : base;
+    return shell.prefersReducedMotion ? 0 : base;
   }
+
   const labels = $derived.by(() => {
     void localeState.current;
     return {
@@ -69,11 +49,11 @@
   });
   const queueCountLabel = $derived.by(() => {
     void localeState.current;
-    return m.player_queue_count({ count: props.playbackOrder.length });
+    return m.player_queue_count({ count: player.playbackOrder.length });
   });
 </script>
 
-{#if props.song}
+{#if player.currentSong}
   <div
     class="player-dock-stack-wrapper"
     in:fly={{ y: 18, duration: dur(220) }}
@@ -81,9 +61,9 @@
   >
     <div
       class="player-dock-stack"
-      data-panel={props.playlistOpen ? 'playlist' : 'none'}
+      data-panel={player.playlistOpen ? 'playlist' : 'none'}
     >
-      {#if props.playlistOpen}
+      {#if player.playlistOpen}
         <section
           class="player-flyout"
           data-panel="playlist"
@@ -97,23 +77,23 @@
             </div>
             <span class="player-flyout-count">{queueCountLabel}</span>
           </div>
-          {#if props.playbackOrder.length > 0}
+          {#if player.playbackOrder.length > 0}
             <div class="player-playlist-list">
-              {#each props.playbackOrder as entry, index (entry.cid)}
+              {#each player.playbackOrder as entry, index (entry.cid)}
                 <button
                   type="button"
-                  class={`player-playlist-item${entry.cid === props.song?.cid ? ' active' : ''}`}
+                  class={`player-playlist-item${entry.cid === player.currentSong?.cid ? ' active' : ''}`}
                   aria-label={m.player_queue_item_aria({
                     index: index + 1,
                     name: entry.name,
                   })}
-                  aria-current={entry.cid === props.song?.cid
+                  aria-current={entry.cid === player.currentSong?.cid
                     ? 'true'
                     : undefined}
                   onclick={() => {
-                    void props.onPlayQueueEntry(
+                    void player.playQueueEntry(
                       entry,
-                      props.playbackOrder,
+                      player.playbackOrder,
                       index
                     );
                   }}
@@ -136,40 +116,40 @@
         </section>
       {/if}
       <PlayerDock
-        song={props.song}
-        isPlaying={props.isPlaying}
-        isPaused={props.isPaused}
-        hasPrevious={props.hasPrevious}
-        hasNext={props.hasNext}
-        progress={props.progress}
-        duration={props.duration}
-        isLoading={props.isLoading}
-        isShuffled={props.isShuffled}
-        repeatMode={props.repeatMode}
-        lyricsActive={props.lyricsOpen}
-        lyricsUnavailable={props.lyricsUnavailable}
-        lyricsLoading={props.lyricsLoading}
-        lyricsError={props.lyricsError}
-        lyricsLines={props.lyricsLines}
-        activeLyricIndex={props.activeLyricIndex}
-        playlistActive={props.playlistOpen}
-        downloadState={props.downloadState}
-        downloadDisabled={props.downloadDisabled}
-        volume={props.volume}
-        muted={props.muted}
-        onVolumeChange={props.onVolumeChange}
-        onToggleMute={props.onToggleMute}
-        reducedMotion={props.reducedMotion}
-        onPrevious={props.onPrevious}
-        onTogglePlay={props.onTogglePlay}
-        onSeek={props.onSeek}
-        onNext={props.onNext}
-        onShuffleChange={props.onShuffleChange}
-        onRepeatModeChange={props.onRepeatModeChange}
-        onToggleLyrics={props.onToggleLyrics}
-        onTogglePlaylist={props.onTogglePlaylist}
-        onToggleFullscreen={props.onToggleFullscreen}
-        onDownload={props.onDownload}
+        song={player.currentSong}
+        isPlaying={player.isPlaying}
+        isPaused={player.isPaused}
+        hasPrevious={player.hasPrevious}
+        hasNext={player.hasNext}
+        progress={player.progress}
+        duration={player.duration}
+        isLoading={player.isLoading}
+        isShuffled={player.shuffleEnabled}
+        repeatMode={player.repeatMode}
+        lyricsActive={player.lyricsOpen}
+        lyricsUnavailable={player.lyricsUnavailable}
+        lyricsLoading={player.lyricsLoading}
+        lyricsError={player.lyricsError ?? ''}
+        lyricsLines={player.lyricsLines}
+        activeLyricIndex={player.activeLyricIndex}
+        playlistActive={player.playlistOpen}
+        {downloadState}
+        {downloadDisabled}
+        volume={player.volume}
+        muted={player.muted}
+        onVolumeChange={player.setVolume}
+        onToggleMute={player.toggleMute}
+        reducedMotion={shell.prefersReducedMotion}
+        onPrevious={player.playPrevious}
+        {onTogglePlay}
+        onSeek={player.seek}
+        onNext={player.playNext}
+        onShuffleChange={player.toggleShuffle}
+        onRepeatModeChange={player.toggleRepeat}
+        onToggleLyrics={player.toggleLyrics}
+        onTogglePlaylist={player.togglePlaylist}
+        onToggleFullscreen={player.toggleFullscreen}
+        onDownload={handleDownload}
       />
     </div>
   </div>
