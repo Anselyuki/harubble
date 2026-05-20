@@ -5,7 +5,11 @@
   import HomeTagGroups from './HomeTagGroups.svelte';
   import HomeRecentHistory from './HomeRecentHistory.svelte';
   import HomeStatusDashboard from './HomeStatusDashboard.svelte';
-  import type { PartialOptions } from 'overlayscrollbars';
+  import {
+    getShellContext,
+    getPlayerContext,
+    getDownloadContext,
+  } from '$lib/contexts';
   import type {
     Album,
     SeriesGroup,
@@ -31,30 +35,21 @@
         selectDimension: (key: string) => void;
         handleClearHistory: () => Promise<void>;
       };
-      playerController: {
-        currentSong: {
-          cid: string;
-          name: string;
-          artists: string[];
-          coverUrl: string | null;
-        } | null;
-        isPlaying: boolean;
-      };
-      downloadController: {
-        activeDownloadCount: number;
-      };
       handleSelectAlbum: (album: Album) => void | Promise<void>;
       handlePlay: (song: SongEntry) => void | Promise<void>;
-      overlayScrollbarOptions: PartialOptions;
     };
   }
 
   let { runtime }: Props = $props();
+
+  const shell = getShellContext();
+  const player = getPlayerContext();
+  const download = getDownloadContext();
 </script>
 
 <OverlayScrollbarsComponent
   class="home-scroll-container"
-  options={runtime.overlayScrollbarOptions}
+  options={shell.overlayScrollbarOptions}
   defer
 >
   <div class="home-view">
@@ -98,9 +93,9 @@
 
     <HomeStatusDashboard
       status={runtime.homeController.status}
-      currentSong={runtime.playerController.currentSong}
-      isPlaying={runtime.playerController.isPlaying}
-      activeDownloadCount={runtime.downloadController.activeDownloadCount}
+      currentSong={player.currentSong}
+      isPlaying={player.isPlaying}
+      activeDownloadCount={download.activeDownloadCount}
     />
   </div>
 </OverlayScrollbarsComponent>
