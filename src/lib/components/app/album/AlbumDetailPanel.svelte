@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fade, fly } from 'svelte/transition';
+  import { animateIn, killTweens } from '$lib/design/gsap';
   import SongRow from '$lib/components/SongRow.svelte';
   import MetadataPopover from '$lib/components/MetadataPopover.svelte';
   import {
@@ -44,9 +44,39 @@
 
   let props: Props = $props();
 
-  function dur(base: number): number {
-    return props.reducedMotion ? 0 : base;
-  }
+  let cardEl = $state<HTMLElement | undefined>();
+  let heroInfoEl = $state<HTMLElement | undefined>();
+  let songListEl = $state<HTMLElement | undefined>();
+
+  $effect(() => {
+    if (!cardEl) return;
+    animateIn(cardEl, { opacity: 0 }, { opacity: 1 }, 220, 'ios-out');
+    return () => killTweens(cardEl!);
+  });
+
+  $effect(() => {
+    if (!heroInfoEl) return;
+    animateIn(
+      heroInfoEl,
+      { opacity: 0, y: 14 },
+      { opacity: 1, y: 0 },
+      220,
+      'ios-spring'
+    );
+    return () => killTweens(heroInfoEl!);
+  });
+
+  $effect(() => {
+    if (!songListEl) return;
+    animateIn(
+      songListEl,
+      { opacity: 0, y: 10 },
+      { opacity: 1, y: 0 },
+      200,
+      'ios-spring'
+    );
+    return () => killTweens(songListEl!);
+  });
 
   const selectedSongCount = $derived.by(() => props.selectedSongCids.length);
   const selectedSongsLabel = $derived.by(() => {
@@ -101,15 +131,10 @@
 <div
   class="album-detail-card"
   class:is-reduced-motion={props.reducedMotion}
-  in:fade={{ duration: dur(220) }}
-  out:fade={{ duration: dur(220) }}
+  bind:this={cardEl}
 >
   <div class="album-hero">
-    <div
-      class="album-hero-info"
-      in:fly={{ y: 14, duration: dur(220), delay: dur(30) }}
-      out:fly={{ y: 8, duration: dur(220) }}
-    >
+    <div class="album-hero-info" bind:this={heroInfoEl}>
       <div class="album-tags-row">
         {#if props.album.belong && props.album.belong.toLowerCase() !== 'arknights'}
           <span class="album-belong-tag"
@@ -215,11 +240,7 @@
       </div>
     </div>
   </div>
-  <div
-    class="song-list"
-    in:fly={{ y: 10, duration: dur(200), delay: dur(70) }}
-    out:fade={{ duration: dur(200) }}
-  >
+  <div class="song-list" bind:this={songListEl}>
     {#each props.album.songs as song, index (song.cid)}
       <SongRow
         {song}
@@ -251,14 +272,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .btn {
-    transition:
-      background-color 0.16s ease-out,
-      color 0.16s ease-out,
-      box-shadow 0.16s ease-out,
-      opacity 0.16s ease-out;
   }
 
   .btn:hover:not(:disabled):not(.is-reduced-motion *) {

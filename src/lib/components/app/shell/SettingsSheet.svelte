@@ -458,7 +458,6 @@
     padding: 10px 12px;
     background: var(--sheet-row-bg);
     cursor: pointer;
-    transition: background var(--motion-fast) var(--ease-standard);
   }
   .settings-toggle + .settings-toggle {
     border-top: 1px solid var(--sheet-border);
@@ -506,9 +505,6 @@
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition:
-      background var(--motion-fast) var(--ease-standard),
-      color var(--motion-fast) var(--ease-standard);
   }
   .settings-segment button.active {
     background: var(--accent);

@@ -108,7 +108,6 @@
     cursor: pointer;
     padding: 0.25rem 0.5rem;
     border-radius: 4px;
-    transition: color 0.15s ease;
   }
 
   .clear-btn:hover {
@@ -132,7 +131,6 @@
     cursor: pointer;
     color: inherit;
     text-align: left;
-    transition: background 0.15s ease;
   }
 
   .history-item:hover {

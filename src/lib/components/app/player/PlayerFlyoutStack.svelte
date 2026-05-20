@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fade, fly } from 'svelte/transition';
+  import { animateIn, animateOut, killTweens } from '$lib/design/gsap';
   import PlayerDock from '$lib/components/app/player/PlayerDock.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
@@ -35,10 +35,6 @@
     }
   }
 
-  function dur(base: number): number {
-    return shell.prefersReducedMotion ? 0 : base;
-  }
-
   const labels = $derived.by(() => {
     void localeState.current;
     return {
@@ -51,24 +47,78 @@
     void localeState.current;
     return m.player_queue_count({ count: player.playbackOrder.length });
   });
+
+  let wrapperEl = $state<HTMLElement | undefined>();
+  let wrapperMounted = $state(false);
+
+  let flyoutEl = $state<HTMLElement | undefined>();
+  let flyoutMounted = $state(false);
+
+  const hasSong = $derived(!!player.currentSong);
+  const playlistOpen = $derived(player.playlistOpen);
+
+  $effect(() => {
+    if (hasSong) wrapperMounted = true;
+  });
+
+  $effect(() => {
+    if (!wrapperEl || !hasSong) return;
+    animateIn(
+      wrapperEl,
+      { opacity: 0, y: 18 },
+      { opacity: 1, y: 0 },
+      220,
+      'ios-spring'
+    );
+    return () => killTweens(wrapperEl!);
+  });
+
+  $effect(() => {
+    if (hasSong || !wrapperMounted || !wrapperEl) return;
+    animateOut(wrapperEl, { opacity: 0 }, 220, {
+      onComplete: () => {
+        wrapperMounted = false;
+      },
+    });
+  });
+
+  $effect(() => {
+    if (playlistOpen) flyoutMounted = true;
+  });
+
+  $effect(() => {
+    if (!flyoutEl || !playlistOpen) return;
+    animateIn(
+      flyoutEl,
+      { opacity: 0, y: 12 },
+      { opacity: 1, y: 0 },
+      180,
+      'ios-spring'
+    );
+    return () => killTweens(flyoutEl!);
+  });
+
+  $effect(() => {
+    if (playlistOpen || !flyoutMounted || !flyoutEl) return;
+    animateOut(flyoutEl, { opacity: 0, y: 8 }, 180, {
+      onComplete: () => {
+        flyoutMounted = false;
+      },
+    });
+  });
 </script>
 
-{#if player.currentSong}
-  <div
-    class="player-dock-stack-wrapper"
-    in:fly={{ y: 18, duration: dur(220) }}
-    out:fade={{ duration: dur(220) }}
-  >
+{#if wrapperMounted}
+  <div class="player-dock-stack-wrapper" bind:this={wrapperEl}>
     <div
       class="player-dock-stack"
       data-panel={player.playlistOpen ? 'playlist' : 'none'}
     >
-      {#if player.playlistOpen}
+      {#if flyoutMounted}
         <section
           class="player-flyout"
           data-panel="playlist"
-          in:fly={{ y: 12, duration: dur(180) }}
-          out:fly={{ y: 8, duration: dur(180) }}
+          bind:this={flyoutEl}
         >
           <div class="player-flyout-header">
             <div>

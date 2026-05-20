@@ -6,6 +6,8 @@
   import { cn, type WithoutChild } from '$lib/utils.js';
   import type { ComponentProps } from 'svelte';
   import type { WithoutChildrenOrChild } from '$lib/utils.js';
+  import { getContext } from 'svelte';
+  import { gsap, getMotionDuration, killTweens } from '$lib/design/gsap';
 
   let {
     ref = $bindable(null),
@@ -18,28 +20,71 @@
   }: WithoutChild<SelectPrimitive.ContentProps> & {
     portalProps?: WithoutChildrenOrChild<ComponentProps<typeof SelectPortal>>;
   } = $props();
+
+  const openCtx = getContext<{ value: boolean } | undefined>('select-open');
+  const open = $derived(openCtx?.value ?? true);
+
+  let mounted = $state(true);
+
+  $effect(() => {
+    if (open) mounted = true;
+  });
+
+  $effect(() => {
+    if (!ref || !open) return;
+    killTweens(ref);
+    gsap.fromTo(
+      ref,
+      { opacity: 0, scale: 0.95, y: -4 },
+      {
+        opacity: 1,
+        scale: 1,
+        y: 0,
+        duration: getMotionDuration(150),
+        ease: 'ios-spring',
+      }
+    );
+  });
+
+  $effect(() => {
+    if (open || !mounted || !ref) return;
+    killTweens(ref);
+    gsap.to(ref, {
+      opacity: 0,
+      scale: 0.95,
+      y: -4,
+      duration: getMotionDuration(100),
+      ease: 'ios-in',
+      onComplete: () => {
+        mounted = false;
+      },
+    });
+  });
 </script>
 
-<SelectPortal {...portalProps}>
-  <SelectPrimitive.Content
-    bind:ref
-    {sideOffset}
-    {preventScroll}
-    data-slot="select-content"
-    class={cn(
-      'bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 ring-foreground/10 min-w-36 rounded-lg shadow-md ring-1 duration-100 data-[side=inline-start]:slide-in-from-right-2 data-[side=inline-end]:slide-in-from-left-2 relative isolate z-[200] overflow-x-hidden overflow-y-auto',
-      className
-    )}
-    {...restProps}
-  >
-    <SelectScrollUpButton />
-    <SelectPrimitive.Viewport
+{#if mounted}
+  <SelectPortal {...portalProps}>
+    <SelectPrimitive.Content
+      bind:ref
+      forceMount
+      {sideOffset}
+      {preventScroll}
+      data-slot="select-content"
       class={cn(
-        'h-(--bits-select-anchor-height) w-full min-w-(--bits-select-anchor-width) scroll-my-1'
+        'bg-popover text-popover-foreground ring-foreground/10 min-w-36 rounded-lg shadow-md ring-1 relative isolate z-[200] overflow-x-hidden overflow-y-auto',
+        className
       )}
+      {...restProps}
     >
-      {@render children?.()}
-    </SelectPrimitive.Viewport>
-    <SelectScrollDownButton />
-  </SelectPrimitive.Content>
-</SelectPortal>
+      <SelectScrollUpButton />
+      <SelectPrimitive.Viewport
+        class={cn(
+          'h-(--bits-select-anchor-height) w-full min-w-(--bits-select-anchor-width) scroll-my-1'
+        )}
+      >
+        {@render children?.()}
+      </SelectPrimitive.Viewport>
+      <SelectScrollDownButton />
+    </SelectPrimitive.Content>
+  </SelectPortal>
+{/if}

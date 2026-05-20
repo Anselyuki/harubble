@@ -4,6 +4,7 @@
   import { localeState } from '$lib/i18n';
   import { getAudioMetadata } from '$lib/api';
   import type { AlbumDetail, AudioFileMetadata, SongEntry } from '$lib/types';
+  import { animateIn } from '$lib/design/gsap';
 
   interface AlbumMetadata {
     kind: 'album';
@@ -168,6 +169,19 @@
     });
     return result;
   });
+
+  let popoverInnerEl: HTMLDivElement | undefined = $state();
+
+  $effect(() => {
+    if (!popoverInnerEl) return;
+    animateIn(
+      popoverInnerEl,
+      { opacity: 0, y: -4, scale: 0.97 },
+      { opacity: 1, y: 0, scale: 1 },
+      150,
+      'ios-out'
+    );
+  });
 </script>
 
 <Popover.Root>
@@ -193,45 +207,47 @@
       align="start"
       sideOffset={6}
     >
-      <div class="meta-popover-header">{title}</div>
-      <div class="meta-popover-rows">
-        {#each infoRows as row (row.label)}
-          <div class="meta-popover-row">
-            <span class="meta-popover-label">{row.label}</span>
-            <span class="meta-popover-value">{row.value}</span>
-          </div>
-        {/each}
-      </div>
-      {#if tagRows.length > 0}
-        <div class="meta-popover-section-divider">
-          <span class="meta-popover-section-badge"
-            >{m.metadata_section_tags()}</span
-          >
-        </div>
+      <div class="meta-popover-inner" bind:this={popoverInnerEl}>
+        <div class="meta-popover-header">{title}</div>
         <div class="meta-popover-rows">
-          {#each tagRows as tag (tag.dimension)}
-            <div class="meta-popover-row">
-              <span class="meta-popover-label">{tag.dimension}</span>
-              <span class="meta-popover-value">{tag.values}</span>
-            </div>
-          {/each}
-        </div>
-      {/if}
-      {#if audioRows.length > 0}
-        <div class="meta-popover-section-divider">
-          <span class="meta-popover-section-badge"
-            >{m.metadata_section_audio()}</span
-          >
-        </div>
-        <div class="meta-popover-rows">
-          {#each audioRows as row (row.label)}
+          {#each infoRows as row (row.label)}
             <div class="meta-popover-row">
               <span class="meta-popover-label">{row.label}</span>
               <span class="meta-popover-value">{row.value}</span>
             </div>
           {/each}
         </div>
-      {/if}
+        {#if tagRows.length > 0}
+          <div class="meta-popover-section-divider">
+            <span class="meta-popover-section-badge"
+              >{m.metadata_section_tags()}</span
+            >
+          </div>
+          <div class="meta-popover-rows">
+            {#each tagRows as tag (tag.dimension)}
+              <div class="meta-popover-row">
+                <span class="meta-popover-label">{tag.dimension}</span>
+                <span class="meta-popover-value">{tag.values}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        {#if audioRows.length > 0}
+          <div class="meta-popover-section-divider">
+            <span class="meta-popover-section-badge"
+              >{m.metadata_section_audio()}</span
+            >
+          </div>
+          <div class="meta-popover-rows">
+            {#each audioRows as row (row.label)}
+              <div class="meta-popover-row">
+                <span class="meta-popover-label">{row.label}</span>
+                <span class="meta-popover-value">{row.value}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </Popover.Content>
   </Popover.Portal>
 </Popover.Root>
@@ -251,9 +267,6 @@
     justify-content: center;
     padding: 0;
     flex-shrink: 0;
-    transition:
-      background-color 0.16s ease-out,
-      color 0.16s ease-out;
   }
   :global(.meta-trigger:hover) {
     background: rgba(var(--accent-rgb), 0.1);
@@ -277,17 +290,9 @@
     box-shadow:
       0 8px 32px rgba(15, 23, 42, 0.12),
       0 2px 8px rgba(15, 23, 42, 0.06);
-    animation: meta-popover-in 0.15s ease-out;
   }
-  @keyframes meta-popover-in {
-    from {
-      opacity: 0;
-      transform: translateY(-4px) scale(0.97);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
+  .meta-popover-inner {
+    display: contents;
   }
   .meta-popover-header {
     font-size: 13px;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import { fade } from 'svelte/transition';
+  import { animateIn, killTweens } from '$lib/design/gsap';
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import type { EventListeners, PartialOptions } from 'overlayscrollbars';
   import type { AlbumDetail, CollectionSummary, SongEntry } from '$lib/types';
@@ -100,9 +100,27 @@
     onAddToCollection,
   }: Props = $props();
 
-  function dur(base: number): number {
-    return reducedMotion ? 0 : base;
-  }
+  let skeletonEl = $state<HTMLElement | undefined>();
+  let albumPanelEl = $state<HTMLElement | undefined>();
+  let loadingMaskEl = $state<HTMLElement | undefined>();
+
+  $effect(() => {
+    if (!skeletonEl) return;
+    animateIn(skeletonEl, { opacity: 0 }, { opacity: 1 }, 180, 'ios-out');
+    return () => killTweens(skeletonEl!);
+  });
+
+  $effect(() => {
+    if (!albumPanelEl) return;
+    animateIn(albumPanelEl, { opacity: 0 }, { opacity: 1 }, 180, 'ios-out');
+    return () => killTweens(albumPanelEl!);
+  });
+
+  $effect(() => {
+    if (!loadingMaskEl) return;
+    animateIn(loadingMaskEl, { opacity: 0 }, { opacity: 1 }, 140, 'ios-out');
+    return () => killTweens(loadingMaskEl!);
+  });
 
   const emptyLabels = $derived.by(() => {
     void localeState.current;
@@ -124,11 +142,7 @@
   aria-busy={loadingDetail}
 >
   {#if loadingDetail && showDetailSkeleton}
-    <section
-      class="album-panel album-panel-loading"
-      in:fade={{ duration: dur(180) }}
-      out:fade={{ duration: dur(180) }}
-    >
+    <section class="album-panel album-panel-loading" bind:this={skeletonEl}>
       <AlbumStage
         loading={true}
         {reducedMotion}
@@ -141,11 +155,7 @@
     </section>
   {:else if selectedAlbum}
     {#key selectedAlbum.cid}
-      <section
-        class="album-panel"
-        in:fade={{ duration: dur(180) }}
-        out:fade={{ duration: dur(180) }}
-      >
+      <section class="album-panel" bind:this={albumPanelEl}>
         <AlbumStage
           albumName={selectedAlbum.name}
           artworkUrl={selectedAlbumArtworkUrl}
@@ -200,8 +210,7 @@
     <div
       class="content-loading-mask"
       aria-hidden="true"
-      in:fade={{ duration: dur(140) }}
-      out:fade={{ duration: dur(140) }}
+      bind:this={loadingMaskEl}
     >
       <MotionSpinner className="content-loading-mask-spinner" {reducedMotion} />
     </div>

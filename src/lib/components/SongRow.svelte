@@ -313,9 +313,6 @@
     outline: none;
     background: rgba(15, 23, 42, 0);
     box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0);
-    transition:
-      background-color 0.16s ease-out,
-      box-shadow 0.16s ease-out;
   }
   .song-row:not(.is-reduced-motion):active {
     transform: scale(0.996);
@@ -331,9 +328,6 @@
     background: rgba(var(--accent-rgb), 0.12);
     box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.12);
   }
-  .song-row.is-reduced-motion {
-    transition: none;
-  }
   .song-number {
     width: 28px;
     text-align: center;
@@ -341,16 +335,10 @@
     font-weight: 500;
     color: var(--text-tertiary);
     flex-shrink: 0;
-    transition:
-      color 0.16s ease-out,
-      opacity 0.16s ease-out;
   }
   .song-number.is-emphasis {
     color: var(--accent);
     opacity: 0.86;
-  }
-  .song-row.is-reduced-motion .song-number {
-    transition: none;
   }
   .song-cover-thumb {
     width: 36px;
@@ -370,13 +358,9 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: color 0.16s ease-out;
   }
   .song-name.is-emphasis {
     color: var(--accent);
-  }
-  .song-row.is-reduced-motion .song-name {
-    transition: none;
   }
   .song-artists {
     font-size: 12px;
@@ -417,12 +401,6 @@
     background: rgba(15, 23, 42, 0.05);
     color: var(--text-secondary);
     box-shadow: 0 0 0 rgba(var(--accent-rgb), 0);
-    transition:
-      opacity 0.16s ease-out,
-      transform 0.16s ease-out,
-      background-color 0.16s ease-out,
-      color 0.16s ease-out,
-      box-shadow 0.16s ease-out;
   }
   .song-play-indicator.is-visible:not(.is-playing) {
     opacity: 1;
@@ -437,10 +415,6 @@
   }
   .song-play-indicator:not(.is-visible):not(.is-playing) {
     transform: scale(0.92);
-  }
-  .song-row.is-reduced-motion .song-play-indicator {
-    transition: none;
-    transform: scale(1);
   }
   .play-indicator-icon {
     width: 16px;
@@ -457,14 +431,12 @@
   .song-meta-wrapper {
     display: inline-flex;
     opacity: 0;
-    transition: opacity 0.16s ease-out;
   }
   .song-row:hover .song-meta-wrapper,
   .song-row:focus-within .song-meta-wrapper {
     opacity: 1;
   }
   .song-row.is-reduced-motion .song-meta-wrapper {
-    transition: none;
     opacity: 1;
   }
   .song-download-badge {
@@ -491,9 +463,6 @@
     align-items: center;
     justify-content: center;
     padding: 0;
-    transition:
-      background-color 0.16s ease-out,
-      color 0.16s ease-out;
   }
   .song-download-button:hover:not(:disabled) {
     background: rgba(var(--accent-rgb), 0.1);
@@ -506,9 +475,6 @@
   .song-download-button.is-busy {
     color: var(--accent);
     opacity: 1;
-  }
-  .song-row.is-reduced-motion .song-download-button {
-    transition: none;
   }
   .download-icon {
     width: 18px;
@@ -544,9 +510,6 @@
     justify-content: center;
     padding: 0;
     flex-shrink: 0;
-    transition:
-      border-color 0.16s ease-out,
-      background-color 0.16s ease-out;
   }
   .song-selection-toggle.is-selected {
     border-color: var(--accent);
@@ -556,20 +519,13 @@
     opacity: 0.42;
     cursor: default;
   }
-  .song-row.is-reduced-motion .song-selection-toggle {
-    transition: none;
-  }
   .song-selection-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: transparent;
-    transition: background-color 0.16s ease-out;
   }
   .song-selection-toggle.is-selected .song-selection-dot {
     background: white;
-  }
-  .song-row.is-reduced-motion .song-selection-dot {
-    transition: none;
   }
 </style>

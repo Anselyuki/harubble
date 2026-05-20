@@ -132,7 +132,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
-    transition: background 0.15s ease;
   }
 
   .stat-card.active {

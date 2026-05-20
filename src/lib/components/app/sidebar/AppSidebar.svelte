@@ -261,9 +261,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition:
-      background-color 0.15s ease,
-      color 0.15s ease;
   }
 
   .section-action-btn:hover {

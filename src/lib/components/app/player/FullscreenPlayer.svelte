@@ -1,18 +1,18 @@
 <script lang="ts">
-  import { scale } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import {
+    gsap,
+    animateIn,
+    getMotionDuration,
+    killTweens,
+    gsapScrollIntoView,
+  } from '$lib/design/gsap';
   import { getImageDataUrl } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import {
-    getPlayerContext,
-    getDownloadContext,
-    getShellContext,
-  } from '$lib/contexts';
+  import { getPlayerContext, getDownloadContext } from '$lib/contexts';
 
   const player = getPlayerContext();
   const download = getDownloadContext();
-  const shell = getShellContext();
 
   // song is guaranteed non-null by the {#if} guard in App.svelte
   const song = $derived(player.currentSong!);
@@ -75,24 +75,36 @@
     return Number((event.currentTarget as HTMLInputElement).value);
   }
 
-  function dur(base: number): number {
-    return shell.prefersReducedMotion ? 0 : base;
-  }
+  let coverWrapEl = $state<HTMLElement | undefined>();
 
-  function dockTransition(
-    _node: Element,
-    { duration = 380 }: { duration?: number } = {}
-  ) {
-    return {
-      duration,
-      easing: cubicOut,
-      css: (t: number) => {
-        const y = (1 - t) * 60;
-        const s = 0.92 + t * 0.08;
-        return `opacity: ${t}; transform: translateY(${y}px) scale(${s})`;
-      },
-    };
-  }
+  $effect(() => {
+    if (!dialogEl) return;
+    killTweens(dialogEl);
+    gsap.fromTo(
+      dialogEl,
+      { opacity: 0, y: 60, scale: 0.92 },
+      {
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        duration: getMotionDuration(380),
+        ease: 'ios-spring',
+      }
+    );
+    return () => killTweens(dialogEl!);
+  });
+
+  $effect(() => {
+    if (!coverWrapEl) return;
+    animateIn(
+      coverWrapEl,
+      { opacity: 0, scale: 0.85 },
+      { opacity: 1, scale: 1 },
+      300,
+      'ios-spring'
+    );
+    return () => killTweens(coverWrapEl!);
+  });
 
   const safeDuration = $derived(player.duration > 0 ? player.duration : 1);
   const shownProgress = $derived(seekPreview ?? player.progress);
@@ -160,10 +172,7 @@
     const el = lyricsListRef.children[player.activeLyricIndex] as
       | HTMLElement
       | undefined;
-    el?.scrollIntoView({
-      block: 'center',
-      behavior: shell.prefersReducedMotion ? 'instant' : 'smooth',
-    });
+    if (el) gsapScrollIntoView(lyricsListRef, el, 'center');
   });
 
   $effect(() => {
@@ -247,7 +256,6 @@
   aria-label={song.name}
   tabindex="-1"
   bind:this={dialogEl}
-  transition:dockTransition={{ duration: dur(380) }}
   onkeydown={(e) => e.key === 'Escape' && player.toggleFullscreen()}
 >
   <div
@@ -282,10 +290,7 @@
   </button>
 
   <div class="fullscreen-left">
-    <div
-      class="fullscreen-cover-wrap"
-      transition:scale={{ start: 0.85, duration: dur(300) }}
-    >
+    <div class="fullscreen-cover-wrap" bind:this={coverWrapEl}>
       {#if resolvedCoverUrl}
         <img
           src={resolvedCoverUrl}

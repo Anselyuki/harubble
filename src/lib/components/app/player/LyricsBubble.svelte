@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fly } from 'svelte/transition';
+  import { animateIn, killTweens, gsapScrollIntoView } from '$lib/design/gsap';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import type { LyricLine } from '$lib/features/player/lyrics';
@@ -20,16 +20,12 @@
     lines,
     activeLyricIndex,
     songName,
-    reducedMotion,
+    reducedMotion: _reducedMotion,
     onClose,
   }: Props = $props();
 
   let bubbleRef = $state<HTMLElement | null>(null);
   let listRef = $state<HTMLElement | null>(null);
-
-  function dur(base: number): number {
-    return reducedMotion ? 0 : base;
-  }
 
   const labels = $derived.by(() => {
     void localeState.current;
@@ -52,10 +48,7 @@
     const activeEl = listRef.children[activeLyricIndex] as
       | HTMLElement
       | undefined;
-    activeEl?.scrollIntoView({
-      block: 'center',
-      behavior: reducedMotion ? 'instant' : 'smooth',
-    });
+    if (activeEl) gsapScrollIntoView(listRef, activeEl, 'center');
   });
 
   $effect(() => {
@@ -68,13 +61,21 @@
     return () =>
       document.removeEventListener('pointerdown', handlePointerDown, true);
   });
+
+  $effect(() => {
+    if (!bubbleRef) return;
+    animateIn(
+      bubbleRef,
+      { opacity: 0, y: 8 },
+      { opacity: 1, y: 0 },
+      180,
+      'ios-spring'
+    );
+    return () => killTweens(bubbleRef!);
+  });
 </script>
 
-<div
-  class="lyrics-bubble"
-  bind:this={bubbleRef}
-  transition:fly={{ y: 8, duration: dur(180) }}
->
+<div class="lyrics-bubble" bind:this={bubbleRef}>
   <div class="lyrics-bubble-header">
     <div>
       <p class="lyrics-bubble-eyebrow">{labels.eyebrow}</p>

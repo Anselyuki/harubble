@@ -229,9 +229,6 @@
     font-size: 13px;
     text-align: left;
     cursor: pointer;
-    transition:
-      background-color 0.15s ease,
-      box-shadow 0.15s ease;
   }
 
   .search-result-card:hover {

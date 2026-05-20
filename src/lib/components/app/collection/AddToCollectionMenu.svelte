@@ -92,9 +92,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition:
-      color 0.12s ease,
-      background-color 0.12s ease;
   }
 
   .add-to-collection-btn:hover {
@@ -135,9 +132,6 @@
     font-weight: 500;
     cursor: pointer;
     text-align: left;
-    transition:
-      background-color 0.12s ease,
-      color 0.12s ease;
   }
 
   .menu-item:hover {

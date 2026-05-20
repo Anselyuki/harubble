@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
-  import { fade, fly } from 'svelte/transition';
+  import { animateIn, animateOut, killTweens } from '$lib/design/gsap';
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import type { PartialOptions } from 'overlayscrollbars';
   import SongRow from '$lib/components/SongRow.svelte';
@@ -45,10 +45,6 @@
 
   let props: Props = $props();
 
-  function dur(base: number): number {
-    return props.reducedMotion ? 0 : base;
-  }
-
   const scrollbarOptions = $derived.by(
     (): PartialOptions => ({
       scrollbars: {
@@ -61,6 +57,8 @@
       },
     })
   );
+
+  let dragSourceIndex = $state<number | null>(null);
 
   const isEditable = $derived.by(() => !props.collection?.isOfficial);
 
@@ -170,7 +168,62 @@
     }
   }
 
-  let dragSourceIndex = $state<number | null>(null);
+  let loadingEl = $state<HTMLElement | undefined>();
+  let cardEl = $state<HTMLElement | undefined>();
+  let heroInfoEl = $state<HTMLElement | undefined>();
+  let songListEl = $state<HTMLElement | undefined>();
+  let cardMounted = $state(false);
+
+  const hasCollection = $derived(!!props.collection && !props.isLoading);
+
+  $effect(() => {
+    if (hasCollection) cardMounted = true;
+  });
+
+  $effect(() => {
+    if (!loadingEl) return;
+    animateIn(loadingEl, { opacity: 0 }, { opacity: 1 }, 200, 'ios-out');
+    return () => killTweens(loadingEl!);
+  });
+
+  $effect(() => {
+    if (!cardEl || !hasCollection) return;
+    animateIn(cardEl, { opacity: 0 }, { opacity: 1 }, 220, 'ios-out');
+    return () => killTweens(cardEl!);
+  });
+
+  $effect(() => {
+    if (hasCollection || !cardMounted || !cardEl) return;
+    animateOut(cardEl, { opacity: 0 }, 220, {
+      onComplete: () => {
+        cardMounted = false;
+      },
+    });
+  });
+
+  $effect(() => {
+    if (!heroInfoEl) return;
+    animateIn(
+      heroInfoEl,
+      { opacity: 0, y: 14 },
+      { opacity: 1, y: 0 },
+      220,
+      'ios-spring'
+    );
+    return () => killTweens(heroInfoEl!);
+  });
+
+  $effect(() => {
+    if (!songListEl) return;
+    animateIn(
+      songListEl,
+      { opacity: 0, y: 10 },
+      { opacity: 1, y: 0 },
+      200,
+      'ios-spring'
+    );
+    return () => killTweens(songListEl!);
+  });
 
   function handleDragStart(event: DragEvent, index: number) {
     dragSourceIndex = index;
@@ -210,11 +263,11 @@
   defer
 >
   {#if props.isLoading}
-    <div class="collection-detail-loading" in:fade={{ duration: dur(200) }}>
+    <div class="collection-detail-loading" bind:this={loadingEl}>
       <span>加载中…</span>
     </div>
   {:else if !props.collection}
-    <div class="collection-detail-loading" in:fade={{ duration: dur(200) }}>
+    <div class="collection-detail-loading" bind:this={loadingEl}>
       <span>请从侧边栏选择一个合集</span>
     </div>
   {:else}
@@ -222,15 +275,10 @@
     <div
       class="collection-detail-card"
       class:is-reduced-motion={props.reducedMotion}
-      in:fade={{ duration: dur(220) }}
-      out:fade={{ duration: dur(220) }}
+      bind:this={cardEl}
     >
       <div class="collection-hero">
-        <div
-          class="collection-hero-info"
-          in:fly={{ y: 14, duration: dur(220), delay: dur(30) }}
-          out:fly={{ y: 8, duration: dur(220) }}
-        >
+        <div class="collection-hero-info" bind:this={heroInfoEl}>
           {#if collection.isOfficial}
             <span class="collection-official-tag">★ 官方合集</span>
           {/if}
@@ -278,11 +326,7 @@
 
       <div class="collection-divider"></div>
 
-      <div
-        class="song-list"
-        in:fly={{ y: 10, duration: dur(200), delay: dur(70) }}
-        out:fade={{ duration: dur(200) }}
-      >
+      <div class="song-list" bind:this={songListEl}>
         {#if isResolvingSongs && resolvedSongs.length === 0}
           <div class="song-list-loading">加载歌曲信息…</div>
         {:else if resolvedSongs.length > 0}
@@ -460,9 +504,6 @@
     padding: 6px 14px;
     border-radius: 8px;
     cursor: pointer;
-    transition:
-      background-color 0.15s ease,
-      border-color 0.15s ease;
   }
 
   .btn:hover {
@@ -509,7 +550,6 @@
     align-items: center;
     gap: 4px;
     border-radius: 14px;
-    transition: background-color 0.12s ease;
   }
 
   .collection-song-wrapper[draggable='true'] {
@@ -552,10 +592,6 @@
     font-size: 12px;
     opacity: 0;
     flex-shrink: 0;
-    transition:
-      opacity 0.12s ease,
-      color 0.12s ease,
-      background-color 0.12s ease;
   }
 
   .collection-song-wrapper:hover .remove-btn {

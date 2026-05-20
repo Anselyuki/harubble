@@ -251,9 +251,6 @@
     background: var(--hover-bg);
     text-align: left;
     cursor: pointer;
-    transition:
-      background-color var(--motion-fast) ease,
-      border-color var(--motion-fast) ease;
   }
 
   .search-result:hover,

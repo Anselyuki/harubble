@@ -123,9 +123,6 @@
     font-weight: 500;
     cursor: pointer;
     text-align: left;
-    transition:
-      background var(--motion-fast) ease,
-      color var(--motion-fast) ease;
   }
 
   .sidebar-item-button.collapsed {

@@ -7,6 +7,12 @@
   import { RefreshCw, ArrowDown, Settings, Search } from '@lucide/svelte';
   import type { LibrarySearchScope } from '$lib/types';
   import type { AppView } from '$lib/features/shell/store.svelte';
+  import {
+    gsap,
+    animateIn,
+    getMotionDuration,
+    killTweens,
+  } from '$lib/design/gsap';
 
   interface Props {
     activeDownloadCount: number;
@@ -43,6 +49,37 @@
   let expanded = $state(false);
   let searchInputEl: HTMLInputElement | undefined = $state();
   let containerEl: HTMLDivElement | undefined = $state();
+  let searchExpandedEl: HTMLDivElement | undefined = $state();
+
+  $effect(() => {
+    if (!searchExpandedEl) return;
+    animateIn(
+      searchExpandedEl,
+      { opacity: 0 },
+      { opacity: 1, delay: 0.15 },
+      200,
+      'ios'
+    );
+  });
+
+  $effect(() => {
+    if (!containerEl) return;
+    killTweens(containerEl);
+    if (expanded) {
+      gsap.to(containerEl, {
+        flexGrow: 1,
+        duration: getMotionDuration(300),
+        ease: 'ios-spring',
+      });
+    } else {
+      gsap.to(containerEl, {
+        flexGrow: 0,
+        width: 36,
+        duration: getMotionDuration(200),
+        ease: 'ios',
+      });
+    }
+  });
 
   const labels = $derived.by(() => {
     void localeState.current;
@@ -124,7 +161,7 @@
 <div class="top-actions">
   <div class="search-trigger" class:expanded bind:this={containerEl}>
     {#if expanded}
-      <div class="search-expanded">
+      <div class="search-expanded" bind:this={searchExpandedEl}>
         <Button
           variant="outline"
           size="icon"
@@ -220,7 +257,6 @@
     box-shadow:
       0 16px 36px rgba(15, 23, 42, 0.12),
       inset 0 1px 0 rgba(255, 255, 255, 0.94);
-    transition: width 0.2s ease;
     will-change: width;
     overflow: hidden;
     position: relative;
@@ -231,8 +267,6 @@
   }
 
   .search-trigger.expanded {
-    flex: 1;
-    transition-duration: 0.3s;
     border-color: rgba(var(--accent-rgb), 0.36);
     box-shadow:
       0 16px 36px rgba(15, 23, 42, 0.12),
@@ -267,7 +301,6 @@
     font-weight: 500;
     white-space: nowrap;
     opacity: 0;
-    transition: opacity 0.15s ease 0.1s;
   }
 
   .search-trigger:hover:not(.expanded) .search-circle {
@@ -297,14 +330,6 @@
     width: 100%;
     height: 100%;
     padding: 0 12px;
-    opacity: 0;
-    animation: search-fade-in 0.2s ease 0.15s forwards;
-  }
-
-  @keyframes search-fade-in {
-    to {
-      opacity: 1;
-    }
   }
 
   .search-expanded :global(.search-input) {
@@ -350,12 +375,6 @@
     line-height: 1;
     white-space: nowrap;
     flex-shrink: 0;
-    transition:
-      width 0.25s ease,
-      transform 0.15s ease,
-      background-color 0.2s ease,
-      border-color 0.2s ease,
-      box-shadow 0.2s ease;
   }
 
   .search-expanded :global(.search-scope-button[data-scope='albums']) {
@@ -404,7 +423,6 @@
     opacity: 0;
     transform: translate(-50%, -50%) rotate(135deg);
     animation: scope-rainbow-slide 2.4s linear infinite;
-    transition: opacity 0.3s ease;
   }
 
   .search-expanded :global(.search-scope-button[data-scope='all']::after) {
@@ -420,7 +438,6 @@
         transparent 0.7px
       )
       0 0 / 3.5px 3.5px;
-    transition: opacity 0.3s ease;
   }
 
   .search-expanded :global(.search-scope-button[data-scope='all']:hover) {

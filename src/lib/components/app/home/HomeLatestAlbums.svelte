@@ -90,7 +90,6 @@
     text-align: left;
     color: inherit;
     border-radius: 8px;
-    transition: opacity 0.15s ease;
   }
 
   .album-card-wrapper:hover {

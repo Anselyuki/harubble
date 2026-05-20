@@ -1,6 +1,7 @@
 import { tick } from 'svelte';
 import { listen } from '@tauri-apps/api/event';
 import type { PartialOptions } from 'overlayscrollbars';
+import { gsapScrollIntoView } from '$lib/design/gsap';
 import {
   getAlbums,
   getAlbumDetail,
@@ -895,10 +896,7 @@ export function createAppRuntime() {
         return;
       }
 
-      row.scrollIntoView({
-        behavior: prefersReducedMotion ? 'auto' : 'smooth',
-        block: 'center',
-      });
+      gsapScrollIntoView(contentEl, row, 'center');
       libraryController.clearPendingScrollToSong(expectedSongCid);
     });
   });

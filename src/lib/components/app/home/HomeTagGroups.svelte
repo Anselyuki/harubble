@@ -120,10 +120,6 @@
     font-size: 0.75rem;
     font-weight: 500;
     cursor: pointer;
-    transition:
-      background 0.15s ease,
-      color 0.15s ease,
-      border-color 0.15s ease;
   }
 
   .dimension-chip:hover {
@@ -191,7 +187,6 @@
     border: none;
     background: none;
     cursor: pointer;
-    transition: opacity 0.15s ease;
   }
 
   .mini-cover-wrapper:hover {

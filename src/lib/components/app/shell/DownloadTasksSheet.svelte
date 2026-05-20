@@ -501,7 +501,6 @@
     gap: 12px;
     min-height: 44px;
     padding: 9px 10px;
-    transition: background var(--motion-fast) var(--ease-standard);
   }
   .download-task-row + .download-task-row {
     border-top: 1px solid var(--sheet-border);

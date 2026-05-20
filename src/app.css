@@ -243,10 +243,6 @@ img[data-image-state='error'] {
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 28%, transparent);
   color: var(--text-primary);
   padding-inline: 10px 8px;
-  transition:
-    background var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-fast) var(--ease-standard);
 }
 .sheet-select-trigger:hover,
 .sheet-select-trigger[data-state='open'] {
@@ -298,74 +294,6 @@ img[data-image-state='error'] {
 .sheet-select-content [data-slot='select-item'] svg {
   color: var(--accent);
 }
-.sheet-select-content[data-state='open'] {
-  animation-duration: var(--motion-fast);
-  animation-fill-mode: both;
-  animation-timing-function: var(--ease-decelerate);
-}
-.sheet-select-content[data-state='open'][data-side='bottom'] {
-  animation-name: sheet-select-in-bottom;
-}
-.sheet-select-content[data-state='open'][data-side='top'] {
-  animation-name: sheet-select-in-top;
-}
-.sheet-select-content[data-state='closed'] {
-  animation-duration: var(--motion-fast);
-  animation-fill-mode: both;
-  animation-timing-function: var(--ease-standard);
-}
-.sheet-select-content[data-state='closed'][data-side='bottom'] {
-  animation-name: sheet-select-out-bottom;
-}
-.sheet-select-content[data-state='closed'][data-side='top'] {
-  animation-name: sheet-select-out-top;
-}
-@media (prefers-reduced-motion: reduce) {
-  .sheet-select-content[data-state] {
-    animation: none;
-  }
-}
-@keyframes sheet-select-in-bottom {
-  from {
-    opacity: 0;
-    transform: translateY(-5px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-@keyframes sheet-select-in-top {
-  from {
-    opacity: 0;
-    transform: translateY(5px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-@keyframes sheet-select-out-bottom {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-5px) scale(0.98);
-  }
-}
-@keyframes sheet-select-out-top {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(5px) scale(0.98);
-  }
-}
-
 .sheet-header {
   padding: 18px 48px 14px 18px;
   border-bottom: 1px solid var(--sheet-border);
@@ -434,9 +362,6 @@ img[data-image-state='error'] {
   align-items: center;
   justify-content: center;
   z-index: 100;
-  transition:
-    color 0.15s ease,
-    background 0.15s ease;
 }
 
 .sidebar-toggle-btn:hover {
@@ -1376,12 +1301,6 @@ img[data-image-state='error'] {
   line-height: 1.6;
   color: var(--player-subtitle);
   background: color-mix(in srgb, var(--player-shell-bg) 62%, transparent);
-  transition:
-    background-color var(--motion-base) var(--ease-standard),
-    box-shadow var(--motion-base) var(--ease-standard),
-    color var(--motion-base) var(--ease-standard),
-    transform var(--motion-base) var(--ease-standard),
-    opacity var(--motion-base) var(--ease-standard);
 }
 
 .player-lyric-line.active {
@@ -1563,11 +1482,6 @@ img[data-image-state='error'] {
   line-height: 1.6;
   color: var(--player-subtitle);
   background: color-mix(in srgb, var(--player-shell-bg) 62%, transparent);
-  transition:
-    background-color var(--motion-base) var(--ease-standard),
-    box-shadow var(--motion-base) var(--ease-standard),
-    color var(--motion-base) var(--ease-standard),
-    transform var(--motion-base) var(--ease-standard);
 }
 
 .lyrics-bubble-line.active {
@@ -1710,10 +1624,6 @@ img[data-image-state='error'] {
   place-items: center;
   cursor: pointer;
   -webkit-app-region: no-drag;
-  transition:
-    background-color 180ms ease,
-    color 180ms ease,
-    box-shadow 180ms ease;
 }
 
 .fullscreen-close:hover {
@@ -1979,11 +1889,6 @@ img[data-image-state='error'] {
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition:
-    background 180ms ease,
-    color 180ms ease,
-    transform 180ms ease,
-    box-shadow 180ms ease;
 }
 
 .fs-btn:hover:not(:disabled) {
@@ -2095,11 +2000,6 @@ img[data-image-state='error'] {
   line-height: 1.8;
   color: rgba(255, 255, 255, 0.3);
   border-radius: 12px;
-  transition:
-    color var(--motion-base) var(--ease-standard),
-    font-weight var(--motion-base) var(--ease-standard),
-    transform var(--motion-base) var(--ease-standard),
-    background-color var(--motion-base) var(--ease-standard);
 }
 
 .fullscreen-lyric-line.active {
@@ -2210,11 +2110,6 @@ img[data-image-state='error'] {
   align-items: center;
   text-align: left;
   cursor: pointer;
-  transition:
-    background-color var(--motion-base) var(--ease-standard),
-    border-color var(--motion-base) var(--ease-standard),
-    transform var(--motion-base) var(--ease-standard),
-    box-shadow var(--motion-base) var(--ease-standard);
   box-shadow: inset 0 1px 0
     color-mix(in srgb, var(--player-shell-highlight) 72%, transparent);
 }
@@ -2834,10 +2729,6 @@ img[data-image-state='error'] {
   cursor: pointer;
   font-size: 10px;
   font-weight: 600;
-  transition:
-    background 0.15s,
-    color 0.15s,
-    opacity 0.15s;
 }
 
 .download-task-btn:hover {
@@ -2867,9 +2758,6 @@ img[data-image-state='error'] {
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  transition:
-    background 0.15s,
-    color 0.15s;
 }
 
 .download-job-btn:hover {
@@ -2898,7 +2786,6 @@ img[data-image-state='error'] {
   height: 100%;
   background: var(--accent);
   border-radius: 2px;
-  transition: width 0.3s ease;
 }
 
 .download-job-progress-text {

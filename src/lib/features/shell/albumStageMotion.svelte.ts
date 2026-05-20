@@ -1,5 +1,6 @@
 import type { EventListeners, OverlayScrollbars } from 'overlayscrollbars';
 import { clamp } from '$lib/features/library/helpers';
+import { gsap, getMotionDuration } from '$lib/design/gsap';
 
 interface AlbumStageMotionDeps {
   getReducedMotion: () => boolean;
@@ -101,9 +102,11 @@ export function createAlbumStageMotionController(deps: AlbumStageMotionDeps) {
 
   function resetContentScroll() {
     resetMotion();
-    contentElement?.scrollTo({
-      top: 0,
-      behavior: reducedMotion ? 'auto' : 'smooth',
+    if (!contentElement) return;
+    gsap.to(contentElement, {
+      scrollTo: { y: 0 },
+      duration: getMotionDuration(400),
+      ease: 'ios-out',
     });
   }
 
