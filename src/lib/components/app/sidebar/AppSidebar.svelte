@@ -1,9 +1,9 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import BrandLogo from '$lib/components/app/BrandLogo.svelte';
-  import SidebarItemButton from '$lib/components/app/SidebarItemButton.svelte';
-  import SidebarNav from '$lib/components/app/SidebarNav.svelte';
+  import BrandLogo from '$lib/components/app/sidebar/BrandLogo.svelte';
+  import SidebarItemButton from '$lib/components/app/sidebar/SidebarItemButton.svelte';
+  import SidebarNav from '$lib/components/app/sidebar/SidebarNav.svelte';
   import { CollapsibleGroup } from '$lib/components/ui/collapsible-group';
   import PlusIcon from '@lucide/svelte/icons/plus';
   import ListMusicIcon from '@lucide/svelte/icons/list-music';

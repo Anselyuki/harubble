@@ -1,6 +1,6 @@
 <script lang="ts">
   import { fade, fly } from 'svelte/transition';
-  import PlayerDock from '$lib/components/app/PlayerDock.svelte';
+  import PlayerDock from '$lib/components/app/player/PlayerDock.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import type { PlaybackQueueEntry } from '$lib/types';

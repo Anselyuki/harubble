@@ -1,7 +1,7 @@
 <script lang="ts">
   import AlbumCard from '$lib/components/AlbumCard.svelte';
-  import AlbumWorkspace from '$lib/components/app/AlbumWorkspace.svelte';
-  import AlbumWorkspaceContent from '$lib/components/app/AlbumWorkspaceContent.svelte';
+  import AlbumWorkspace from '$lib/components/app/album/AlbumWorkspace.svelte';
+  import AlbumWorkspaceContent from '$lib/components/app/album/AlbumWorkspaceContent.svelte';
   import MotionSpinner from '$lib/components/MotionSpinner.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { slide } from 'svelte/transition';
-  import SidebarItemButton from '$lib/components/app/SidebarItemButton.svelte';
+  import SidebarItemButton from '$lib/components/app/sidebar/SidebarItemButton.svelte';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import type { LucideProps } from '@lucide/svelte';
   import type { Snippet, Component } from 'svelte';

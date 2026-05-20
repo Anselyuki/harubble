@@ -2,8 +2,8 @@
   import { getImageDataUrl } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import LyricsBubble from '$lib/components/app/LyricsBubble.svelte';
-  import VolumeCapsule from '$lib/components/app/VolumeCapsule.svelte';
+  import LyricsBubble from '$lib/components/app/player/LyricsBubble.svelte';
+  import VolumeCapsule from '$lib/components/app/player/VolumeCapsule.svelte';
   import type { LyricLine } from '$lib/features/player/lyrics';
   type RepeatMode = 'all' | 'one';
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';

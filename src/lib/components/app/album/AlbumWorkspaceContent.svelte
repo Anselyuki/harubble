@@ -6,9 +6,9 @@
   import type { EventListeners, PartialOptions } from 'overlayscrollbars';
   import type { AlbumDetail, CollectionSummary, SongEntry } from '$lib/types';
   import MotionSpinner from '$lib/components/MotionSpinner.svelte';
-  import AlbumStage from '$lib/components/app/AlbumStage.svelte';
-  import AlbumDetailSkeleton from '$lib/components/app/AlbumDetailSkeleton.svelte';
-  import AlbumDetailPanel from '$lib/components/app/AlbumDetailPanel.svelte';
+  import AlbumStage from '$lib/components/app/album/AlbumStage.svelte';
+  import AlbumDetailSkeleton from '$lib/components/app/album/AlbumDetailSkeleton.svelte';
+  import AlbumDetailPanel from '$lib/components/app/album/AlbumDetailPanel.svelte';
 
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
 

@@ -1,6 +1,6 @@
 import * as m from '$lib/paraglide/messages.js';
-import type SettingsSheet from '$lib/components/app/SettingsSheet.svelte';
-import type DownloadTasksSheet from '$lib/components/app/DownloadTasksSheet.svelte';
+import type SettingsSheet from '$lib/components/app/shell/SettingsSheet.svelte';
+import type DownloadTasksSheet from '$lib/components/app/shell/DownloadTasksSheet.svelte';
 
 interface OpenSideSheetOptions {
   notifyError: (message: string) => void;
@@ -58,14 +58,15 @@ async function ensureSettingsSheetLoaded(
   }
 
   if (!settingsSheetLoader) {
-    settingsSheetLoader = import('$lib/components/app/SettingsSheet.svelte')
-      .then((module) => {
-        SettingsSheetView = module.default;
-        return module.default;
-      })
-      .finally(() => {
-        settingsSheetLoader = null;
-      });
+    settingsSheetLoader =
+      import('$lib/components/app/shell/SettingsSheet.svelte')
+        .then((module) => {
+          SettingsSheetView = module.default;
+          return module.default;
+        })
+        .finally(() => {
+          settingsSheetLoader = null;
+        });
   }
 
   try {
@@ -90,7 +91,7 @@ async function ensureDownloadTasksSheetLoaded(
 
   if (!downloadTasksSheetLoader) {
     downloadTasksSheetLoader =
-      import('$lib/components/app/DownloadTasksSheet.svelte')
+      import('$lib/components/app/shell/DownloadTasksSheet.svelte')
         .then((module) => {
           DownloadTasksSheetView = module.default;
           return module.default;

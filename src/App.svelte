@@ -1,17 +1,17 @@
 <script lang="ts">
   import { createAppRuntime } from '$lib/features/shell/appRuntime.svelte';
-  import TopToolbar from '$lib/components/app/TopToolbar.svelte';
-  import StatusToastHost from '$lib/components/app/StatusToastHost.svelte';
-  import AppSidebar from '$lib/components/app/AppSidebar.svelte';
-  import LibraryView from '$lib/components/app/LibraryView.svelte';
-  import PlayerFlyoutStack from '$lib/components/app/PlayerFlyoutStack.svelte';
-  import FullscreenPlayer from '$lib/components/app/FullscreenPlayer.svelte';
-  import AppSideSheets from '$lib/components/app/AppSideSheets.svelte';
-  import HomeView from '$lib/components/app/HomeView.svelte';
-  import TagEditorView from '$lib/components/app/TagEditorView.svelte';
-  import CollectionDetailPanel from '$lib/components/app/CollectionDetailPanel.svelte';
-  import CollectionFormDialog from '$lib/components/app/CollectionFormDialog.svelte';
-  import AlbumOverview from '$lib/components/app/AlbumOverview.svelte';
+  import TopToolbar from '$lib/components/app/shell/TopToolbar.svelte';
+  import StatusToastHost from '$lib/components/app/shell/StatusToastHost.svelte';
+  import AppSidebar from '$lib/components/app/sidebar/AppSidebar.svelte';
+  import LibraryView from '$lib/components/app/library/LibraryView.svelte';
+  import PlayerFlyoutStack from '$lib/components/app/player/PlayerFlyoutStack.svelte';
+  import FullscreenPlayer from '$lib/components/app/player/FullscreenPlayer.svelte';
+  import AppSideSheets from '$lib/components/app/shell/AppSideSheets.svelte';
+  import HomeView from '$lib/components/app/home/HomeView.svelte';
+  import TagEditorView from '$lib/components/app/tag-editor/TagEditorView.svelte';
+  import CollectionDetailPanel from '$lib/components/app/collection/CollectionDetailPanel.svelte';
+  import CollectionFormDialog from '$lib/components/app/collection/CollectionFormDialog.svelte';
+  import AlbumOverview from '$lib/components/app/album/AlbumOverview.svelte';
   import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 

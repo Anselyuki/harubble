@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type SettingsSheet from '$lib/components/app/SettingsSheet.svelte';
-  import type DownloadTasksSheet from '$lib/components/app/DownloadTasksSheet.svelte';
+  import type SettingsSheet from '$lib/components/app/shell/SettingsSheet.svelte';
+  import type DownloadTasksSheet from '$lib/components/app/shell/DownloadTasksSheet.svelte';
   import type { Locale } from '$lib/i18n/types';
   import type {
     DownloadHistoryKindFilter,

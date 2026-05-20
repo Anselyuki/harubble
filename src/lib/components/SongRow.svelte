@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SongEntry, TagEntry, CollectionSummary } from '$lib/types';
   import MetadataPopover from '$lib/components/MetadataPopover.svelte';
-  import AddToCollectionMenu from '$lib/components/app/AddToCollectionMenu.svelte';
+  import AddToCollectionMenu from '$lib/components/app/collection/AddToCollectionMenu.svelte';
   import { imageDataSrc } from '$lib/imageDataSrc';
   import {
     getDownloadBadgeLabel,

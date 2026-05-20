@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import SidebarItemButton from '$lib/components/app/SidebarItemButton.svelte';
+  import SidebarItemButton from '$lib/components/app/sidebar/SidebarItemButton.svelte';
   import { Home, Library } from '@lucide/svelte';
   import type { AppView } from '$lib/features/shell/store.svelte';
 

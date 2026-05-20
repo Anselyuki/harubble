@@ -40,7 +40,15 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - `src/lib/settingsApi.ts`：设置面板专用 IPC bridge
 - `src/lib/types.ts`：前后端共享数据结构
 - `src/lib/features/`：按 `env / library / player / download / home / shell / collection / tagEditor` 划分的领域目录
-- `src/lib/components/app/`：前端壳层组件目录
+- `src/lib/components/app/`：前端壳层组件目录，按业务域划分子目录：
+  - `sidebar/`：侧栏框架（AppSidebar、SidebarNav、BrandLogo 等）
+  - `player/`：播放控制（PlayerFlyoutStack、FullscreenPlayer、VolumeCapsule、LyricsBubble 等）
+  - `home/`：首页视图（HomeView 及各 Home\* 子组件）
+  - `library/`：库存主视图（LibraryView）
+  - `album/`：专辑与库存（AlbumOverview、AlbumWorkspace、AlbumDetailPanel 等）
+  - `collection/`：合集（CollectionDetailPanel、CollectionFormDialog、AddToCollectionMenu 等）
+  - `tag-editor/`：标签编辑器（TagEditorView、TagEditorPanel、TagEditorConflict\* 等）
+  - `shell/`：应用壳层（TopToolbar、AppSideSheets、SettingsSheet、DownloadTasksSheet）
 
 ## 真相来源
 
