@@ -329,33 +329,6 @@
         notifyInfo={runtime.notifyInfo}
         notifyError={runtime.notifyError}
         onOutputDirChange={runtime.handleOutputDirChange}
-        jobs={runtime.filteredDownloadJobs}
-        hasDownloadHistory={runtime.hasDownloadHistory}
-        bind:searchQuery={runtime.downloadController.searchQuery}
-        bind:scopeFilter={runtime.downloadController.scopeFilter}
-        bind:statusFilter={runtime.downloadController.statusFilter}
-        bind:kindFilter={runtime.downloadController.kindFilter}
-        canClearDownloadHistory={runtime.downloadController
-          .canClearDownloadHistory}
-        getJobProgress={runtime.downloadController.getJobProgress}
-        getJobProgressText={runtime.downloadController.getJobProgressText}
-        getJobStatusLabel={runtime.downloadController.getJobStatusLabel}
-        getJobKindLabel={runtime.downloadController.getJobKindLabel}
-        getJobSummaryLabel={runtime.downloadController.getJobSummaryLabel}
-        getJobDisplayTitle={runtime.downloadController.getJobDisplayTitle}
-        getJobErrorSummary={runtime.downloadController.getJobErrorSummary}
-        isJobActive={runtime.downloadController.isJobActive}
-        canCancelTask={runtime.downloadController.canCancelTask}
-        canRetryTask={runtime.downloadController.canRetryTask}
-        getTaskErrorLabel={runtime.downloadController.getTaskErrorLabel}
-        getTaskStatusLabel={runtime.downloadController.getTaskStatusLabel}
-        onClearDownloadHistory={runtime.downloadController
-          .handleClearDownloadHistory}
-        onCancelDownloadJob={runtime.downloadController.handleCancelDownloadJob}
-        onRetryDownloadJob={runtime.downloadController.handleRetryDownloadJob}
-        onCancelDownloadTask={runtime.downloadController
-          .handleCancelDownloadTask}
-        onRetryDownloadTask={runtime.downloadController.handleRetryDownloadTask}
       />
     </section>
   </div>
