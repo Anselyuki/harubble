@@ -13,7 +13,7 @@ interface HydrateSettingsOptions {
   shouldDispose?: () => boolean;
 }
 
-interface SettingsState {
+export interface SettingsState {
   format: OutputFormat;
   outputDir: string;
   downloadLyrics: boolean;

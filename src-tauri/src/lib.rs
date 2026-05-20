@@ -42,6 +42,7 @@ mod i18n;
 mod listening_history;
 mod local_inventory;
 mod local_inventory_provenance;
+mod local_inventory_scan;
 mod logging;
 mod migration;
 mod notification;
@@ -50,6 +51,7 @@ mod preferences;
 mod search;
 mod tag_editor;
 mod tag_registry;
+mod tag_registry_index;
 mod theme;
 
 /// 启动 belong 预热后台任务。

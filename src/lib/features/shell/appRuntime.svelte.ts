@@ -53,12 +53,7 @@ import type {
   AlbumDetail,
   OutputFormat,
   SongEntry,
-  PlayerState,
   PlaybackQueueEntry,
-  DownloadJobSnapshot,
-  DownloadManagerSnapshot,
-  DownloadTaskProgressEvent,
-  LocalInventorySnapshot,
   AppErrorEvent,
   LogLevel,
   SearchLibraryResultItem,
@@ -92,6 +87,10 @@ import {
   buildAlbumPlaybackEntries,
   getSelectedAlbumCoverUrl,
 } from '$lib/features/library/selectors';
+import {
+  bootstrapApp,
+  subscribeToTauriEvents,
+} from '$lib/features/shell/appRuntimeBootstrap.svelte';
 import { localeState, type Locale } from '$lib/i18n';
 import * as m from '$lib/paraglide/messages.js';
 import { toast } from 'svelte-sonner';
@@ -768,225 +767,54 @@ export function createAppRuntime() {
     albumStageMotionController.albumStageElement = albumStageElement;
   });
 
-  async function bootstrapApp(shouldDispose: () => boolean) {
-    try {
-      await warmCacheManager();
-    } catch {
-      // Keep startup usable if IndexedDB warm start is unavailable.
-    }
-
-    if (shouldDispose()) {
-      return;
-    }
-
-    try {
-      await settingsController.hydratePreferences(settingsState, {
-        shouldDispose,
-      });
-    } catch {
-      // Preferences hydration failure is already tolerated in controller.
-    }
-
-    const defaultDirPromise = settingsState.outputDir
-      ? Promise.resolve('')
-      : getDefaultOutputDir().catch(() => '');
-
-    try {
-      const albumList = await libraryController.loadAlbums({ shouldDispose });
-
-      const defaultDir = await defaultDirPromise;
-      if (shouldDispose()) {
-        return;
-      }
-      if (defaultDir) {
-        settingsController.applyDefaultOutputDir(settingsState, defaultDir);
-      }
-
-      try {
-        const snapshot = await getLocalInventorySnapshot();
-        if (shouldDispose()) {
-          return;
-        }
-        libraryController.initializeInventory(snapshot);
-      } catch {
-        if (!shouldDispose()) {
-          libraryController.initializeInventory(null);
-        }
-      }
-
-      if (albumList.length > 0 && !libraryController.selectedAlbumCid) {
-        clearSongSelection();
-        selectionModeEnabled = false;
-        await libraryController.selectAlbum(albumList[0], {
-          shouldDispose,
-          afterSelect: async () => {
-            await tick();
-            resetContentScroll();
-          },
-        });
-        if (shouldDispose()) {
-          return;
-        }
-      }
-    } catch {
-      const defaultDir = await defaultDirPromise;
-      if (shouldDispose()) {
-        return;
-      }
-      if (defaultDir) {
-        settingsController.applyDefaultOutputDir(settingsState, defaultDir);
-      }
-    }
-
-    try {
-      const requestSeq = downloadController.beginHydrationAttempt();
-      const manager = await listDownloadJobs();
-      if (shouldDispose()) {
-        return;
-      }
-      downloadController.applyManagerSnapshot(manager, requestSeq);
-    } catch {
-      // Download manager not available
-    }
-
-    try {
-      const requestSeq = ++playerStateInitSeq;
-      const playerState = await getPlayerState();
-      if (shouldDispose()) {
-        return;
-      }
-      if (requestSeq === playerStateInitSeq && !playerStateHydratedFromEvent) {
-        playerController.syncPlayerState(playerState);
-      }
-    } catch {
-      // Player not playing on startup
-    }
-
-    void homeController.loadHomepageData();
+  async function doBootstrapApp(shouldDispose: () => boolean) {
+    await bootstrapApp(
+      {
+        warmCacheManager,
+        settingsController,
+        settingsState,
+        libraryController,
+        getDefaultOutputDir,
+        getLocalInventorySnapshot,
+        clearSongSelection,
+        setSelectionModeEnabled: (value) => {
+          selectionModeEnabled = value;
+        },
+        resetContentScroll,
+        tick,
+        downloadController,
+        listDownloadJobs,
+        playerController,
+        getPlayerState,
+        getPlayerStateInitSeq: () => playerStateInitSeq,
+        incrementPlayerStateInitSeq: () => ++playerStateInitSeq,
+        getPlayerStateHydratedFromEvent: () => playerStateHydratedFromEvent,
+        homeController,
+      },
+      shouldDispose
+    );
   }
 
-  async function subscribeToTauriEvents(shouldDispose: () => boolean) {
-    const unlisteners: (() => void)[] = [];
-
-    const cleanup = () => {
-      while (unlisteners.length > 0) {
-        unlisteners.pop()?.();
-      }
-    };
-
-    async function register<T>(
-      eventName: string,
-      handler: (event: { payload: T }) => void | Promise<void>
-    ) {
-      const unlisten = await listen<T>(eventName, async (event) => {
-        if (shouldDispose()) {
-          return;
-        }
-        await handler(event);
-      });
-
-      if (shouldDispose()) {
-        unlisten();
-        return false;
-      }
-
-      unlisteners.push(unlisten);
-      return true;
-    }
-
-    try {
-      if (
-        !(await register<PlayerState>('player-state-changed', (event) => {
-          playerStateHydratedFromEvent = true;
-          playerController.syncPlayerState(event.payload);
-        }))
-      ) {
-        return cleanup;
-      }
-
-      if (
-        !(await register<PlayerState>('player-progress', (event) => {
-          playerController.syncPlayerProgress(event.payload);
-        }))
-      ) {
-        return cleanup;
-      }
-
-      if (
-        !(await register<DownloadManagerSnapshot>(
-          'download-manager-state-changed',
-          (event) => {
-            downloadController.applyManagerEvent(event.payload);
-          }
-        ))
-      ) {
-        return cleanup;
-      }
-
-      if (
-        !(await register<DownloadJobSnapshot>(
-          'download-job-updated',
-          (event) => {
-            downloadController.applyJobUpdate(event.payload);
-          }
-        ))
-      ) {
-        return cleanup;
-      }
-
-      if (
-        !(await register<DownloadTaskProgressEvent>(
-          'download-task-progress',
-          (event) => {
-            downloadController.applyTaskProgress(event.payload);
-          }
-        ))
-      ) {
-        return cleanup;
-      }
-
-      if (
-        !(await register<AppErrorEvent>('app-error-recorded', (event) => {
-          handleAppErrorEvent(event.payload);
-        }))
-      ) {
-        return cleanup;
-      }
-
-      if (
-        !(await register<LocalInventorySnapshot>(
-          'local-inventory-state-changed',
-          async (event) => {
-            await libraryController.handleInventoryStateChanged(event.payload, {
-              shouldDispose,
-              invalidateInventoryCaches,
-              onSelectionInvalidated: () => {
-                clearSongSelection();
-                selectionModeEnabled = false;
-              },
-            });
-          }
-        ))
-      ) {
-        return cleanup;
-      }
-
-      if (
-        !(await register<void>('homepage-belong-ready', () => {
-          homeController.handleBelongReady();
-        }))
-      ) {
-        return cleanup;
-      }
-
-      return cleanup;
-    } catch (error) {
-      cleanup();
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(m.app_error_event_subscribe_failed({ error: message }), {
-        cause: error,
-      });
-    }
+  async function doSubscribeToTauriEvents(shouldDispose: () => boolean) {
+    return subscribeToTauriEvents(
+      {
+        listen,
+        playerController,
+        downloadController,
+        libraryController,
+        homeController,
+        handleAppErrorEvent,
+        clearSongSelection,
+        setSelectionModeEnabled: (value) => {
+          selectionModeEnabled = value;
+        },
+        invalidateInventoryCaches,
+        setPlayerStateHydratedFromEvent: (value) => {
+          playerStateHydratedFromEvent = value;
+        },
+      },
+      shouldDispose
+    );
   }
 
   function teardownAppRuntime(unsubscribe: (() => void) | null) {
@@ -1017,7 +845,7 @@ export function createAppRuntime() {
 
     void (async () => {
       try {
-        const nextUnsubscribe = await subscribeToTauriEvents(() => disposed);
+        const nextUnsubscribe = await doSubscribeToTauriEvents(() => disposed);
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- async race guard
         if (disposed) {
           nextUnsubscribe();
@@ -1025,7 +853,7 @@ export function createAppRuntime() {
         }
         unsubscribe = nextUnsubscribe;
 
-        await bootstrapApp(() => disposed);
+        await doBootstrapApp(() => disposed);
       } catch (error) {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- async race guard
         if (disposed) {
