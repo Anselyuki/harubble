@@ -328,5 +328,9 @@
   "tag_editor_placeholder_en": "English",
   "tag_editor_placeholder_dim_key": "key",
   "tag_editor_placeholder_dim_zh": "Chinese name",
-  "tag_editor_placeholder_dim_en": "English"
+  "tag_editor_placeholder_dim_en": "English",
+  "tag_editor_search_album_placeholder": "Search albums...",
+  "tag_editor_album_list_label": "Album list",
+  "tag_editor_album_search_empty": "No matching albums",
+  "tag_editor_album_list_empty": "No albums"
 }

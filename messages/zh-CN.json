@@ -328,5 +328,9 @@
   "tag_editor_placeholder_en": "English",
   "tag_editor_placeholder_dim_key": "key",
   "tag_editor_placeholder_dim_zh": "中文名",
-  "tag_editor_placeholder_dim_en": "English"
+  "tag_editor_placeholder_dim_en": "English",
+  "tag_editor_search_album_placeholder": "搜索专辑...",
+  "tag_editor_album_list_label": "专辑列表",
+  "tag_editor_album_search_empty": "未找到匹配的专辑",
+  "tag_editor_album_list_empty": "暂无专辑"
 }
