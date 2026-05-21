@@ -23,6 +23,8 @@ pub fn spawn_network_monitor(state: &AppState) {
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
     use system_configuration::core_foundation::array::CFArray;
     use system_configuration::core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
     use system_configuration::core_foundation::string::CFString;
@@ -30,9 +32,13 @@ mod macos {
         SCDynamicStore, SCDynamicStoreBuilder, SCDynamicStoreCallBackContext,
     };
 
+    const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
+    const SETTLE_DELAY: Duration = Duration::from_millis(500);
+
     struct CallbackState {
-        api: std::sync::Arc<harubble_core::ApiClient>,
-        log_center: std::sync::Arc<crate::logging::LogCenter>,
+        api: Arc<harubble_core::ApiClient>,
+        log_center: Arc<crate::logging::LogCenter>,
+        last_reset: std::sync::Mutex<Instant>,
     }
 
     fn on_network_change(
@@ -40,16 +46,39 @@ mod macos {
         _changed_keys: CFArray<CFString>,
         state: &mut CallbackState,
     ) {
-        if let Err(e) = state.api.reset_http_client() {
-            state.log_center.record(
-                LogPayload::new(
-                    LogLevel::Warn,
+        let now = Instant::now();
+        {
+            let mut last = state.last_reset.lock().unwrap_or_else(|e| e.into_inner());
+            if now.duration_since(*last) < DEBOUNCE_DURATION {
+                return;
+            }
+            *last = now;
+        }
+
+        // Delay to let the system finish applying new settings.
+        // Increased from 200ms to 500ms to handle slower proxy configuration updates.
+        std::thread::sleep(SETTLE_DELAY);
+
+        match state.api.reset_http_client() {
+            Ok(()) => {
+                state.log_center.record(LogPayload::new(
+                    LogLevel::Info,
                     "network",
-                    "network.reset_client_failed",
-                    "网络配置变更后重建 HTTP 客户端失败",
-                )
-                .details(e.to_string()),
-            );
+                    "network.client_reset",
+                    "网络配置变更，已重建 HTTP 客户端",
+                ));
+            }
+            Err(e) => {
+                state.log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "network",
+                        "network.reset_client_failed",
+                        "网络配置变更后重建 HTTP 客户端失败",
+                    )
+                    .details(e.to_string()),
+                );
+            }
         }
     }
 
@@ -60,7 +89,11 @@ mod macos {
         std::thread::Builder::new()
             .name("network-monitor".into())
             .spawn(move || {
-                let callback_state = CallbackState { api, log_center };
+                let callback_state = CallbackState {
+                    api,
+                    log_center,
+                    last_reset: std::sync::Mutex::new(Instant::now() - DEBOUNCE_DURATION),
+                };
 
                 let context = SCDynamicStoreCallBackContext {
                     callout: on_network_change,
@@ -75,8 +108,17 @@ mod macos {
                     return;
                 };
 
-                let watch_patterns =
-                    CFArray::from_CFTypes(&[CFString::from("State:/Network/Global/.*")]);
+                let watch_patterns = CFArray::from_CFTypes(&[
+                    // Active network state (route, DNS, proxies)
+                    CFString::from("State:/Network/Global/.*"),
+                    // Proxy configuration changes (System Preferences / networksetup)
+                    CFString::from("Setup:/Network/Global/Proxies"),
+                    CFString::from("Setup:/Network/Service/.*/Proxies"),
+                    // Interface state changes (link up/down, VPN connect/disconnect)
+                    CFString::from("State:/Network/Interface/.*/Link"),
+                    CFString::from("State:/Network/Interface/.*/IPv4"),
+                    CFString::from("State:/Network/Interface/.*/IPv6"),
+                ]);
 
                 if !store.set_notification_keys(
                     &CFArray::from_CFTypes(&[] as &[CFString]),
