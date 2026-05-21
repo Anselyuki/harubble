@@ -41,6 +41,7 @@ interface TagEditorControllerDeps {
     keep: ConflictResolution
   ) => Promise<void>;
   getAlbumDetail: (albumCid: string) => Promise<AlbumDetail>;
+  getAlbums: () => Album[];
   notifyError: (message: string) => void;
 }
 
@@ -196,6 +197,21 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     }
   }
 
+  function setAlbumSearchQuery(query: string) {
+    tagEditorStore.albumSearchQuery = query;
+  }
+
+  function getFilteredAlbums(): Album[] {
+    const query = tagEditorStore.albumSearchQuery.trim().toLowerCase();
+    const allAlbums = deps.getAlbums();
+    if (!query) return allAlbums;
+    return allAlbums.filter(
+      (album) =>
+        album.name.toLowerCase().includes(query) ||
+        album.artists.some((a) => a.toLowerCase().includes(query))
+    );
+  }
+
   function dispose() {
     loadSeq += 1;
     tagEditorStore.reset();
@@ -235,6 +251,13 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     get loadingSongs() {
       return tagEditorStore.loadingSongs;
     },
+    get albumSearchQuery() {
+      return tagEditorStore.albumSearchQuery;
+    },
+    get filteredAlbums() {
+      return getFilteredAlbums();
+    },
+    setAlbumSearchQuery,
     loadData,
     selectEntity,
     selectAlbumForEdit,
