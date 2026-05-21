@@ -377,3 +377,13 @@ export async function resolveTagEditorConflict(
     keep,
   });
 }
+
+export async function exportTagEditorRegistry(path: string): Promise<void> {
+  return invoke('export_tag_editor_registry', { path });
+}
+
+export async function importTagEditorRegistry(
+  path: string
+): Promise<TagEditorMergeResult> {
+  return invoke<TagEditorMergeResult>('import_tag_editor_registry', { path });
+}

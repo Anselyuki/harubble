@@ -12,6 +12,8 @@
     isMacOS?: boolean;
     onSelectAlbum: (album: Album) => void;
     onSearchChange: (query: string) => void;
+    onImport: () => void;
+    onExport: () => void;
   }
 
   let {
@@ -22,6 +24,8 @@
     isMacOS = false,
     onSelectAlbum,
     onSearchChange,
+    onImport,
+    onExport,
   }: Props = $props();
 </script>
 
@@ -38,10 +42,10 @@
     </div>
 
     <div class="album-list-actions">
-      <button type="button" class="action-button" onclick={() => {}}>
+      <button type="button" class="action-button" onclick={onImport}>
         {m.tag_editor_import()}
       </button>
-      <button type="button" class="action-button" onclick={() => {}}>
+      <button type="button" class="action-button" onclick={onExport}>
         {m.tag_editor_export()}
       </button>
     </div>

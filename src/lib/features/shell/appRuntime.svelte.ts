@@ -43,6 +43,8 @@ import {
   removeTagEditorDimension,
   applyTagEditorRemoteUpdate,
   resolveTagEditorConflict,
+  exportTagEditorRegistry,
+  importTagEditorRegistry,
 } from '$lib/api';
 import {
   clearCache,
@@ -212,6 +214,8 @@ export function createAppRuntime() {
     removeTagEditorDimension,
     applyTagEditorRemoteUpdate,
     resolveTagEditorConflict,
+    exportTagEditorRegistry,
+    importTagEditorRegistry,
     getAlbumDetail: (albumCid: string) => getAlbumDetail(albumCid),
     getAlbums: () => libraryController.albums,
     notifyError,

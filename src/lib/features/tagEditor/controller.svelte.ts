@@ -9,6 +9,7 @@ import type {
   TagEditorMergeResult,
   TagEditorRegistry,
 } from '$lib/types';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { tagEditorStore } from './store.svelte';
 
 interface TagEditorControllerDeps {
@@ -40,6 +41,8 @@ interface TagEditorControllerDeps {
     dimensionKey: string,
     keep: ConflictResolution
   ) => Promise<void>;
+  exportTagEditorRegistry: (path: string) => Promise<void>;
+  importTagEditorRegistry: (path: string) => Promise<TagEditorMergeResult>;
   getAlbumDetail: (albumCid: string) => Promise<AlbumDetail>;
   getAlbums: () => Album[];
   notifyError: (message: string) => void;
@@ -201,6 +204,41 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     tagEditorStore.albumSearchQuery = query;
   }
 
+  async function exportRegistry() {
+    const path = await save({
+      defaultPath: 'tag_registry.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (!path) return;
+
+    try {
+      await deps.exportTagEditorRegistry(path);
+    } catch (e: unknown) {
+      deps.notifyError(
+        `导出失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  async function importRegistry() {
+    const path = await open({
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (!path) return;
+
+    try {
+      const result = await deps.importTagEditorRegistry(path);
+      if (result.conflicts.length > 0) {
+        tagEditorStore.conflicts = result.conflicts;
+      }
+      await loadData();
+    } catch (e: unknown) {
+      deps.notifyError(
+        `导入失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
   const filteredAlbums = $derived.by(() => {
     const query = tagEditorStore.albumSearchQuery.trim().toLowerCase();
     const allAlbums = deps.getAlbums();
@@ -268,6 +306,8 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     addDimension,
     removeDimension,
     resolveConflict,
+    exportRegistry,
+    importRegistry,
     dispose,
   };
 }

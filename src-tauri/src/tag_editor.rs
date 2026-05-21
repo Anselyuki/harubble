@@ -372,6 +372,15 @@ impl TagEditorService {
         self.persist_local()
     }
 
+    /// 将合并后的完整注册表导出到指定路径。
+    ///
+    /// 输出格式与线上 `tag_registry.json` 完全一致（schema_version: 2, camelCase），
+    /// 适合直接发布到远端仓库。
+    pub(crate) fn export_merged(&self, path: &Path) -> Result<()> {
+        let registry = self.compute_merged();
+        persist_registry(path, &registry)
+    }
+
     fn persist_local(&self) -> Result<()> {
         let local = self.local.read().expect("tag_editor local RwLock poisoned");
         let registry = local.to_registry();

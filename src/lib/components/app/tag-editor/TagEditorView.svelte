@@ -54,6 +54,8 @@
           conflict: TagEditorMergeConflict,
           resolution: ConflictResolution
         ) => Promise<void>;
+        exportRegistry: () => Promise<void>;
+        importRegistry: () => Promise<void>;
         setAlbumSearchQuery: (query: string) => void;
       };
       overlayScrollbarOptions: PartialOptions;
@@ -80,6 +82,8 @@
     isMacOS={runtime.isMacOS}
     onSelectAlbum={controller.selectAlbumForEdit}
     onSearchChange={controller.setAlbumSearchQuery}
+    onImport={controller.importRegistry}
+    onExport={controller.exportRegistry}
   />
 
   <div class="tag-editor-content">

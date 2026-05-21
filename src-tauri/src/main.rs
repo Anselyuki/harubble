@@ -209,6 +209,8 @@ fn main() {
             commands::tag_editor::remove_tag_editor_dimension,
             commands::tag_editor::apply_tag_editor_remote_update,
             commands::tag_editor::resolve_tag_editor_conflict,
+            commands::tag_editor::export_tag_editor_registry,
+            commands::tag_editor::import_tag_editor_registry,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
