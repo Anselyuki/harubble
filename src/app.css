@@ -42,7 +42,7 @@
   --font-wide: 'NovecentoSansWide', var(--font-sans);
 
   /* macOS 安全区 */
-  --macos-titlebar-height: 48px;
+  --macos-titlebar-height: 28px;
   --safe-area-top: 0px;
 
   /* shadcn-svelte theme tokens */
