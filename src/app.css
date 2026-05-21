@@ -41,6 +41,10 @@
   --font-brand: 'Geometos', var(--font-sans);
   --font-wide: 'NovecentoSansWide', var(--font-sans);
 
+  /* macOS 安全区 */
+  --macos-titlebar-height: 48px;
+  --safe-area-top: 0px;
+
   /* shadcn-svelte theme tokens */
   --background: var(--bg-primary);
   --foreground: var(--text-primary);
@@ -329,6 +333,10 @@ img[data-image-state='error'] {
   gap: 0;
   overflow: hidden;
   background: var(--bg-primary);
+}
+
+.app-shell.macos-overlay {
+  --safe-area-top: var(--macos-titlebar-height);
 }
 
 /* 侧边栏 */
@@ -838,7 +846,7 @@ img[data-image-state='error'] {
 
 .top-actions {
   position: fixed;
-  top: 16px;
+  top: calc(16px + var(--safe-area-top));
   left: 16px;
   right: 16px;
   z-index: 100;
@@ -870,18 +878,21 @@ img[data-image-state='error'] {
   right: 0;
   user-select: none;
   -webkit-user-select: none;
+  pointer-events: auto;
 }
 
 .sidebar-drag-region {
   top: 0;
   height: 60px;
   z-index: 6;
+  pointer-events: none;
 }
 
 .main-drag-region {
   top: 0;
-  height: 84px;
+  height: 56px;
   z-index: 20;
+  pointer-events: none;
 }
 
 .top-toolbar {

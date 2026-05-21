@@ -397,6 +397,11 @@ export interface TagEditorAlbumEntry {
   releaseDate: string | null;
   faction: TagEditorLocalizedValue | null;
   character: TagEditorLocalizedValue | null;
+  [key: string]:
+    | string
+    | TagEditorLocalizedValue
+    | TagEditorLocalizedValue[]
+    | null;
 }
 
 export interface TagEditorRegistry {

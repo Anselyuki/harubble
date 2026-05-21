@@ -60,6 +60,11 @@ fn album_entry_to_tag_set(
     if let Some(ref v) = entry.character {
         tags.insert("character".to_string(), vec![v.clone()]);
     }
+    for (key, values) in &entry.extra {
+        if !values.is_empty() {
+            tags.insert(key.clone(), values.clone());
+        }
+    }
 
     TagSet { tags }
 }
@@ -167,6 +172,19 @@ fn tag_set_to_album_entry(
         })
     });
 
+    let extra: HashMap<String, Vec<LocalizedValue>> = tag_set
+        .tags
+        .iter()
+        .filter(|(k, _)| {
+            k.as_str() != "type"
+                && k.as_str() != "name"
+                && k.as_str() != "releaseDate"
+                && k.as_str() != "faction"
+                && k.as_str() != "character"
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
     AlbumEntry {
         cid: cid.to_string(),
         album_type,
@@ -174,6 +192,7 @@ fn tag_set_to_album_entry(
         release_date: get_first_str("releaseDate"),
         faction: get_first_lv("faction"),
         character: get_first_lv("character"),
+        extra,
     }
 }
 

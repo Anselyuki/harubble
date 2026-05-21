@@ -93,6 +93,9 @@ pub struct AlbumEntry {
     /// 关联角色，多语种。
     #[serde(default)]
     pub(crate) character: Option<LocalizedValue>,
+    /// 额外维度（未在结构体中显式定义的 tag 维度）。
+    #[serde(flatten, default)]
+    pub(crate) extra: HashMap<String, Vec<LocalizedValue>>,
 }
 
 /// 单首歌曲的扁平化 tag 条目（对应 JSON 中 songs 数组的元素）。

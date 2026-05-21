@@ -332,5 +332,7 @@
   "tag_editor_search_album_placeholder": "Search albums...",
   "tag_editor_album_list_label": "Album list",
   "tag_editor_album_search_empty": "No matching albums",
-  "tag_editor_album_list_empty": "No albums"
+  "tag_editor_album_list_empty": "No albums",
+  "tag_editor_import": "Import",
+  "tag_editor_export": "Export"
 }

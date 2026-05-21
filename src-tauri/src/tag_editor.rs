@@ -12,6 +12,7 @@ use tempfile::NamedTempFile;
 
 const REMOTE_FILE_NAME: &str = "tag_registry_remote.json";
 const LOCAL_FILE_NAME: &str = "tag_registry_local.json";
+const MAIN_CACHE_FILE_NAME: &str = "tag_registry.json";
 
 /// 编辑器内部存储结构，使用 HashMap 便于 CRUD 操作。
 #[derive(Debug, Clone, Default)]
@@ -100,7 +101,9 @@ impl TagEditorService {
     pub(crate) fn new(app_data_dir: &Path) -> Self {
         let remote_path = app_data_dir.join(REMOTE_FILE_NAME);
         let local_path = app_data_dir.join(LOCAL_FILE_NAME);
+        let main_cache_path = app_data_dir.join(MAIN_CACHE_FILE_NAME);
         let remote = load_registry(&remote_path)
+            .or_else(|| load_registry(&main_cache_path))
             .map(|r| EditorStore::from_registry(&r))
             .unwrap_or_else(empty_store);
         let local = load_registry(&local_path)

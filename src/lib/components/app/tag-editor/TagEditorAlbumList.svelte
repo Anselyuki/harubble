@@ -9,6 +9,7 @@
     selectedAlbumCid: string | null;
     searchQuery: string;
     overlayScrollbarOptions: PartialOptions;
+    isMacOS?: boolean;
     onSelectAlbum: (album: Album) => void;
     onSearchChange: (query: string) => void;
   }
@@ -18,20 +19,32 @@
     selectedAlbumCid,
     searchQuery,
     overlayScrollbarOptions,
+    isMacOS = false,
     onSelectAlbum,
     onSearchChange,
   }: Props = $props();
 </script>
 
-<aside class="tag-editor-album-list">
-  <div class="album-list-search">
-    <input
-      type="text"
-      class="album-search-input"
-      placeholder={m.tag_editor_search_album_placeholder()}
-      value={searchQuery}
-      oninput={(e) => onSearchChange(e.currentTarget.value)}
-    />
+<aside class="tag-editor-album-list" class:macos={isMacOS}>
+  <div class="album-list-header">
+    <div class="album-list-search">
+      <input
+        type="text"
+        class="album-search-input"
+        placeholder={m.tag_editor_search_album_placeholder()}
+        value={searchQuery}
+        oninput={(e) => onSearchChange(e.currentTarget.value)}
+      />
+    </div>
+
+    <div class="album-list-actions">
+      <button type="button" class="action-button" onclick={() => {}}>
+        {m.tag_editor_import()}
+      </button>
+      <button type="button" class="action-button" onclick={() => {}}>
+        {m.tag_editor_export()}
+      </button>
+    </div>
   </div>
 
   <OverlayScrollbarsComponent
@@ -78,9 +91,13 @@
     background: var(--surface-sidebar, rgba(0, 0, 0, 0.2));
   }
 
+  .album-list-header {
+    padding-top: var(--safe-area-top);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
   .album-list-search {
     padding: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
   .album-search-input {
@@ -90,7 +107,7 @@
     font-family: var(--font-body);
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(0, 0, 0, 0.2);
     border-radius: 6px;
     outline: none;
   }
@@ -101,6 +118,34 @@
 
   .album-search-input::placeholder {
     color: var(--text-tertiary);
+  }
+
+  .album-list-actions {
+    display: flex;
+    gap: 8px;
+    padding: 0 12px 12px 12px;
+  }
+
+  .action-button {
+    flex: 1;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: var(--font-body);
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .action-button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .action-button:active {
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .tag-editor-album-list :global(.album-list-scroll) {

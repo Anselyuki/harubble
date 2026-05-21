@@ -19,6 +19,7 @@
 
   interface Props {
     runtime: {
+      isMacOS: boolean;
       tagEditorController: {
         merged: TagEditorRegistry | null;
         localOverlay: TagEditorRegistry | null;
@@ -76,6 +77,7 @@
     selectedAlbumCid={controller.editingAlbum?.cid ?? null}
     searchQuery={controller.albumSearchQuery}
     overlayScrollbarOptions={runtime.overlayScrollbarOptions}
+    isMacOS={runtime.isMacOS}
     onSelectAlbum={controller.selectAlbumForEdit}
     onSearchChange={controller.setAlbumSearchQuery}
   />

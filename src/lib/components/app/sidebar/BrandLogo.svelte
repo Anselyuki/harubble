@@ -76,23 +76,17 @@
     display: flex;
     flex-direction: column;
     padding: 20px 24px 12px;
+    padding-top: calc(20px + var(--safe-area-top));
     line-height: 1;
     user-select: none;
     -webkit-user-select: none;
   }
 
-  .brand-logo.macos {
-    padding-top: 48px;
-  }
-
   .brand-logo.collapsed {
     align-items: center;
     padding: 20px 0 12px;
+    padding-top: calc(20px + var(--safe-area-top));
     flex-direction: column-reverse;
-  }
-
-  .brand-logo.collapsed.macos {
-    padding-top: 48px;
   }
 
   .brand-row {

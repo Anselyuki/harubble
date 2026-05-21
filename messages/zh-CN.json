@@ -332,5 +332,7 @@
   "tag_editor_search_album_placeholder": "搜索专辑...",
   "tag_editor_album_list_label": "专辑列表",
   "tag_editor_album_search_empty": "未找到匹配的专辑",
-  "tag_editor_album_list_empty": "暂无专辑"
+  "tag_editor_album_list_empty": "暂无专辑",
+  "tag_editor_import": "导入",
+  "tag_editor_export": "导出"
 }

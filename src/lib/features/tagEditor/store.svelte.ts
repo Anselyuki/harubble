@@ -96,6 +96,21 @@ export const tagEditorStore = {
     }
     if (entry.faction) tags['faction'] = [entry.faction];
     if (entry.character) tags['character'] = [entry.character];
+    // 合并 extra 字段中的自定义维度
+    for (const [key, value] of Object.entries(entry)) {
+      if (
+        key !== 'cid' &&
+        key !== 'type' &&
+        key !== 'name' &&
+        key !== 'releaseDate' &&
+        key !== 'faction' &&
+        key !== 'character' &&
+        Array.isArray(value) &&
+        value.length > 0
+      ) {
+        tags[key] = value as TagEditorLocalizedValue[];
+      }
+    }
     return tags;
   },
   get editingAlbum() {
