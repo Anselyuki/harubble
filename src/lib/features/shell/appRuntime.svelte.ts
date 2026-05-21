@@ -910,10 +910,10 @@ export function createAppRuntime() {
         sidebarStateBeforeTagEditor = shellStore.sidebarCollapsed;
       }
       if (!shellStore.sidebarCollapsed) {
-        shellStore.sidebarCollapsed = true;
+        shellStore.setSidebarCollapsedTransient(true);
       }
     } else if (sidebarStateBeforeTagEditor !== null) {
-      shellStore.sidebarCollapsed = sidebarStateBeforeTagEditor;
+      shellStore.setSidebarCollapsedTransient(sidebarStateBeforeTagEditor);
       sidebarStateBeforeTagEditor = null;
     }
   });

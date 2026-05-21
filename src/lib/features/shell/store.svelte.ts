@@ -198,6 +198,9 @@ export const shellStore = {
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(value));
     }
   },
+  setSidebarCollapsedTransient(value: boolean) {
+    sidebarCollapsed = value;
+  },
   toggleSidebar() {
     sidebarCollapsed = !sidebarCollapsed;
     if (typeof window !== 'undefined') {

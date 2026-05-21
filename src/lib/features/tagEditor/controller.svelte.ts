@@ -201,7 +201,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     tagEditorStore.albumSearchQuery = query;
   }
 
-  function getFilteredAlbums(): Album[] {
+  const filteredAlbums = $derived.by(() => {
     const query = tagEditorStore.albumSearchQuery.trim().toLowerCase();
     const allAlbums = deps.getAlbums();
     if (!query) return allAlbums;
@@ -210,7 +210,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
         album.name.toLowerCase().includes(query) ||
         album.artists.some((a) => a.toLowerCase().includes(query))
     );
-  }
+  });
 
   function dispose() {
     loadSeq += 1;
@@ -255,7 +255,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       return tagEditorStore.albumSearchQuery;
     },
     get filteredAlbums() {
-      return getFilteredAlbums();
+      return filteredAlbums;
     },
     setAlbumSearchQuery,
     loadData,

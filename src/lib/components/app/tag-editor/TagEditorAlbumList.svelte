@@ -39,35 +39,32 @@
     options={overlayScrollbarOptions}
     defer
   >
-    <div
-      class="album-list-items"
-      role="listbox"
-      aria-label={m.tag_editor_album_list_label()}
-    >
+    <ul class="album-list-items" aria-label={m.tag_editor_album_list_label()}>
       {#each albums as album (album.cid)}
-        <button
-          type="button"
-          class="album-list-item"
-          class:active={selectedAlbumCid === album.cid}
-          role="option"
-          aria-selected={selectedAlbumCid === album.cid}
-          onclick={() => onSelectAlbum(album)}
-        >
-          <span class="album-item-name">{album.name}</span>
-          {#if album.artists.length > 0}
-            <span class="album-item-artists">{album.artists.join(', ')}</span>
-          {/if}
-        </button>
+        <li>
+          <button
+            type="button"
+            class="album-list-item"
+            class:active={selectedAlbumCid === album.cid}
+            aria-current={selectedAlbumCid === album.cid ? 'true' : undefined}
+            onclick={() => onSelectAlbum(album)}
+          >
+            <span class="album-item-name">{album.name}</span>
+            {#if album.artists.length > 0}
+              <span class="album-item-artists">{album.artists.join(', ')}</span>
+            {/if}
+          </button>
+        </li>
       {/each}
 
       {#if albums.length === 0}
-        <div class="album-list-empty">
+        <li class="album-list-empty">
           {searchQuery.trim()
             ? m.tag_editor_album_search_empty()
             : m.tag_editor_album_list_empty()}
-        </div>
+        </li>
       {/if}
-    </div>
+    </ul>
   </OverlayScrollbarsComponent>
 </aside>
 
@@ -115,6 +112,12 @@
     flex-direction: column;
     gap: 2px;
     padding: 8px;
+    margin: 0;
+    list-style: none;
+  }
+
+  .album-list-items li {
+    display: contents;
   }
 
   .album-list-item {
