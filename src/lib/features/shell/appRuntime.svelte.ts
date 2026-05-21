@@ -213,6 +213,7 @@ export function createAppRuntime() {
     applyTagEditorRemoteUpdate,
     resolveTagEditorConflict,
     getAlbumDetail: (albumCid: string) => getAlbumDetail(albumCid),
+    getAlbums: () => libraryController.albums,
     notifyError,
   });
 
@@ -265,11 +266,7 @@ export function createAppRuntime() {
   const prefersReducedMotion = $derived(envStore.prefersReducedMotion);
   const albums = $derived(libraryController.albums);
   const selectedAlbum = $derived(libraryController.selectedAlbum);
-  const selectedAlbumCid = $derived(
-    shellStore.currentView === 'tagEditor'
-      ? (tagEditorController.editingAlbum?.cid ?? null)
-      : libraryController.selectedAlbumCid
-  );
+  const selectedAlbumCid = $derived(libraryController.selectedAlbumCid);
   const loadingAlbums = $derived(libraryController.loadingAlbums);
   const loadingDetail = $derived(libraryController.loadingDetail);
   const errorMsg = $derived(libraryController.errorMsg);
@@ -456,10 +453,6 @@ export function createAppRuntime() {
   }
 
   async function handleSelectAlbum(album: Album) {
-    if (shellStore.currentView === 'tagEditor') {
-      await tagEditorController.selectAlbumForEdit(album);
-      return;
-    }
     shellStore.navigateToLibrary();
     clearSongSelection();
     selectionModeEnabled = false;
@@ -906,6 +899,23 @@ export function createAppRuntime() {
       gsapScrollIntoView(contentEl, row, 'center');
       libraryController.clearPendingScrollToSong(expectedSongCid);
     });
+  });
+
+  let sidebarStateBeforeTagEditor: boolean | null = null;
+
+  $effect(() => {
+    const view = shellStore.currentView;
+    if (view === 'tagEditor') {
+      if (sidebarStateBeforeTagEditor === null) {
+        sidebarStateBeforeTagEditor = shellStore.sidebarCollapsed;
+      }
+      if (!shellStore.sidebarCollapsed) {
+        shellStore.sidebarCollapsed = true;
+      }
+    } else if (sidebarStateBeforeTagEditor !== null) {
+      shellStore.sidebarCollapsed = sidebarStateBeforeTagEditor;
+      sidebarStateBeforeTagEditor = null;
+    }
   });
 
   return {
