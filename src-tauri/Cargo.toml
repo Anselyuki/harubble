@@ -42,5 +42,8 @@ uuid = { version = "1", features = ["v4"] }
 fluent-templates = "0.14.0"
 unic-langid = "0.9.6"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration = "0.7"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

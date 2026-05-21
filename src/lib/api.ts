@@ -170,6 +170,10 @@ export async function clearResponseCache(): Promise<void> {
   return invoke('clear_response_cache');
 }
 
+export async function resetHttpClient(): Promise<void> {
+  return invoke('reset_http_client');
+}
+
 export async function extractImageTheme(
   imageUrl: string
 ): Promise<ThemePalette> {

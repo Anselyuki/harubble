@@ -43,7 +43,7 @@
 use anyhow::Context;
 use harubble::{
     commands, initialize_download_bridge, spawn_belong_warmup, spawn_inventory_scan,
-    spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
+    spawn_network_monitor, spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
 };
 use tauri::{LogicalSize, Manager, RunEvent, WebviewWindow};
 
@@ -134,6 +134,7 @@ fn main() {
             );
             spawn_belong_warmup(app.handle().clone(), &state);
             spawn_tag_registry_sync(&state);
+            spawn_network_monitor(&state);
             app.manage(state);
 
             #[cfg(debug_assertions)]
@@ -184,6 +185,7 @@ fn main() {
             commands::logging::get_log_file_status,
             commands::downloads::clear_audio_cache,
             commands::downloads::clear_response_cache,
+            commands::downloads::reset_http_client,
             commands::downloads::create_download_job,
             commands::downloads::list_download_jobs,
             commands::downloads::get_download_job,
