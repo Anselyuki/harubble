@@ -18,6 +18,7 @@ let editingAlbum = $state<Album | null>(null);
 let editingAlbumSongs = $state<SongEntry[]>([]);
 let editingSong = $state<SongEntry | null>(null);
 let loadingSongs = $state(false);
+let albumSearchQuery = $state('');
 
 function reset() {
   merged = null;
@@ -30,6 +31,7 @@ function reset() {
   editingAlbumSongs = [];
   editingSong = null;
   loadingSongs = false;
+  albumSearchQuery = '';
 }
 
 export const tagEditorStore = {
@@ -119,6 +121,12 @@ export const tagEditorStore = {
   },
   set loadingSongs(value: boolean) {
     loadingSongs = value;
+  },
+  get albumSearchQuery() {
+    return albumSearchQuery;
+  },
+  set albumSearchQuery(value: string) {
+    albumSearchQuery = value;
   },
   reset,
 };
