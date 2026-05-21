@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
+  import TagEditorAlbumList from './TagEditorAlbumList.svelte';
   import TagEditorPanel from './TagEditorPanel.svelte';
   import TagEditorSongPanel from './TagEditorSongPanel.svelte';
   import TagEditorConflictList from './TagEditorConflictList.svelte';
@@ -30,6 +31,8 @@
         loadingSongs: boolean;
         conflicts: TagEditorMergeConflict[];
         loading: boolean;
+        filteredAlbums: Album[];
+        albumSearchQuery: string;
         loadData: () => Promise<void>;
         selectEntity: (type: TagEditorEntityType, cid: string) => void;
         selectAlbumForEdit: (album: Album) => Promise<void>;
@@ -50,6 +53,7 @@
           conflict: TagEditorMergeConflict,
           resolution: ConflictResolution
         ) => Promise<void>;
+        setAlbumSearchQuery: (query: string) => void;
       };
       overlayScrollbarOptions: PartialOptions;
     };
@@ -67,61 +71,78 @@
 </script>
 
 <div class="tag-editor-view">
-  <OverlayScrollbarsComponent
-    class="tag-editor-scroll"
-    options={runtime.overlayScrollbarOptions}
-    defer
-  >
-    {#if controller.loading && !controller.merged}
-      <div class="tag-editor-loading">
-        <p>{m.tag_editor_loading()}</p>
-      </div>
-    {:else if !controller.editingAlbum}
-      <div class="tag-editor-empty">
-        <p>{m.tag_editor_select_album_hint()}</p>
-      </div>
-    {:else if controller.editingSong}
-      <TagEditorSongPanel
-        song={controller.editingSong}
-        merged={controller.merged}
-        selectedEntityTags={controller.selectedEntityTags}
-        onSetTag={controller.setTag}
-        onRemoveTag={controller.removeTag}
-        onBack={controller.backToAlbum}
-      />
-    {:else}
-      <TagEditorPanel
-        album={controller.editingAlbum}
-        songs={controller.editingAlbumSongs}
-        loadingSongs={controller.loadingSongs}
-        merged={controller.merged}
-        selectedEntityTags={controller.selectedEntityTags}
-        onSetTag={controller.setTag}
-        onRemoveTag={controller.removeTag}
-        onSelectSong={controller.selectSongForEdit}
-        onAddDimension={controller.addDimension}
-        onRemoveDimension={controller.removeDimension}
-      />
-    {/if}
+  <TagEditorAlbumList
+    albums={controller.filteredAlbums}
+    selectedAlbumCid={controller.editingAlbum?.cid ?? null}
+    searchQuery={controller.albumSearchQuery}
+    overlayScrollbarOptions={runtime.overlayScrollbarOptions}
+    onSelectAlbum={controller.selectAlbumForEdit}
+    onSearchChange={controller.setAlbumSearchQuery}
+  />
 
-    {#if controller.conflicts.length > 0}
-      <TagEditorConflictList
-        conflicts={controller.conflicts}
-        onResolve={controller.resolveConflict}
-      />
-    {/if}
-  </OverlayScrollbarsComponent>
+  <div class="tag-editor-content">
+    <OverlayScrollbarsComponent
+      class="tag-editor-scroll"
+      options={runtime.overlayScrollbarOptions}
+      defer
+    >
+      {#if controller.loading && !controller.merged}
+        <div class="tag-editor-loading">
+          <p>{m.tag_editor_loading()}</p>
+        </div>
+      {:else if !controller.editingAlbum}
+        <div class="tag-editor-empty">
+          <p>{m.tag_editor_select_album_hint()}</p>
+        </div>
+      {:else if controller.editingSong}
+        <TagEditorSongPanel
+          song={controller.editingSong}
+          merged={controller.merged}
+          selectedEntityTags={controller.selectedEntityTags}
+          onSetTag={controller.setTag}
+          onRemoveTag={controller.removeTag}
+          onBack={controller.backToAlbum}
+        />
+      {:else}
+        <TagEditorPanel
+          album={controller.editingAlbum}
+          songs={controller.editingAlbumSongs}
+          loadingSongs={controller.loadingSongs}
+          merged={controller.merged}
+          selectedEntityTags={controller.selectedEntityTags}
+          onSetTag={controller.setTag}
+          onRemoveTag={controller.removeTag}
+          onSelectSong={controller.selectSongForEdit}
+          onAddDimension={controller.addDimension}
+          onRemoveDimension={controller.removeDimension}
+        />
+      {/if}
+
+      {#if controller.conflicts.length > 0}
+        <TagEditorConflictList
+          conflicts={controller.conflicts}
+          onResolve={controller.resolveConflict}
+        />
+      {/if}
+    </OverlayScrollbarsComponent>
+  </div>
 </div>
 
 <style>
   .tag-editor-view {
     flex: 1;
     display: flex;
+    overflow: hidden;
+  }
+
+  .tag-editor-content {
+    flex: 1;
+    display: flex;
     flex-direction: column;
     overflow: hidden;
   }
 
-  .tag-editor-view :global(.tag-editor-scroll) {
+  .tag-editor-content :global(.tag-editor-scroll) {
     flex: 1;
   }
 
