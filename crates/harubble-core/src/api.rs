@@ -10,7 +10,7 @@ use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 const DEFAULT_BASE_URL: &str = "https://monster-siren.hypergryph.com/api";
@@ -18,6 +18,7 @@ const DEFAULT_CACHE_CAPACITY: usize = 100;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_JSON_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
 const MAX_AUDIO_RESPONSE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -162,7 +163,7 @@ struct ApiResponse<T> {
 /// 上层播放器、下载服务或 Tauri command 的共享数据入口。
 #[derive(Clone)]
 pub struct ApiClient {
-    client: Client,
+    client: Arc<RwLock<Client>>,
     base_url: String,
     response_cache: Arc<Mutex<LruCache<String, Vec<u8>>>>,
 }
@@ -177,17 +178,41 @@ impl ApiClient {
     }
 
     fn new_with_config(base_url: String, capacity: usize) -> Result<Self> {
-        let client = Client::builder()
-            .user_agent("Mozilla/5.0 (compatible; harubble)")
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .build()?;
+        let client = Self::build_client()?;
         let capacity = NonZeroUsize::new(capacity).expect("cache capacity must be non-zero");
         Ok(Self {
-            client,
+            client: Arc::new(RwLock::new(client)),
             base_url: base_url.trim_end_matches('/').to_string(),
             response_cache: Arc::new(Mutex::new(LruCache::new(capacity))),
         })
+    }
+
+    fn build_client() -> Result<Client> {
+        Ok(Client::builder()
+            .user_agent("Mozilla/5.0 (compatible; harubble)")
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+            .build()?)
+    }
+
+    fn http_client(&self) -> Client {
+        self.client
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// 重建内部 HTTP 客户端以适应网络环境变化。
+    ///
+    /// 当系统代理设置变更或网络接口切换后，已有的 HTTP 客户端可能持有过期的连接池
+    /// 与代理配置。调用此方法会丢弃旧客户端并以当前系统环境重新构建，使后续请求
+    /// 能够正确路由。若重建失败则保留原有客户端不变。
+    pub fn reset_http_client(&self) -> Result<()> {
+        let new_client = Self::build_client()?;
+        *self.client.write().unwrap_or_else(|e| e.into_inner()) = new_client;
+        self.clear_response_cache();
+        Ok(())
     }
 
     fn api_url(&self, path: &str) -> String {
@@ -212,7 +237,7 @@ impl ApiClient {
     }
 
     async fn fetch_response_bytes(&self, url: &str, accept_json: bool) -> Result<Vec<u8>> {
-        let mut request = self.client.get(url);
+        let mut request = self.http_client().get(url);
         if accept_json {
             request = request.header("Accept", "application/json");
         }
@@ -240,7 +265,12 @@ impl ApiClient {
     ) -> Result<Vec<u8>> {
         use futures::StreamExt;
 
-        let response = self.client.get(url).send().await?.error_for_status()?;
+        let response = self
+            .http_client()
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?;
         let total = response.content_length();
         if let Some(len) = total {
             anyhow::ensure!(
@@ -334,7 +364,12 @@ impl ApiClient {
 
         crate::url_validator::validate_download_url(url)?;
 
-        let resp = self.client.get(url).send().await?.error_for_status()?;
+        let resp = self
+            .http_client()
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?;
         let total = resp.content_length();
         if let Some(len) = total {
             anyhow::ensure!(
