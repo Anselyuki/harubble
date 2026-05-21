@@ -111,6 +111,7 @@
       collections={runtime.collectionController.collections}
       onAddToCollection={(colId, songCid) =>
         runtime.collectionController.handleAddSongs(colId, [songCid])}
+      onBack={runtime.handleDeselectAlbum}
     />
   </AlbumWorkspace>
 {:else if isSearchMode}

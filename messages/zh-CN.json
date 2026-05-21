@@ -229,6 +229,7 @@
   "download_job_selection_title": "已选 {count} 首",
   "download_job_selection_title_cross_albums": "已选 {count} 首 · {albumCount} 张专辑",
   "library_album_stage_alt": "{name} 横幅图",
+  "library_album_back": "返回专辑列表",
   "library_song_row_play_aria": "播放 {name}",
   "library_search_result_aria": "{kind}：{name}",
   "player_queue_item_aria": "第 {index} 首，{name}",

@@ -5,6 +5,7 @@
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import type { EventListeners, PartialOptions } from 'overlayscrollbars';
   import type { AlbumDetail, CollectionSummary, SongEntry } from '$lib/types';
+  import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
   import MotionSpinner from '$lib/components/MotionSpinner.svelte';
   import AlbumStage from '$lib/components/app/album/AlbumStage.svelte';
   import AlbumDetailSkeleton from '$lib/components/app/album/AlbumDetailSkeleton.svelte';
@@ -54,6 +55,7 @@
     hasCurrentSelectionJob: (songCids: string[]) => boolean;
     collections?: CollectionSummary[];
     onAddToCollection?: (collectionId: string, songCid: string) => void;
+    onBack?: () => void;
   }
 
   let {
@@ -98,6 +100,7 @@
     hasCurrentSelectionJob,
     collections,
     onAddToCollection,
+    onBack,
   }: Props = $props();
 
   let skeletonEl = $state<HTMLElement | undefined>();
@@ -131,88 +134,104 @@
   });
 </script>
 
-<OverlayScrollbarsComponent
-  element="div"
-  class="h-full"
-  data-overlayscrollbars-initialize
-  options={overlayScrollbarOptions}
-  events={contentScrollbarEvents}
-  defer
-  onwheel={onContentWheel}
-  aria-busy={loadingDetail}
->
-  {#if loadingDetail && showDetailSkeleton}
-    <section class="album-panel album-panel-loading" bind:this={skeletonEl}>
-      <AlbumStage
-        loading={true}
-        {reducedMotion}
-        stageStyle={albumStageStyle}
-        mediaHeight={albumStageMediaHeight}
-        scrimOpacity={albumStageScrimOpacity}
-        bind:element={albumStageElement}
-      />
-      <AlbumDetailSkeleton {reducedMotion} />
-    </section>
-  {:else if selectedAlbum}
-    {#key selectedAlbum.cid}
-      <section class="album-panel" bind:this={albumPanelEl}>
+<div class="album-workspace-content">
+  {#if onBack}
+    <button
+      type="button"
+      class="back-button"
+      aria-label={m.library_album_back()}
+      onclick={onBack}
+    >
+      <ChevronLeftIcon size={18} />
+    </button>
+  {/if}
+
+  <OverlayScrollbarsComponent
+    element="div"
+    class="h-full"
+    data-overlayscrollbars-initialize
+    options={overlayScrollbarOptions}
+    events={contentScrollbarEvents}
+    defer
+    onwheel={onContentWheel}
+    aria-busy={loadingDetail}
+  >
+    {#if loadingDetail && showDetailSkeleton}
+      <section class="album-panel album-panel-loading" bind:this={skeletonEl}>
         <AlbumStage
-          albumName={selectedAlbum.name}
-          artworkUrl={selectedAlbumArtworkUrl}
+          loading={true}
           {reducedMotion}
           stageStyle={albumStageStyle}
           mediaHeight={albumStageMediaHeight}
           scrimOpacity={albumStageScrimOpacity}
-          imageOpacity={albumStageImageOpacity}
-          imageTransform={albumStageImageTransform}
-          solidifyOpacity={albumStageSolidifyOpacity}
           bind:element={albumStageElement}
         />
-        <AlbumDetailPanel
-          album={selectedAlbum}
-          {currentSongCid}
-          {isPlaybackActive}
-          {isPlaybackPaused}
-          {downloadingAlbumCid}
-          {selectionModeEnabled}
-          {selectedSongCids}
-          {reducedMotion}
-          {onToggleSelectionMode}
-          {onSelectAllSongs}
-          {onDeselectAllSongs}
-          {onInvertSongSelection}
-          {onDownloadAlbum}
-          {onDownloadSelection}
-          {onPlaySong}
-          {onTogglePlay}
-          {onDownloadSong}
-          {onToggleSongSelection}
-          {isSongSelected}
-          {getSongDownloadState}
-          {isSongDownloadInteractionBlocked}
-          {hasAlbumDownloadJob}
-          {isSelectionDownloadDisabled}
-          {isCurrentSelectionCreating}
-          {hasCurrentSelectionJob}
-          {collections}
-          {onAddToCollection}
-        />
+        <AlbumDetailSkeleton {reducedMotion} />
       </section>
-    {/key}
-  {/if}
+    {:else if selectedAlbum}
+      {#key selectedAlbum.cid}
+        <section class="album-panel" bind:this={albumPanelEl}>
+          <AlbumStage
+            albumName={selectedAlbum.name}
+            artworkUrl={selectedAlbumArtworkUrl}
+            {reducedMotion}
+            stageStyle={albumStageStyle}
+            mediaHeight={albumStageMediaHeight}
+            scrimOpacity={albumStageScrimOpacity}
+            imageOpacity={albumStageImageOpacity}
+            imageTransform={albumStageImageTransform}
+            solidifyOpacity={albumStageSolidifyOpacity}
+            bind:element={albumStageElement}
+          />
+          <AlbumDetailPanel
+            album={selectedAlbum}
+            {currentSongCid}
+            {isPlaybackActive}
+            {isPlaybackPaused}
+            {downloadingAlbumCid}
+            {selectionModeEnabled}
+            {selectedSongCids}
+            {reducedMotion}
+            {onToggleSelectionMode}
+            {onSelectAllSongs}
+            {onDeselectAllSongs}
+            {onInvertSongSelection}
+            {onDownloadAlbum}
+            {onDownloadSelection}
+            {onPlaySong}
+            {onTogglePlay}
+            {onDownloadSong}
+            {onToggleSongSelection}
+            {isSongSelected}
+            {getSongDownloadState}
+            {isSongDownloadInteractionBlocked}
+            {hasAlbumDownloadJob}
+            {isSelectionDownloadDisabled}
+            {isCurrentSelectionCreating}
+            {hasCurrentSelectionJob}
+            {collections}
+            {onAddToCollection}
+          />
+        </section>
+      {/key}
+    {/if}
 
-  {#if !loadingDetail && !selectedAlbum}
-    <h1 class="page-title">{emptyLabels.title}</h1>
-    <p class="page-subtitle">{emptyLabels.hint}</p>
-  {/if}
+    {#if !loadingDetail && !selectedAlbum}
+      <h1 class="page-title">{emptyLabels.title}</h1>
+      <p class="page-subtitle">{emptyLabels.hint}</p>
+    {/if}
 
-  {#if loadingDetail && selectedAlbum}
-    <div
-      class="content-loading-mask"
-      aria-hidden="true"
-      bind:this={loadingMaskEl}
-    >
-      <MotionSpinner className="content-loading-mask-spinner" {reducedMotion} />
-    </div>
-  {/if}
-</OverlayScrollbarsComponent>
+    {#if loadingDetail && selectedAlbum}
+      <div
+        class="content-loading-mask"
+        aria-hidden="true"
+        bind:this={loadingMaskEl}
+      >
+        <MotionSpinner
+          className="content-loading-mask-spinner"
+          {reducedMotion}
+        />
+      </div>
+    {/if}
+  </OverlayScrollbarsComponent>
+</div>

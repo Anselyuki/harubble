@@ -13,6 +13,7 @@ import {
   getPlayerState,
   setPlaybackVolume,
   clearResponseCache,
+  resetHttpClient,
   extractImageTheme,
   getImageDataUrl,
   getSongLyrics,
@@ -844,6 +845,11 @@ export function createAppRuntime() {
     let disposed = false;
     let unsubscribe: (() => void) | null = null;
 
+    const handleOnline = () => {
+      void resetHttpClient().catch(() => {});
+    };
+    window.addEventListener('online', handleOnline);
+
     void (async () => {
       try {
         const nextUnsubscribe = await doSubscribeToTauriEvents(() => disposed);
@@ -870,6 +876,7 @@ export function createAppRuntime() {
 
     return () => {
       disposed = true;
+      window.removeEventListener('online', handleOnline);
       teardownAppRuntime(unsubscribe);
     };
   });
@@ -1097,6 +1104,7 @@ export function createAppRuntime() {
     notifyInfo,
     notifyError,
     handleSelectAlbum,
+    handleDeselectAlbum: libraryController.deselectAlbum,
     handleSelectSearchResult,
     handlePlay,
     handlePlayCollectionSong,

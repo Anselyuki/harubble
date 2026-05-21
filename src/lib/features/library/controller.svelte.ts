@@ -388,6 +388,14 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     pendingScrollToSongCid = songCid;
   }
 
+  function deselectAlbum() {
+    selectedAlbum = null;
+    selectedAlbumCid = null;
+    clearPendingScrollToSong();
+    clearDetailSkeleton();
+    loadingDetail = false;
+  }
+
   function clearPendingScrollToSong(songCid?: string) {
     if (!songCid || pendingScrollToSongCid === songCid) {
       pendingScrollToSongCid = null;
@@ -450,6 +458,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     dispose,
     loadAlbums,
     selectAlbum,
+    deselectAlbum,
     replaceAlbumsAndRefreshCurrentSelection,
     reloadAlbumsAndRefreshCurrentSelection,
     initializeInventory,
