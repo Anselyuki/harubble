@@ -45,12 +45,12 @@
     get sidebarCollapsed() {
       return runtime.sidebarCollapsed;
     },
-    toggleSidebar: runtime.toggleSidebar,
-    handleRefresh: runtime.handleRefresh,
-    handleToggleSettings: runtime.handleToggleSettings,
-    handleToggleDownloads: runtime.handleToggleDownloads,
-    notifyInfo: runtime.notifyInfo,
-    notifyError: runtime.notifyError,
+    toggleSidebar: () => runtime.toggleSidebar(),
+    handleRefresh: () => runtime.handleRefresh(),
+    handleToggleSettings: () => runtime.handleToggleSettings(),
+    handleToggleDownloads: () => runtime.handleToggleDownloads(),
+    notifyInfo: (message) => runtime.notifyInfo(message),
+    notifyError: (message) => runtime.notifyError(message),
     navigate: (view) => {
       runtime.shellStore.currentView = view;
     },
@@ -120,19 +120,32 @@
     get muted() {
       return runtime.playerController.muted;
     },
-    pause: runtime.playerController.pause,
-    resume: runtime.playerController.resume,
-    seek: runtime.playerController.seek,
-    playPrevious: runtime.playerController.playPrevious,
-    playNext: runtime.playerController.playNext,
-    toggleShuffle: runtime.playerController.toggleShuffle,
-    toggleRepeat: runtime.playerController.toggleRepeat,
-    toggleLyrics: runtime.playerController.toggleLyrics,
-    togglePlaylist: runtime.playerController.togglePlaylist,
-    toggleFullscreen: runtime.playerController.toggleFullscreen,
-    setVolume: runtime.playerController.setVolume,
-    toggleMute: runtime.playerController.toggleMute,
-    playQueueEntry: runtime.playerController.playQueueEntry,
+    pause: () => {
+      void runtime.playerController.pause();
+    },
+    resume: () => {
+      void runtime.playerController.resume();
+    },
+    seek: (positionSecs) => {
+      void runtime.playerController.seek(positionSecs);
+    },
+    playPrevious: () => {
+      void runtime.playerController.playPrevious();
+    },
+    playNext: () => {
+      void runtime.playerController.playNext();
+    },
+    toggleShuffle: (next) => runtime.playerController.toggleShuffle(next),
+    toggleRepeat: (next) => runtime.playerController.toggleRepeat(next),
+    toggleLyrics: () => runtime.playerController.toggleLyrics(),
+    togglePlaylist: () => runtime.playerController.togglePlaylist(),
+    toggleFullscreen: () => runtime.playerController.toggleFullscreen(),
+    setVolume: (volume) => {
+      void runtime.playerController.setVolume(volume);
+    },
+    toggleMute: () => runtime.playerController.toggleMute(),
+    playQueueEntry: (entry, order, index) =>
+      runtime.playerController.playQueueEntry(entry, order, index),
   });
 
   setDownloadContext({
@@ -169,30 +182,43 @@
     set kindFilter(v) {
       runtime.downloadController.kindFilter = v;
     },
-    canClearDownloadHistory: runtime.downloadController.canClearDownloadHistory,
-    getJobProgress: runtime.downloadController.getJobProgress,
-    getJobProgressText: runtime.downloadController.getJobProgressText,
-    getJobStatusLabel: runtime.downloadController.getJobStatusLabel,
-    getJobKindLabel: runtime.downloadController.getJobKindLabel,
-    getJobSummaryLabel: runtime.downloadController.getJobSummaryLabel,
-    getJobDisplayTitle: runtime.downloadController.getJobDisplayTitle,
-    getJobErrorSummary: runtime.downloadController.getJobErrorSummary,
-    isJobActive: runtime.downloadController.isJobActive,
-    canCancelTask: runtime.downloadController.canCancelTask,
-    canRetryTask: runtime.downloadController.canRetryTask,
-    getTaskErrorLabel: runtime.downloadController.getTaskErrorLabel,
-    getTaskStatusLabel: runtime.downloadController.getTaskStatusLabel,
-    handleClearDownloadHistory:
-      runtime.downloadController.handleClearDownloadHistory,
-    handleCancelDownloadJob: runtime.downloadController.handleCancelDownloadJob,
-    handleRetryDownloadJob: runtime.downloadController.handleRetryDownloadJob,
-    handleCancelDownloadTask:
-      runtime.downloadController.handleCancelDownloadTask,
-    handleRetryDownloadTask: runtime.downloadController.handleRetryDownloadTask,
-    handleSongDownload: runtime.downloadController.handleSongDownload,
-    getSongDownloadState: runtime.downloadController.getSongDownloadState,
-    isSongDownloadInteractionBlocked:
-      runtime.downloadController.isSongDownloadInteractionBlocked,
+    canClearDownloadHistory: () =>
+      runtime.downloadController.canClearDownloadHistory(),
+    getJobProgress: (job) => runtime.downloadController.getJobProgress(job),
+    getJobProgressText: (job) =>
+      runtime.downloadController.getJobProgressText(job),
+    getJobStatusLabel: (job) =>
+      runtime.downloadController.getJobStatusLabel(job),
+    getJobKindLabel: (job) => runtime.downloadController.getJobKindLabel(job),
+    getJobSummaryLabel: (job) =>
+      runtime.downloadController.getJobSummaryLabel(job),
+    getJobDisplayTitle: (job) =>
+      runtime.downloadController.getJobDisplayTitle(job),
+    getJobErrorSummary: (job) =>
+      runtime.downloadController.getJobErrorSummary(job),
+    isJobActive: (jobId) => runtime.downloadController.isJobActive(jobId),
+    canCancelTask: (task) => runtime.downloadController.canCancelTask(task),
+    canRetryTask: (task) => runtime.downloadController.canRetryTask(task),
+    getTaskErrorLabel: (task) =>
+      runtime.downloadController.getTaskErrorLabel(task),
+    getTaskStatusLabel: (task) =>
+      runtime.downloadController.getTaskStatusLabel(task),
+    handleClearDownloadHistory: () =>
+      runtime.downloadController.handleClearDownloadHistory(),
+    handleCancelDownloadJob: (jobId) =>
+      runtime.downloadController.handleCancelDownloadJob(jobId),
+    handleRetryDownloadJob: (jobId) =>
+      runtime.downloadController.handleRetryDownloadJob(jobId),
+    handleCancelDownloadTask: (jobId, taskId) =>
+      runtime.downloadController.handleCancelDownloadTask(jobId, taskId),
+    handleRetryDownloadTask: (jobId, taskId) =>
+      runtime.downloadController.handleRetryDownloadTask(jobId, taskId),
+    handleSongDownload: (songCid) =>
+      runtime.downloadController.handleSongDownload(songCid),
+    getSongDownloadState: (songCid) =>
+      runtime.downloadController.getSongDownloadState(songCid),
+    isSongDownloadInteractionBlocked: (songCid) =>
+      runtime.downloadController.isSongDownloadInteractionBlocked(songCid),
   });
 
   setLibraryContext({
@@ -241,17 +267,18 @@
     get selectedSongCids() {
       return runtime.selectedSongCids;
     },
-    setSearchQuery: runtime.libraryController.setSearchQuery,
-    setSearchScope: runtime.libraryController.setSearchScope,
-    handleSelectAlbum: runtime.handleSelectAlbum,
-    handleSelectSearchResult: runtime.handleSelectSearchResult,
-    toggleSelectionMode: runtime.toggleSelectionMode,
-    selectAllSongs: runtime.selectAllSongs,
-    deselectAllSongs: runtime.deselectAllSongs,
-    invertSongSelection: runtime.invertSongSelection,
-    toggleSongSelection: runtime.toggleSongSelection,
-    isSongSelected: runtime.isSongSelected,
-    handleDownloadSelection: runtime.handleDownloadSelection,
+    setSearchQuery: (query) => runtime.libraryController.setSearchQuery(query),
+    setSearchScope: (scope) => runtime.libraryController.setSearchScope(scope),
+    handleSelectAlbum: (album) => runtime.handleSelectAlbum(album),
+    handleSelectSearchResult: (item) => runtime.handleSelectSearchResult(item),
+    toggleSelectionMode: () => runtime.toggleSelectionMode(),
+    selectAllSongs: () => runtime.selectAllSongs(),
+    deselectAllSongs: () => runtime.deselectAllSongs(),
+    invertSongSelection: () => runtime.invertSongSelection(),
+    toggleSongSelection: (songCid) => runtime.toggleSongSelection(songCid),
+    isSongSelected: (songCid) => runtime.isSongSelected(songCid),
+    handleDownloadSelection: (songCids) =>
+      runtime.handleDownloadSelection(songCids),
   });
 
   setCollectionContext({
@@ -276,18 +303,25 @@
     get formDialogMode() {
       return runtime.collectionController.formDialogMode;
     },
-    selectCollection: runtime.collectionController.selectCollection,
-    openCreateDialog: runtime.collectionController.openCreateDialog,
-    openEditDialog: runtime.collectionController.openEditDialog,
-    closeFormDialog: runtime.collectionController.closeFormDialog,
-    handleCreate: runtime.collectionController.handleCreate,
-    handleUpdate: runtime.collectionController.handleUpdate,
-    handleDelete: runtime.collectionController.handleDelete,
-    handleExport: runtime.collectionController.handleExport,
-    handleRemoveSongs: runtime.collectionController.handleRemoveSongs,
-    handleReorderSongs: runtime.collectionController.handleReorderSongs,
-    handleAddSongs: runtime.collectionController.handleAddSongs,
-    loadCollections: runtime.collectionController.loadCollections,
+    selectCollection: (id) => {
+      void runtime.collectionController.selectCollection(id);
+    },
+    openCreateDialog: () => runtime.collectionController.openCreateDialog(),
+    openEditDialog: () => runtime.collectionController.openEditDialog(),
+    closeFormDialog: () => runtime.collectionController.closeFormDialog(),
+    handleCreate: (name, description) =>
+      runtime.collectionController.handleCreate(name, description),
+    handleUpdate: (id, name, description) =>
+      runtime.collectionController.handleUpdate(id, name, description),
+    handleDelete: (id) => runtime.collectionController.handleDelete(id),
+    handleExport: (id) => runtime.collectionController.handleExport(id),
+    handleRemoveSongs: (collectionId, songCids) =>
+      runtime.collectionController.handleRemoveSongs(collectionId, songCids),
+    handleReorderSongs: (collectionId, songCids) =>
+      runtime.collectionController.handleReorderSongs(collectionId, songCids),
+    handleAddSongs: (collectionId, songCids) =>
+      runtime.collectionController.handleAddSongs(collectionId, songCids),
+    loadCollections: () => runtime.collectionController.loadCollections(),
   });
 </script>
 

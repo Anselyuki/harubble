@@ -26,6 +26,7 @@
   // svelte-ignore state_referenced_locally
   let expanded = $state(defaultExpanded);
   let contentEl = $state<HTMLElement | undefined>();
+  // svelte-ignore state_referenced_locally
   let contentMounted = $state(defaultExpanded && !empty);
 
   const shouldShow = $derived(expanded && !empty);
