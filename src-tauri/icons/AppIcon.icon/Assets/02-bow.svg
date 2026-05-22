@@ -1,8 +1,4 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Foundation -->
-  <rect width="1024" height="1024" rx="224" fill="#78A4A5"/>
-
-  <!-- Ribbon bow icon -->
   <g filter="url(#soft-shadow)">
     <!-- Hanging tails -->
     <path d="M421 552C404 654 370 771 270 857C318 851 354 866 381 904C437 820 471 680 477 560Z" fill="url(#red-main)"/>
