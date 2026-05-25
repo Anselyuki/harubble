@@ -6,7 +6,6 @@
   import type { EventListeners, PartialOptions } from 'overlayscrollbars';
   import type { AlbumDetail, CollectionSummary, SongEntry } from '$lib/types';
   import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
-  import MotionSpinner from '$lib/components/MotionSpinner.svelte';
   import AlbumStage from '$lib/components/app/album/AlbumStage.svelte';
   import AlbumDetailSkeleton from '$lib/components/app/album/AlbumDetailSkeleton.svelte';
   import AlbumDetailPanel from '$lib/components/app/album/AlbumDetailPanel.svelte';
@@ -104,25 +103,11 @@
   }: Props = $props();
 
   let skeletonEl = $state<HTMLElement | undefined>();
-  let albumPanelEl = $state<HTMLElement | undefined>();
-  let loadingMaskEl = $state<HTMLElement | undefined>();
 
   $effect(() => {
     if (!skeletonEl) return;
     animateIn(skeletonEl, { opacity: 0 }, { opacity: 1 }, 180, 'ios-out');
     return () => killTweens(skeletonEl!);
-  });
-
-  $effect(() => {
-    if (!albumPanelEl) return;
-    animateIn(albumPanelEl, { opacity: 0 }, { opacity: 1 }, 180, 'ios-out');
-    return () => killTweens(albumPanelEl!);
-  });
-
-  $effect(() => {
-    if (!loadingMaskEl) return;
-    animateIn(loadingMaskEl, { opacity: 0 }, { opacity: 1 }, 140, 'ios-out');
-    return () => killTweens(loadingMaskEl!);
   });
 
   const emptyLabels = $derived.by(() => {
@@ -156,21 +141,9 @@
     onwheel={onContentWheel}
     aria-busy={loadingDetail}
   >
-    {#if loadingDetail && showDetailSkeleton}
-      <section class="album-panel album-panel-loading" bind:this={skeletonEl}>
-        <AlbumStage
-          loading={true}
-          {reducedMotion}
-          stageStyle={albumStageStyle}
-          mediaHeight={albumStageMediaHeight}
-          scrimOpacity={albumStageScrimOpacity}
-          bind:element={albumStageElement}
-        />
-        <AlbumDetailSkeleton {reducedMotion} />
-      </section>
-    {:else if selectedAlbum}
+    {#if selectedAlbum}
       {#key selectedAlbum.cid}
-        <section class="album-panel" bind:this={albumPanelEl}>
+        <section class="album-panel">
           <AlbumStage
             albumName={selectedAlbum.name}
             artworkUrl={selectedAlbumArtworkUrl}
@@ -214,24 +187,23 @@
           />
         </section>
       {/key}
+    {:else if loadingDetail && showDetailSkeleton}
+      <section class="album-panel album-panel-loading" bind:this={skeletonEl}>
+        <AlbumStage
+          loading={true}
+          {reducedMotion}
+          stageStyle={albumStageStyle}
+          mediaHeight={albumStageMediaHeight}
+          scrimOpacity={albumStageScrimOpacity}
+          bind:element={albumStageElement}
+        />
+        <AlbumDetailSkeleton {reducedMotion} />
+      </section>
     {/if}
 
     {#if !loadingDetail && !selectedAlbum}
       <h1 class="page-title">{emptyLabels.title}</h1>
       <p class="page-subtitle">{emptyLabels.hint}</p>
-    {/if}
-
-    {#if loadingDetail && selectedAlbum}
-      <div
-        class="content-loading-mask"
-        aria-hidden="true"
-        bind:this={loadingMaskEl}
-      >
-        <MotionSpinner
-          className="content-loading-mask-spinner"
-          {reducedMotion}
-        />
-      </div>
     {/if}
   </OverlayScrollbarsComponent>
 </div>
