@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
-  import TagEditorDimension from './TagEditorDimension.svelte';
+  import TagOverview from './TagOverview.svelte';
   import type {
     SongEntry,
     TagEditorLocalizedValue,
@@ -43,19 +43,9 @@
   </header>
 
   {#if merged}
-    <section class="dimensions-section">
+    <section class="tags-section">
       <h3 class="section-title">{m.tag_editor_song_tag()}</h3>
-      <div class="dimension-rows">
-        {#each merged.tagDimensions as dim (dim.key)}
-          <TagEditorDimension
-            dimensionKey={dim.key}
-            dimensionLabel={dim.label['zh-CN'] ?? dim.key}
-            values={selectedEntityTags[dim.key] ?? []}
-            {onSetTag}
-            {onRemoveTag}
-          />
-        {/each}
-      </div>
+      <TagOverview {merged} {selectedEntityTags} {onSetTag} {onRemoveTag} />
     </section>
   {/if}
 </div>
@@ -65,7 +55,7 @@
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
-    padding: 1.5rem;
+    padding: calc(var(--safe-area-top) + 32px) 1.5rem 1.5rem;
   }
 
   .song-panel-header {
@@ -100,7 +90,7 @@
     text-overflow: ellipsis;
   }
 
-  .dimensions-section {
+  .tags-section {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -113,11 +103,5 @@
     letter-spacing: 0.05em;
     color: var(--text-secondary);
     margin: 0;
-  }
-
-  .dimension-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
   }
 </style>
