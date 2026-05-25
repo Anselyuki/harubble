@@ -63,14 +63,16 @@
 
 <div class="tag-editor-panel">
   <header class="panel-header">
-    <div
-      class="album-cover"
-      use:lazyLoad={{ rootMargin: '0px', reducedMotion: false }}
-      data-src={album.coverUrl}
-    >
-      <div class="album-cover-placeholder">♪</div>
-      <img class="album-cover-img" alt={album.name} />
-    </div>
+    {#key album.cid}
+      <div
+        class="album-cover"
+        use:lazyLoad={{ rootMargin: '0px', reducedMotion: false }}
+        data-src={album.coverUrl}
+      >
+        <div class="album-cover-placeholder">♪</div>
+        <img class="album-cover-img" alt={album.name} />
+      </div>
+    {/key}
     <div class="album-meta">
       <h2 class="album-name">{album.name}</h2>
       {#if album.artists.length > 0}

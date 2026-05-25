@@ -53,9 +53,11 @@ export function buildTagLibrary(merged: TagEditorRegistry): TagLibrary {
   }
 
   for (const songTags of Object.values(merged.songs)) {
-    for (const [key, values] of Object.entries(
-      (songTags as { tags: Record<string, TagEditorLocalizedValue[]> }).tags
-    )) {
+    const tags = (
+      songTags as { tags?: Record<string, TagEditorLocalizedValue[]> }
+    ).tags;
+    if (!tags) continue;
+    for (const [key, values] of Object.entries(tags)) {
       for (const v of values) {
         addUnique(library, key, v);
       }

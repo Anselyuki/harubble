@@ -26,7 +26,7 @@
   const openCtx = getContext<{ value: boolean } | undefined>('dialog-open');
   const open = $derived(openCtx?.value ?? true);
 
-  let mounted = $state(true);
+  let mounted = $state(openCtx?.value ?? true);
 
   $effect(() => {
     if (open) mounted = true;
