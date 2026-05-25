@@ -334,5 +334,17 @@
   "tag_editor_album_search_empty": "No matching albums",
   "tag_editor_album_list_empty": "No albums",
   "tag_editor_import": "Import",
-  "tag_editor_export": "Export"
+  "tag_editor_export": "Export",
+  "tag_editor_dimension_manage": "Manage Dimensions",
+  "tag_editor_dimension_manage_title": "Dimension Management",
+  "tag_editor_dimension_existing": "Existing Dimensions",
+  "tag_editor_dimension_add_new": "Add Dimension",
+  "tag_editor_dimension_delete_confirm": "Delete dimension \"{key}\"? This affects all albums.",
+  "tag_editor_add_tag_placeholder": "Search or create...",
+  "tag_editor_add_tag_button": "Add tag",
+  "tag_editor_existing_tags": "Available tags",
+  "tag_editor_create_new": "Create: {value}",
+  "tag_editor_en_optional": "English name (optional)",
+  "tag_editor_songs_tagged_count": "{count}/{total} tagged",
+  "tag_editor_close": "Close"
 }
