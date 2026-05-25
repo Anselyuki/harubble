@@ -1,6 +1,6 @@
 <script lang="ts">
   import TagDimensionRow from './TagDimensionRow.svelte';
-  import TagInlineEditor from './TagInlineEditor.svelte';
+  import TagAddDialog from './TagAddDialog.svelte';
   import {
     buildTagLibrary,
     type TagLibrary,
@@ -21,35 +21,32 @@
 
   let editingDimension = $state<string | null>(null);
   let tagLibrary = $derived<TagLibrary>(buildTagLibrary(merged));
-
-  function handleStartEdit(dimensionKey: string) {
-    editingDimension = dimensionKey;
-  }
-
-  function handleCloseEdit() {
-    editingDimension = null;
-  }
 </script>
 
 <div class="tag-overview">
   {#each merged.tagDimensions as dim (dim.key)}
-    <TagDimensionRow
-      dimensionKey={dim.key}
-      dimensionLabel={dim.label['zh-CN'] ?? dim.key}
-      values={selectedEntityTags[dim.key] ?? []}
-      isEditing={editingDimension === dim.key}
-      onStartEdit={() => handleStartEdit(dim.key)}
-    />
-    {#if editingDimension === dim.key}
-      <TagInlineEditor
+    <div class="dimension-entry">
+      <TagDimensionRow
         dimensionKey={dim.key}
+        dimensionLabel={dim.label['zh-CN'] ?? dim.key}
+        values={selectedEntityTags[dim.key] ?? []}
+        isEditing={editingDimension === dim.key}
+        {onSetTag}
+        {onRemoveTag}
+      />
+      <TagAddDialog
+        dimensionKey={dim.key}
+        dimensionLabel={dim.label['zh-CN'] ?? dim.key}
         values={selectedEntityTags[dim.key] ?? []}
         {tagLibrary}
         {onSetTag}
         {onRemoveTag}
-        onClose={handleCloseEdit}
+        open={editingDimension === dim.key}
+        onOpenChange={(open) => {
+          editingDimension = open ? dim.key : null;
+        }}
       />
-    {/if}
+    </div>
   {/each}
 </div>
 
@@ -58,5 +55,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+  }
+
+  .dimension-entry {
+    display: flex;
+    align-items: baseline;
+    gap: 0;
   }
 </style>
