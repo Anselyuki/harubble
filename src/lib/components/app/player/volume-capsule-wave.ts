@@ -40,8 +40,7 @@ function precompute(): string[][] {
     const amplitude = 0.45 + 0.15 * Math.sin(phase * 0.8);
     const layerPaths: string[] = [];
 
-    for (let li = 0; li < WAVE_LAYERS.length; li++) {
-      const layer = WAVE_LAYERS[li];
+    for (const layer of WAVE_LAYERS) {
       const layerPhase = phase * layer.speed * TWO_PI;
       let d = '';
 

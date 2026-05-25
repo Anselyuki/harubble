@@ -93,7 +93,8 @@ export function applyThemePalette(
     ),
   };
 
-  const colors = palette.waveColors ?? [palette.accentRgb];
+  const colors =
+    palette.waveColors.length > 0 ? palette.waveColors : [palette.accentRgb];
   for (let i = 0; i < 4; i++) {
     const rgb = colors[i % colors.length];
     nextValues[`--wave-color-${i}`] = `${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
