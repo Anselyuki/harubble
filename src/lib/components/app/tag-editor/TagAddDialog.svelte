@@ -94,7 +94,7 @@
     editingTag = val;
     editValues = {};
     for (const loc of TAG_LOCALES) {
-      editValues[loc.key] = val[loc.key] ?? '';
+      editValues[loc.key] = val[loc.key] || '';
     }
   }
 
@@ -139,11 +139,11 @@
   }
 
   async function handleCreate() {
-    if (!TAG_LOCALES.some((loc) => (createValues[loc.key] ?? '').trim()))
+    if (!TAG_LOCALES.some((loc) => (createValues[loc.key] || '').trim()))
       return;
     const newVal: TagEditorLocalizedValue = {};
     for (const loc of TAG_LOCALES) {
-      const v = (createValues[loc.key] ?? '').trim();
+      const v = (createValues[loc.key] || '').trim();
       if (v) newVal[loc.key] = v;
     }
     await onSetTag(dimensionKey, [...values, newVal]);
@@ -399,7 +399,7 @@
                         <div class="locale-field">
                           <span class="locale-label">{loc.label}</span>
                           <input
-                            value={editValues[loc.key] ?? ''}
+                            value={editValues[loc.key] || ''}
                             oninput={(e) => {
                               editValues[loc.key] = (
                                 e.target as HTMLInputElement
@@ -478,7 +478,7 @@
           <div class="create-form">
             <div class="create-input-wrapper">
               <input
-                value={createValues[getLocale()] ?? ''}
+                value={createValues[getLocale()] || ''}
                 oninput={(e) => {
                   createValues[getLocale()] = (
                     e.target as HTMLInputElement
@@ -513,7 +513,7 @@
                       style="opacity: {1 - idx * 0.2}">{loc.label}</span
                     >
                     <input
-                      value={createValues[loc.key] ?? ''}
+                      value={createValues[loc.key] || ''}
                       oninput={(e) => {
                         createValues[loc.key] = (
                           e.target as HTMLInputElement
@@ -531,7 +531,7 @@
               size="xs"
               variant="secondary"
               disabled={!TAG_LOCALES.some((loc) =>
-                (createValues[loc.key] ?? '').trim()
+                (createValues[loc.key] || '').trim()
               )}
               onclick={handleCreate}>{m.tag_editor_create_button()}</Button
             >
