@@ -13,27 +13,29 @@
 
   let containerEl: HTMLDivElement | undefined = $state();
 
-  const scopeLabelMap: Record<string, string> = {
-    all: 'ALL',
-    albums: '专辑',
-    songs: '歌曲',
-  };
-
   const labels = $derived.by(() => {
     void localeState.current;
     return {
       title: m.search_recent_queries_title(),
+      scopeAll: m.search_scope_all(),
+      scopeAlbums: m.search_scope_albums(),
+      scopeSongs: m.search_scope_songs(),
+      timeJustNow: m.search_time_just_now(),
+      timeMinutesAgo: (minutes: number) =>
+        m.search_time_minutes_ago({ minutes }),
+      timeHoursAgo: (hours: number) => m.search_time_hours_ago({ hours }),
+      timeDaysAgo: (days: number) => m.search_time_days_ago({ days }),
     };
   });
 
   function formatRelativeTime(timestamp: number): string {
     const diff = Date.now() - timestamp;
     const minutes = Math.floor(diff / 60_000);
-    if (minutes < 1) return '刚刚';
-    if (minutes < 60) return `${minutes}分钟前`;
+    if (minutes < 1) return labels.timeJustNow;
+    if (minutes < 60) return labels.timeMinutesAgo(minutes);
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}小时前`;
-    return `${Math.floor(hours / 24)}天前`;
+    if (hours < 24) return labels.timeHoursAgo(hours);
+    return labels.timeDaysAgo(Math.floor(hours / 24));
   }
 
   $effect(() => {
@@ -65,7 +67,11 @@
           onclick={() => onSelect(entry)}
         >
           <span class="query-scope" data-scope={entry.scope}>
-            {scopeLabelMap[entry.scope] ?? 'ALL'}
+            {entry.scope === 'albums'
+              ? labels.scopeAlbums
+              : entry.scope === 'songs'
+                ? labels.scopeSongs
+                : labels.scopeAll}
           </span>
           <span class="query-text">{entry.query}</span>
           <span class="query-time">{formatRelativeTime(entry.timestamp)}</span>

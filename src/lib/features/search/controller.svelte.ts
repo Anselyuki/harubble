@@ -1,6 +1,7 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Album, HistoryEntry, LibrarySearchScope } from '$lib/types';
 import { searchStore, type RecentQuery } from './store.svelte';
+import * as m from '$lib/paraglide/messages.js';
 
 const STORAGE_KEY = 'harubble:recent-searches';
 const MAX_RECENT_QUERIES = 4;
@@ -74,7 +75,9 @@ export function createSearchController(deps: SearchControllerDeps) {
     } catch (e: unknown) {
       if (seq !== loadRequestSeq) return;
       deps.notifyError(
-        `加载最近在听失败: ${e instanceof Error ? e.message : String(e)}`
+        m.search_error_load_recently_played({
+          error: e instanceof Error ? e.message : String(e),
+        })
       );
     } finally {
       if (seq === loadRequestSeq) {
