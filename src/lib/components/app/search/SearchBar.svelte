@@ -17,8 +17,6 @@
   let { query, scope, onQueryChange, onScopeChange, onSubmit }: Props =
     $props();
 
-  let inputEl: HTMLInputElement | undefined = $state();
-
   const scopeOptions: {
     value: LibrarySearchScope;
     labelKey: 'all' | 'albums' | 'songs';
@@ -69,7 +67,6 @@
   </Button>
 
   <Input
-    bind:ref={inputEl}
     value={query}
     placeholder={labels.placeholder}
     class="search-input"
