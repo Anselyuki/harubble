@@ -29,7 +29,7 @@
   });
 
   $effect(() => {
-    if (!gridEl || albums.length === 0) return;
+    if (!gridEl || albums.length === 0 || reducedMotion) return;
     const cards = Array.from(gridEl.children);
     if (!cards.length) return;
     gsap.fromTo(

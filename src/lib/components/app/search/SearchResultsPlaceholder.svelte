@@ -8,7 +8,7 @@
     scope: LibrarySearchScope;
   }
 
-  let { query, scope }: Props = $props();
+  let { query, scope: _scope }: Props = $props();
 
   const labels = $derived.by(() => {
     void localeState.current;
