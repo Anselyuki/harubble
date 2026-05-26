@@ -2,7 +2,7 @@
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import SidebarItemButton from '$lib/components/app/sidebar/SidebarItemButton.svelte';
-  import { Home, Library } from '@lucide/svelte';
+  import { Home, Library, Search } from '@lucide/svelte';
   import type { AppView } from '$lib/features/shell/store.svelte';
 
   interface Props {
@@ -23,6 +23,7 @@
     void localeState.current;
     return {
       home: m.shell_nav_home(),
+      search: m.shell_nav_search(),
       library: m.shell_nav_library(),
     };
   });
@@ -30,13 +31,19 @@
   const navItems: {
     view: AppView;
     icon: typeof Home;
-    labelKey: 'home' | 'library';
+    labelKey: 'home' | 'search' | 'library';
     expandOnCollapsedClick: boolean;
   }[] = [
     {
       view: 'home',
       icon: Home,
       labelKey: 'home',
+      expandOnCollapsedClick: false,
+    },
+    {
+      view: 'search',
+      icon: Search,
+      labelKey: 'search',
       expandOnCollapsedClick: false,
     },
     {

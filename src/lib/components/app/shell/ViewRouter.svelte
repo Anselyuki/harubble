@@ -4,6 +4,7 @@
   import TagEditorView from '$lib/components/app/tag-editor/TagEditorView.svelte';
   import CollectionDetailPanel from '$lib/components/app/collection/CollectionDetailPanel.svelte';
   import AlbumOverview from '$lib/components/app/album/AlbumOverview.svelte';
+  import SearchView from '$lib/components/app/search/SearchView.svelte';
   import type { AppRuntime } from '$lib/features/shell/appRuntime.svelte';
 
   interface Props {
@@ -15,6 +16,14 @@
 
 {#if runtime.currentView === 'home'}
   <HomeView {runtime} />
+{:else if runtime.currentView === 'search'}
+  <SearchView
+    runtime={{
+      searchController: runtime.searchController,
+      handleSelectAlbum: runtime.handleSelectAlbum,
+      prefersReducedMotion: runtime.prefersReducedMotion,
+    }}
+  />
 {:else if runtime.currentView === 'tagEditor'}
   <TagEditorView {runtime} />
 {:else if runtime.currentView === 'collection'}

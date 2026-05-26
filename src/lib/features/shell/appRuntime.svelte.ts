@@ -74,6 +74,7 @@ import { createDownloadController } from '$lib/features/download/controller.svel
 import { createHomeController } from '$lib/features/home/controller.svelte';
 import { createTagEditorController } from '$lib/features/tagEditor/controller.svelte';
 import { createCollectionController } from '$lib/features/collection/controller.svelte';
+import { createSearchController } from '$lib/features/search/controller.svelte';
 import {
   listCollections,
   getCollection,
@@ -217,6 +218,12 @@ export function createAppRuntime() {
     exportTagEditorRegistry,
     importTagEditorRegistry,
     getAlbumDetail: (albumCid: string) => getAlbumDetail(albumCid),
+    getAlbums: () => libraryController.albums,
+    notifyError,
+  });
+
+  const searchController = createSearchController({
+    getRecentHistory,
     getAlbums: () => libraryController.albums,
     notifyError,
   });
@@ -825,6 +832,7 @@ export function createAppRuntime() {
     albumStageMotionController.dispose();
     homeController.dispose();
     tagEditorController.dispose();
+    searchController.dispose();
     playerStateInitSeq += 1;
     playerStateHydratedFromEvent = false;
     unsubscribe?.();
@@ -1115,6 +1123,7 @@ export function createAppRuntime() {
     homeController,
     tagEditorController,
     collectionController,
+    searchController,
     notifyInfo,
     notifyError,
     handleSelectAlbum,
