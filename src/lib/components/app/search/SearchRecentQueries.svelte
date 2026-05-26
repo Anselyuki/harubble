@@ -12,6 +12,8 @@
   let { queries, onSelect }: Props = $props();
 
   let containerEl: HTMLDivElement | undefined = $state();
+  // 记录已播放过入场动画的卡片 key；null 表示组件挂载后尚未首跑。
+  let animatedKeys: Set<string> | null = null;
 
   const labels = $derived.by(() => {
     void localeState.current;
@@ -39,11 +41,28 @@
   }
 
   $effect(() => {
+    // 读取 queries 以建立响应式依赖：记录集合变化时重算。
+    const currentKeys = queries.map((entry) => entry.query + entry.scope);
     if (!containerEl) return;
-    const cards = containerEl.querySelectorAll('.query-card');
-    if (!cards.length) return;
+
+    const firstRun = animatedKeys === null;
+    const previous = animatedKeys ?? new Set<string>();
+    const newKeys = new Set(currentKeys.filter((key) => !previous.has(key)));
+    animatedKeys = new Set(currentKeys);
+
+    // 首跑：整列 stagger 入场；后续：仅对新增项做入场，避免整列闪烁。
+    if (!firstRun && newKeys.size === 0) return;
+
+    const cards = Array.from(
+      containerEl.querySelectorAll<HTMLElement>('.query-card')
+    );
+    const targets = firstRun
+      ? cards
+      : cards.filter((card) => newKeys.has(card.dataset.queryKey ?? ''));
+    if (!targets.length) return;
+
     gsap.fromTo(
-      cards,
+      targets,
       { opacity: 0, y: 8 },
       {
         opacity: 1,
@@ -64,6 +83,7 @@
         <button
           type="button"
           class="query-card"
+          data-query-key={entry.query + entry.scope}
           onclick={() => onSelect(entry)}
         >
           <span class="query-scope" data-scope={entry.scope}>

@@ -8,6 +8,8 @@
     scope: LibrarySearchScope;
   }
 
+  // scope 为搜索上下文：预留给下一个 PR 的"按范围（全部 / 专辑 / 歌曲）
+  // 展示搜索结果与空态"逻辑；本期占位视图尚未渲染，故以 _scope 显式标记暂未使用。
   let { query, scope: _scope }: Props = $props();
 
   const labels = $derived.by(() => {

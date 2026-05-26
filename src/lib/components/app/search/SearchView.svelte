@@ -141,6 +141,24 @@
     mask-image: linear-gradient(180deg, #000 0%, #000 52%, transparent 100%);
   }
 
+  /*
+   * 不支持 backdrop-filter 的环境（部分 Windows/Linux WebView）降级：
+   * 改用更高不透明度的纯色渐变兜底遮罩，确保下层内容不透出。
+   * 注意：@supports 只能检测能力，无法检测性能；低端设备的卡顿需另行处理。
+   */
+  @supports not (
+    (backdrop-filter: blur(16px)) or (-webkit-backdrop-filter: blur(16px))
+  ) {
+    .search-bar-region::before {
+      background: linear-gradient(
+        180deg,
+        var(--bg-primary) 0%,
+        color-mix(in srgb, var(--bg-primary) 88%, transparent) 60%,
+        transparent 100%
+      );
+    }
+  }
+
   .content-region {
     display: flex;
     flex-direction: column;

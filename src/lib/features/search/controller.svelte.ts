@@ -1,4 +1,3 @@
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Album, HistoryEntry, LibrarySearchScope } from '$lib/types';
 import { searchStore, type RecentQuery } from './store.svelte';
 import * as m from '$lib/paraglide/messages.js';
@@ -61,8 +60,11 @@ export function createSearchController(deps: SearchControllerDeps) {
       const history = await deps.getRecentHistory(HISTORY_FETCH_LIMIT);
       if (seq !== loadRequestSeq) return;
       const albums = deps.getAlbums();
-      const albumMap = new SvelteMap(albums.map((a) => [a.cid, a]));
-      const seen = new SvelteSet<string>();
+      // 仅用于本次去重计算的临时容器，不参与响应式追踪，故用原生 Map/Set。
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      const albumMap = new Map(albums.map((a) => [a.cid, a]));
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      const seen = new Set<string>();
       const result: Album[] = [];
       for (const entry of history) {
         if (seen.has(entry.albumCid)) continue;
@@ -106,7 +108,7 @@ export function createSearchController(deps: SearchControllerDeps) {
     saveRecentQuery(entry.query, entry.scope);
   }
 
-  // 预留扩展位，本期不接 UI
+  // 预留扩展位：下一个 PR 接入搜索页完整逻辑时，由 UI 调用以删除单条 / 清空最近搜索。
   function removeRecentQuery(_index: number) {}
   function clearRecentQueries() {}
 
