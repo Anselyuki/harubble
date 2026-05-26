@@ -1,3 +1,4 @@
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Album, HistoryEntry, LibrarySearchScope } from '$lib/types';
 import { searchStore, type RecentQuery } from './store.svelte';
 
@@ -59,8 +60,8 @@ export function createSearchController(deps: SearchControllerDeps) {
       const history = await deps.getRecentHistory(HISTORY_FETCH_LIMIT);
       if (seq !== loadRequestSeq) return;
       const albums = deps.getAlbums();
-      const albumMap = new Map(albums.map((a) => [a.cid, a]));
-      const seen = new Set<string>();
+      const albumMap = new SvelteMap(albums.map((a) => [a.cid, a]));
+      const seen = new SvelteSet<string>();
       const result: Album[] = [];
       for (const entry of history) {
         if (seen.has(entry.albumCid)) continue;
