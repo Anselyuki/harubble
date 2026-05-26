@@ -392,16 +392,18 @@ export interface TagEditorDimension {
 
 export interface TagEditorAlbumEntry {
   cid: string;
-  type: string | null;
+  type?: string[];
   name: string | null;
   releaseDate: string | null;
   faction: TagEditorLocalizedValue | null;
   character: TagEditorLocalizedValue | null;
   [key: string]:
     | string
+    | string[]
     | TagEditorLocalizedValue
     | TagEditorLocalizedValue[]
-    | null;
+    | null
+    | undefined;
 }
 
 export interface TagEditorRegistry {

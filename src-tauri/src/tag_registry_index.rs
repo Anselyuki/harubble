@@ -43,16 +43,20 @@ fn album_entry_to_tag_set(
 ) -> TagSet {
     let mut tags: HashMap<String, Vec<LocalizedValue>> = HashMap::new();
 
-    if let Some(ref key) = entry.album_type {
-        if let Some(lv) = type_defs.get(key) {
-            tags.insert("type".to_string(), vec![lv.clone()]);
-        } else {
-            let fallback = LocalizedValue(HashMap::from([
-                ("zh-CN".to_string(), key.clone()),
-                ("en-US".to_string(), key.clone()),
-            ]));
-            tags.insert("type".to_string(), vec![fallback]);
-        }
+    if !entry.album_type.is_empty() {
+        let type_vals: Vec<LocalizedValue> = entry
+            .album_type
+            .iter()
+            .map(|key| {
+                type_defs.get(key).cloned().unwrap_or_else(|| {
+                    LocalizedValue(HashMap::from([
+                        ("zh-CN".to_string(), key.clone()),
+                        ("en-US".to_string(), key.clone()),
+                    ]))
+                })
+            })
+            .collect();
+        tags.insert("type".to_string(), type_vals);
     }
     if let Some(ref v) = entry.faction {
         tags.insert("faction".to_string(), vec![v.clone()]);
@@ -157,20 +161,26 @@ fn tag_set_to_album_entry(
         })
     };
 
-    let album_type = tag_set.tags.get("type").and_then(|vals| {
-        vals.first().and_then(|lv| {
-            type_defs
-                .iter()
-                .find(|(_, def)| *def == lv)
-                .map(|(k, _)| k.clone())
-                .or_else(|| {
-                    lv.0.get("en-US")
-                        .or_else(|| lv.0.get("zh-CN"))
-                        .or_else(|| lv.0.values().next())
-                        .cloned()
+    let album_type: Vec<String> = tag_set
+        .tags
+        .get("type")
+        .map(|vals| {
+            vals.iter()
+                .filter_map(|lv| {
+                    type_defs
+                        .iter()
+                        .find(|(_, def)| *def == lv)
+                        .map(|(k, _)| k.clone())
+                        .or_else(|| {
+                            lv.0.get("en-US")
+                                .or_else(|| lv.0.get("zh-CN"))
+                                .or_else(|| lv.0.values().next())
+                                .cloned()
+                        })
                 })
+                .collect()
         })
-    });
+        .unwrap_or_default();
 
     let extra: HashMap<String, Vec<LocalizedValue>> = tag_set
         .tags

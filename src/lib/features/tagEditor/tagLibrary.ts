@@ -10,20 +10,22 @@ export function buildTagLibrary(merged: TagEditorRegistry): TagLibrary {
   }
 
   for (const album of merged.albums) {
-    if (album.type) {
-      const typeDef = (
-        merged.typeDefinitions as Record<
-          string,
-          TagEditorLocalizedValue | undefined
-        >
-      )[album.type];
-      if (typeDef) {
-        addUnique(library, 'type', typeDef);
-      } else {
-        addUnique(library, 'type', {
-          'zh-CN': album.type,
-          'en-US': album.type,
-        });
+    if (album.type && album.type.length > 0) {
+      for (const typeKey of album.type) {
+        const typeDef = (
+          merged.typeDefinitions as Record<
+            string,
+            TagEditorLocalizedValue | undefined
+          >
+        )[typeKey];
+        if (typeDef) {
+          addUnique(library, 'type', typeDef);
+        } else {
+          addUnique(library, 'type', {
+            'zh-CN': typeKey,
+            'en-US': typeKey,
+          });
+        }
       }
     }
     if (album.faction)
