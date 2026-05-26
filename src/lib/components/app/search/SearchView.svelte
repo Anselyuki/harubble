@@ -103,21 +103,48 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-    padding: 20px 24px 32px;
     min-height: 100%;
   }
 
+  /*
+   * 顶部间距收进 sticky 区域自身的 padding-top，配合 top: 0，
+   * 让搜索框在滚动时保持相对位置不变，下方内容滑入其下层。
+   */
   .search-bar-region {
     position: sticky;
     top: 0;
     z-index: 10;
-    padding-bottom: 20px;
-    background: transparent;
+    padding: 65px 24px 20px;
+  }
+
+  /* 全宽磨砂条：内容滚动到搜索框下层时被遮罩并向底部渐隐，营造层次感。 */
+  .search-bar-region::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      var(--bg-primary) 0%,
+      color-mix(in srgb, var(--bg-primary) 55%, transparent) 60%,
+      transparent 100%
+    );
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    -webkit-mask-image: linear-gradient(
+      180deg,
+      #000 0%,
+      #000 52%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(180deg, #000 0%, #000 52%, transparent 100%);
   }
 
   .content-region {
     display: flex;
     flex-direction: column;
     gap: 28px;
+    padding: 0 24px 32px;
   }
 </style>
