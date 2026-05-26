@@ -345,6 +345,18 @@
   "tag_editor_existing_tags": "已有标签",
   "tag_editor_create_new": "新建: {value}",
   "tag_editor_en_optional": "英文名（可选）",
+  "tag_editor_tab_search": "搜索",
+  "tag_editor_tab_create": "新建",
+  "tag_editor_search_placeholder": "搜索已有标签...",
+  "tag_editor_create_zh_placeholder": "中文名",
+  "tag_editor_create_en_placeholder": "英文名（可选）",
+  "tag_editor_create_button": "创建",
+  "tag_editor_create_i18n_toggle": "多语言",
+  "tag_editor_create_name_placeholder": "输入标签名",
+  "tag_editor_edit_i18n": "编辑翻译",
+  "tag_editor_edit_save": "保存",
+  "tag_editor_edit_add": "保存并添加",
+  "tag_editor_no_results": "无匹配结果",
   "tag_editor_songs_tagged_count": "{count}/{total} 已标记",
   "tag_editor_close": "关闭"
 }

@@ -15,6 +15,7 @@
 use crate::preferences::Locale;
 use anyhow::{Context, Result};
 use harubble_core::api::TagEntry;
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
@@ -78,9 +79,10 @@ pub struct TagRegistry {
 pub struct AlbumEntry {
     /// 专辑 CID（唯一标识）。
     pub(crate) cid: String,
-    /// 专辑类型 key，引用 `TagRegistry.type_definitions` 中的定义。
-    #[serde(default, rename = "type")]
-    pub(crate) album_type: Option<String>,
+    /// 专辑类型 key 列表，引用 `TagRegistry.type_definitions` 中的定义。
+    /// 支持多选；兼容旧格式单字符串与新格式数组。
+    #[serde(default, rename = "type", deserialize_with = "deserialize_type_field")]
+    pub(crate) album_type: Vec<String>,
     /// 专辑名称。
     #[serde(default)]
     pub(crate) name: Option<String>,
@@ -96,6 +98,31 @@ pub struct AlbumEntry {
     /// 额外维度（未在结构体中显式定义的 tag 维度）。
     #[serde(flatten, default)]
     pub(crate) extra: HashMap<String, Vec<LocalizedValue>>,
+}
+
+/// 兼容旧格式（单字符串）和新格式（数组）的 `type` 字段反序列化。
+fn deserialize_type_field<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        Single(String),
+        Multiple(Vec<String>),
+    }
+
+    match Option::<StringOrVec>::deserialize(deserializer)? {
+        None => Ok(Vec::new()),
+        Some(StringOrVec::Single(s)) => {
+            if s.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![s])
+            }
+        }
+        Some(StringOrVec::Multiple(v)) => Ok(v),
+    }
 }
 
 /// 单首歌曲的扁平化 tag 条目（对应 JSON 中 songs 数组的元素）。

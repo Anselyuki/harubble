@@ -345,6 +345,18 @@
   "tag_editor_existing_tags": "Available tags",
   "tag_editor_create_new": "Create: {value}",
   "tag_editor_en_optional": "English name (optional)",
+  "tag_editor_tab_search": "Search",
+  "tag_editor_tab_create": "Create",
+  "tag_editor_search_placeholder": "Search existing tags...",
+  "tag_editor_create_zh_placeholder": "Chinese name",
+  "tag_editor_create_en_placeholder": "English name (optional)",
+  "tag_editor_create_button": "Create",
+  "tag_editor_create_i18n_toggle": "i18n",
+  "tag_editor_create_name_placeholder": "Enter tag name",
+  "tag_editor_edit_i18n": "Edit translation",
+  "tag_editor_edit_save": "Save",
+  "tag_editor_edit_add": "Save & Add",
+  "tag_editor_no_results": "No results",
   "tag_editor_songs_tagged_count": "{count}/{total} tagged",
   "tag_editor_close": "Close"
 }
