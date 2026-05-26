@@ -57,7 +57,7 @@
   });
 </script>
 
-{#if runtime.selectedAlbum || runtime.loadingDetail}
+{#if runtime.selectedAlbum || (runtime.loadingDetail && runtime.showDetailSkeleton)}
   <AlbumWorkspace
     currentSong={runtime.currentSong}
     loadingDetail={runtime.loadingDetail}
