@@ -28,7 +28,7 @@
   let placeholderEl: HTMLDivElement | undefined = $state();
 
   $effect(() => {
-    if (!discoveryEl) return;
+    if (!discoveryEl || runtime.prefersReducedMotion) return;
     gsap.fromTo(
       discoveryEl,
       { opacity: 0 },
@@ -37,7 +37,7 @@
   });
 
   $effect(() => {
-    if (!placeholderEl) return;
+    if (!placeholderEl || runtime.prefersReducedMotion) return;
     gsap.fromTo(
       placeholderEl,
       { opacity: 0, y: 10 },
