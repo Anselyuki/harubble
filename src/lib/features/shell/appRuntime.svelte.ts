@@ -618,6 +618,57 @@ export function createAppRuntime() {
     }
   }
 
+  async function goBack(): Promise<void> {
+    if (!navigationStack.canGoBack) return;
+
+    const entry = navigationStack.pop()!;
+    const seq = ++navigationSeq;
+    isNavigating = true;
+    clearNonTargetState(entry.view);
+    shellStore.currentView = entry.view;
+
+    const shouldDispose = () => seq !== navigationSeq;
+
+    try {
+      switch (entry.view) {
+        case 'library': {
+          if (entry.albumCid) {
+            const album = albums.find((a) => a.cid === entry.albumCid);
+            if (album) {
+              await libraryController.selectAlbum(album, {
+                afterSelect: async () => {
+                  if (shouldDispose()) return;
+                  await tick();
+                  resetContentScroll();
+                },
+                shouldDispose,
+              });
+            }
+          }
+          break;
+        }
+        case 'collection': {
+          if (entry.collectionId) {
+            await collectionController.restoreSelection(entry.collectionId);
+          }
+          break;
+        }
+        case 'tagEditor': {
+          await tagEditorController.restoreEditingState(
+            entry.albumCid,
+            entry.songCid,
+            shouldDispose
+          );
+          break;
+        }
+      }
+    } finally {
+      if (seq === navigationSeq) {
+        isNavigating = false;
+      }
+    }
+  }
+
   async function handleSelectAlbum(album: Album) {
     shellStore.navigateToLibrary();
     clearSongSelection();
@@ -1311,6 +1362,7 @@ export function createAppRuntime() {
     openAlbum,
     openCollection,
     openTagEditor,
+    goBack,
   };
 }
 

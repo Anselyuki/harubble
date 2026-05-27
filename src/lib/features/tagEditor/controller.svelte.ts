@@ -212,6 +212,55 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     }
   }
 
+  async function restoreEditingState(
+    albumCid: string | null,
+    songCid: string | null,
+    shouldDispose?: () => boolean
+  ): Promise<boolean> {
+    tagEditorStore.reset();
+
+    if (!albumCid) return true;
+
+    const album = deps.getAlbums().find((a) => a.cid === albumCid);
+    if (!album) return false;
+
+    const seq = ++loadSeq;
+    tagEditorStore.loadingSongs = true;
+
+    try {
+      const detail = await deps.getAlbumDetail(albumCid);
+      if (seq !== loadSeq || shouldDispose?.()) return false;
+
+      tagEditorStore.editingAlbum = album;
+      tagEditorStore.editingAlbumSongs = detail.songs;
+      tagEditorStore.loadingSongs = false;
+
+      if (songCid) {
+        const song = detail.songs.find((s) => s.cid === songCid);
+        if (song) {
+          tagEditorStore.editingSong = song;
+          tagEditorStore.selectedEntityType = 'song';
+          tagEditorStore.selectedCid = songCid;
+        } else {
+          tagEditorStore.selectedEntityType = 'album';
+          tagEditorStore.selectedCid = albumCid;
+        }
+      } else {
+        tagEditorStore.selectedEntityType = 'album';
+        tagEditorStore.selectedCid = albumCid;
+      }
+      return true;
+    } catch (e: unknown) {
+      if (seq === loadSeq) {
+        tagEditorStore.reset();
+      }
+      deps.notifyError(
+        `恢复 Tag 编辑器状态失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return false;
+    }
+  }
+
   function selectSongForEdit(song: SongEntry) {
     tagEditorStore.editingSong = song;
     tagEditorStore.selectedEntityType = 'song';
@@ -335,6 +384,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     resolveConflict,
     exportRegistry,
     importRegistry,
+    restoreEditingState,
     dispose,
   };
 }
