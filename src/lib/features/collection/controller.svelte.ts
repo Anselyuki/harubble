@@ -236,6 +236,29 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     formDialogOpen = false;
   }
 
+  function clearSelection(): void {
+    selectedCollectionId = null;
+    selectedCollection = null;
+  }
+
+  async function loadAndSelect(id: string): Promise<void> {
+    selectedCollectionId = id;
+    isDetailLoading = true;
+    try {
+      selectedCollection = await deps.getCollection(id);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      deps.notifyError(`加载合集详情失败: ${message}`);
+      selectedCollection = null;
+    } finally {
+      isDetailLoading = false;
+    }
+  }
+
+  async function restoreSelection(id: string): Promise<void> {
+    await loadAndSelect(id);
+  }
+
   function dispose(): void {
     collections = [];
     selectedCollectionId = null;
@@ -273,8 +296,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     loadCollections,
     selectCollection,
     deselectCollection,
-    /** 临时存根，将在 Task 5 中替换为真实实现 */
-    clearSelection() {},
+    clearSelection,
+    loadAndSelect,
+    restoreSelection,
     handleCreate,
     handleUpdate,
     handleDelete,

@@ -568,6 +568,29 @@ export function createAppRuntime() {
     }
   }
 
+  async function openCollection(collectionId: string): Promise<void> {
+    const current = captureCurrentEntry();
+    const target: NavigationEntry = { view: 'collection', collectionId };
+    if (isSameEntry(current, target)) return;
+
+    const seq = ++navigationSeq;
+    isNavigating = true;
+    navigationStack.push(current);
+    clearNonTargetState('collection');
+    shellStore.currentView = 'collection';
+
+    const shouldDispose = () => seq !== navigationSeq;
+
+    try {
+      await collectionController.loadAndSelect(collectionId);
+      if (shouldDispose()) return;
+    } finally {
+      if (seq === navigationSeq) {
+        isNavigating = false;
+      }
+    }
+  }
+
   async function handleSelectAlbum(album: Album) {
     shellStore.navigateToLibrary();
     clearSongSelection();
@@ -1259,6 +1282,7 @@ export function createAppRuntime() {
     },
     navigateToTop,
     openAlbum,
+    openCollection,
   };
 }
 
