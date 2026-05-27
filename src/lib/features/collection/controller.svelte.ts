@@ -273,6 +273,8 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     loadCollections,
     selectCollection,
     deselectCollection,
+    /** 临时存根，将在 Task 5 中替换为真实实现 */
+    clearSelection() {},
     handleCreate,
     handleUpdate,
     handleDelete,

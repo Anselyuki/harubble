@@ -65,7 +65,12 @@ import type {
 } from '$lib/types';
 import { applyThemePalette, DEFAULT_THEME_PALETTE } from '$lib/theme';
 import { envStore } from '$lib/features/env/store.svelte';
-import { shellStore } from '$lib/features/shell/store.svelte';
+import { shellStore, type AppView } from '$lib/features/shell/store.svelte';
+import {
+  navigationStack,
+  isSameEntry,
+  type NavigationEntry,
+} from './navigation.svelte';
 import { createSettingsController } from '$lib/features/shell/settings.svelte';
 import { createAlbumStageMotionController } from '$lib/features/shell/albumStageMotion.svelte';
 import { createLibraryController } from '$lib/features/library/controller.svelte';
@@ -73,6 +78,7 @@ import { createPlayerController } from '$lib/features/player/controller.svelte';
 import { createDownloadController } from '$lib/features/download/controller.svelte';
 import { createHomeController } from '$lib/features/home/controller.svelte';
 import { createTagEditorController } from '$lib/features/tagEditor/controller.svelte';
+import { tagEditorStore } from '$lib/features/tagEditor/store.svelte';
 import { createCollectionController } from '$lib/features/collection/controller.svelte';
 import { createSearchController } from '$lib/features/search/controller.svelte';
 import {
@@ -250,6 +256,8 @@ export function createAppRuntime() {
   let artworkRequestSeq = 0;
   let playerStateInitSeq = 0;
   let playerStateHydratedFromEvent = false;
+  let _navigationSeq = 0;
+  let isNavigating = $state(false);
 
   const settingsOpen = $derived(shellStore.settingsOpen);
   const downloadPanelOpen = $derived(shellStore.downloadPanelOpen);
@@ -461,6 +469,67 @@ export function createAppRuntime() {
     inventoryVersion: string | null | undefined
   ) {
     await invalidateByTag(createInventoryCacheTag(inventoryVersion));
+  }
+
+  function captureCurrentEntry(): NavigationEntry {
+    const view = shellStore.currentView;
+    switch (view) {
+      case 'home':
+        return { view: 'home' };
+      case 'search':
+        return { view: 'search' };
+      case 'overview':
+        return { view: 'overview' };
+      case 'library':
+        return {
+          view: 'library',
+          albumCid: libraryController.selectedAlbumCid,
+        };
+      case 'collection':
+        return {
+          view: 'collection',
+          collectionId: collectionController.selectedCollectionId ?? '',
+        };
+      case 'tagEditor':
+        return {
+          view: 'tagEditor',
+          albumCid: tagEditorStore.editingAlbum?.cid ?? null,
+          songCid: tagEditorStore.editingSong?.cid ?? null,
+        };
+    }
+  }
+
+  function clearNonTargetState(targetView: AppView): void {
+    if (targetView !== 'library') {
+      libraryController.deselectAlbum();
+    }
+    clearSongSelection();
+    selectionModeEnabled = false;
+    if (targetView !== 'collection') {
+      collectionController.clearSelection();
+    }
+    if (targetView !== 'tagEditor') {
+      tagEditorStore.reset();
+    }
+  }
+
+  function navigateToTop(view: AppView): void {
+    const current = captureCurrentEntry();
+    const target: NavigationEntry =
+      view === 'library'
+        ? { view: 'library', albumCid: null }
+        : view === 'collection'
+          ? { view: 'collection', collectionId: '' }
+          : view === 'tagEditor'
+            ? { view: 'tagEditor', albumCid: null, songCid: null }
+            : { view };
+
+    if (isSameEntry(current, target)) return;
+
+    _navigationSeq++;
+    navigationStack.push(current);
+    clearNonTargetState(view);
+    shellStore.currentView = view;
   }
 
   async function handleSelectAlbum(album: Album) {
@@ -1146,6 +1215,13 @@ export function createAppRuntime() {
     invertSongSelection,
     toggleSongSelection,
     isSongSelected,
+    get canGoBack() {
+      return navigationStack.canGoBack;
+    },
+    get isNavigating() {
+      return isNavigating;
+    },
+    navigateToTop,
   };
 }
 

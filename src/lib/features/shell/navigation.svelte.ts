@@ -57,8 +57,7 @@ let stack = $state<NavigationEntry[]>([]);
  * @param entry 待入栈的导航入口
  */
 function push(entry: NavigationEntry): void {
-  const top = stack[stack.length - 1];
-  if (top && isSameEntry(top, entry)) return;
+  if (stack.length > 0 && isSameEntry(stack[stack.length - 1]!, entry)) return;
   stack = [...stack, entry];
 }
 
