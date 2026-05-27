@@ -85,20 +85,20 @@
     gap: 10px;
     padding: 10px 16px;
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(255, 255, 255, 0.5);
+    background: var(--toolbar-surface);
+    border: 1px solid var(--toolbar-highlight);
     backdrop-filter: blur(18px) saturate(1.3);
     -webkit-backdrop-filter: blur(18px) saturate(1.3);
     box-shadow:
       0 2px 16px rgba(15, 23, 42, 0.06),
-      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      inset 0 1px 0 var(--toolbar-highlight);
   }
 
   .search-bar.has-query {
     border-color: rgba(var(--accent-rgb), 0.3);
     box-shadow:
       0 2px 16px rgba(15, 23, 42, 0.06),
-      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      inset 0 1px 0 var(--toolbar-highlight),
       0 0 0 3px rgba(var(--accent-rgb), 0.08);
   }
 

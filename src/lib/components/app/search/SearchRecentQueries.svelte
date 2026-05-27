@@ -6,10 +6,11 @@
 
   interface Props {
     queries: RecentQuery[];
+    reducedMotion?: boolean;
     onSelect: (entry: RecentQuery) => void;
   }
 
-  let { queries, onSelect }: Props = $props();
+  let { queries, reducedMotion = false, onSelect }: Props = $props();
 
   let containerEl: HTMLDivElement | undefined = $state();
   // 记录已播放过入场动画的卡片 key；null 表示组件挂载后尚未首跑。
@@ -43,7 +44,7 @@
   $effect(() => {
     // 读取 queries 以建立响应式依赖：记录集合变化时重算。
     const currentKeys = queries.map((entry) => entry.query + entry.scope);
-    if (!containerEl) return;
+    if (!containerEl || reducedMotion) return;
 
     const firstRun = animatedKeys === null;
     const previous = animatedKeys ?? new Set<string>();

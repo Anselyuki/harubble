@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import { getShellContext } from '$lib/contexts';
   import { gsap, getMotionDuration } from '$lib/design/gsap';
@@ -46,7 +47,7 @@
   });
 
   $effect(() => {
-    searchController.init();
+    untrack(() => searchController.init());
   });
 </script>
 
@@ -77,6 +78,7 @@
       <div class="content-region discovery" bind:this={discoveryEl}>
         <SearchRecentQueries
           queries={searchController.recentQueries}
+          reducedMotion={runtime.prefersReducedMotion}
           onSelect={searchController.rerunQuery}
         />
         <SearchRecentlyPlayed

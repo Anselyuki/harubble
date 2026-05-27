@@ -108,10 +108,6 @@ export function createSearchController(deps: SearchControllerDeps) {
     saveRecentQuery(entry.query, entry.scope);
   }
 
-  // 预留扩展位：下一个 PR 接入搜索页完整逻辑时，由 UI 调用以删除单条 / 清空最近搜索。
-  function removeRecentQuery(_index: number) {}
-  function clearRecentQueries() {}
-
   function dispose() {
     loadRequestSeq += 1;
     initialized = false;
@@ -141,8 +137,6 @@ export function createSearchController(deps: SearchControllerDeps) {
     setScope,
     submitSearch,
     rerunQuery,
-    removeRecentQuery,
-    clearRecentQueries,
   };
 }
 
