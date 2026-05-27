@@ -256,7 +256,7 @@ export function createAppRuntime() {
   let artworkRequestSeq = 0;
   let playerStateInitSeq = 0;
   let playerStateHydratedFromEvent = false;
-  let _navigationSeq = 0;
+  let navigationSeq = 0;
   let isNavigating = $state(false);
 
   const settingsOpen = $derived(shellStore.settingsOpen);
@@ -526,10 +526,46 @@ export function createAppRuntime() {
 
     if (isSameEntry(current, target)) return;
 
-    _navigationSeq++;
+    navigationSeq++;
     navigationStack.push(current);
     clearNonTargetState(view);
     shellStore.currentView = view;
+  }
+
+  async function openAlbum(
+    album: Album,
+    options?: { pendingSongCid?: string | null }
+  ): Promise<void> {
+    const current = captureCurrentEntry();
+    const target: NavigationEntry = { view: 'library', albumCid: album.cid };
+    if (isSameEntry(current, target)) return;
+
+    const seq = ++navigationSeq;
+    isNavigating = true;
+    navigationStack.push(current);
+    clearNonTargetState('library');
+    shellStore.currentView = 'library';
+
+    const shouldDispose = () => seq !== navigationSeq;
+
+    if (options?.pendingSongCid !== undefined) {
+      libraryController.setPendingScrollToSong(options.pendingSongCid);
+    }
+
+    try {
+      await libraryController.selectAlbum(album, {
+        afterSelect: async () => {
+          if (shouldDispose()) return;
+          await tick();
+          resetContentScroll();
+        },
+        shouldDispose,
+      });
+    } finally {
+      if (seq === navigationSeq) {
+        isNavigating = false;
+      }
+    }
   }
 
   async function handleSelectAlbum(album: Album) {
@@ -1222,6 +1258,7 @@ export function createAppRuntime() {
       return isNavigating;
     },
     navigateToTop,
+    openAlbum,
   };
 }
 
