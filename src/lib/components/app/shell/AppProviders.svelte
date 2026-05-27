@@ -52,7 +52,7 @@
     notifyInfo: (message) => runtime.notifyInfo(message),
     notifyError: (message) => runtime.notifyError(message),
     navigate: (view) => {
-      runtime.shellStore.currentView = view;
+      runtime.navigateToTop(view);
     },
   });
 

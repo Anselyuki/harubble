@@ -670,15 +670,7 @@ export function createAppRuntime() {
   }
 
   async function handleSelectAlbum(album: Album) {
-    shellStore.navigateToLibrary();
-    clearSongSelection();
-    selectionModeEnabled = false;
-    await libraryController.selectAlbum(album, {
-      afterSelect: async () => {
-        await tick();
-        resetContentScroll();
-      },
-    });
+    await openAlbum(album);
   }
 
   async function handleSelectSearchResult(item: SearchLibraryResultItem) {
@@ -687,17 +679,8 @@ export function createAppRuntime() {
       notifyError(m.app_error_album_not_found());
       return;
     }
-    shellStore.navigateToLibrary();
-    libraryController.setPendingScrollToSong(
-      item.kind === 'song' ? item.songCid : null
-    );
-    clearSongSelection();
-    selectionModeEnabled = false;
-    await libraryController.selectAlbum(album, {
-      afterSelect: async () => {
-        await tick();
-        resetContentScroll();
-      },
+    await openAlbum(album, {
+      pendingSongCid: item.kind === 'song' ? item.songCid : null,
     });
   }
 

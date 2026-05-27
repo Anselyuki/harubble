@@ -126,12 +126,12 @@
       {contentInteractive}
       {layoutCollapsed}
       onNavigate={(view) => {
-        runtime.shellStore.currentView = view;
+        runtime.navigateToTop(view);
       }}
       collections={runtime.collectionController.collections}
       selectedCollectionId={runtime.collectionController.selectedCollectionId}
       isCollectionsLoading={runtime.collectionController.isLoading}
-      onSelectCollection={runtime.collectionController.selectCollection}
+      onSelectCollection={(id) => runtime.openCollection(id)}
       onCreateCollection={runtime.collectionController.openCreateDialog}
       onRequestExpand={runtime.toggleSidebar}
       bind:sidebarEl

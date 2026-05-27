@@ -48,23 +48,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
 
   async function selectCollection(id: string): Promise<void> {
     if (id === selectedCollectionId && selectedCollection) {
-      deps.navigateToCollection();
       return;
     }
-
-    selectedCollectionId = id;
-    isDetailLoading = true;
-    deps.navigateToCollection();
-
-    try {
-      selectedCollection = await deps.getCollection(id);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`加载合集详情失败: ${message}`);
-      selectedCollection = null;
-    } finally {
-      isDetailLoading = false;
-    }
+    await loadAndSelect(id);
   }
 
   function deselectCollection(): void {
