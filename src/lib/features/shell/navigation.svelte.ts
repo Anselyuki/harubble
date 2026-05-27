@@ -47,18 +47,22 @@ export function isSameEntry(a: NavigationEntry, b: NavigationEntry): boolean {
   }
 }
 
+const MAX_STACK_SIZE = 50;
+
 let stack = $state<NavigationEntry[]>([]);
 
 /**
  * 将新的导航入口压入栈顶。
  *
  * 若栈顶与 entry 相同（由 isSameEntry 判定），则跳过，不产生重复栈帧。
+ * 栈深度超过 MAX_STACK_SIZE 时自动丢弃最早的条目。
  *
  * @param entry 待入栈的导航入口
  */
 function push(entry: NavigationEntry): void {
   if (stack.length > 0 && isSameEntry(stack[stack.length - 1]!, entry)) return;
-  stack = [...stack, entry];
+  const next = [...stack, entry];
+  stack = next.length > MAX_STACK_SIZE ? next.slice(-MAX_STACK_SIZE) : next;
 }
 
 /**
@@ -115,3 +119,9 @@ export const navigationStack = {
   peek,
   clear,
 };
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    navigationStack.clear();
+  });
+}

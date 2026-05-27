@@ -128,4 +128,20 @@ describe('navigationStack', () => {
     navigationStack.push({ view: 'library', albumCid: 'b' });
     expect(navigationStack.size).toBe(3);
   });
+
+  it('caps stack size at 50 entries', () => {
+    for (let i = 0; i < 60; i++) {
+      navigationStack.push({ view: 'library', albumCid: `album-${i}` });
+    }
+    expect(navigationStack.size).toBe(50);
+    expect(navigationStack.peek()).toEqual({
+      view: 'library',
+      albumCid: 'album-59',
+    });
+    navigationStack.pop();
+    expect(navigationStack.peek()).toEqual({
+      view: 'library',
+      albumCid: 'album-58',
+    });
+  });
 });

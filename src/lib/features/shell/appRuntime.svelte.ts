@@ -1021,6 +1021,7 @@ export function createAppRuntime() {
     homeController.dispose();
     tagEditorController.dispose();
     searchController.dispose();
+    navigationStack.clear();
     playerStateInitSeq += 1;
     playerStateHydratedFromEvent = false;
     unsubscribe?.();
