@@ -5,6 +5,7 @@ src-tauri/target/
 .svelte-kit/
 build/
 .claude/
+project.inlang/
 bun.lock
 Cargo.lock
 package-lock.json
