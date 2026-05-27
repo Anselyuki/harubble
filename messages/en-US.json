@@ -352,6 +352,8 @@
   "tag_editor_create_en_placeholder": "English name (optional)",
   "tag_editor_create_button": "Create",
   "tag_editor_create_i18n_toggle": "i18n",
+  "tag_editor_i18n_mode_multi": "Multi",
+  "tag_editor_i18n_mode_single": "Single",
   "tag_editor_create_name_placeholder": "Enter tag name",
   "tag_editor_edit_i18n": "Edit translation",
   "tag_editor_edit_save": "Save",

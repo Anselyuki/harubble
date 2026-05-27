@@ -46,7 +46,8 @@ export function calcCardPosition(
   clickY: number,
   direction: ExpandDirection,
   cardWidth = DEFAULT_CARD_WIDTH,
-  arrowSize = DEFAULT_ARROW_SIZE
+  arrowSize = DEFAULT_ARROW_SIZE,
+  cardHeight = DEFAULT_CARD_MAX_HEIGHT
 ): CardPosition {
   const offset = arrowSize;
 
@@ -56,9 +57,9 @@ export function calcCardPosition(
     case 'bottom-left':
       return { top: clickY + offset, left: clickX - cardWidth };
     case 'top-right':
-      return { top: clickY - offset, left: clickX };
+      return { top: clickY - offset - cardHeight, left: clickX };
     case 'top-left':
-      return { top: clickY - offset, left: clickX - cardWidth };
+      return { top: clickY - offset - cardHeight, left: clickX - cardWidth };
   }
 }
 

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { calcExpandDirection, calcCardPosition } from './popoverBubble';
+import {
+  calcExpandDirection,
+  calcCardPosition,
+  measureBubbleTargetSize,
+} from './popoverBubble';
 
 describe('popoverBubble', () => {
   const viewport = { width: 1280, height: 800 };
@@ -41,30 +45,103 @@ describe('popoverBubble', () => {
   });
 
   describe('calcCardPosition', () => {
+    const cardWidth = 220;
     const arrowSize = 8;
+    const cardHeight = 320;
 
     it('positions card below-right of click for bottom-right', () => {
-      const pos = calcCardPosition(400, 200, 'bottom-right', arrowSize);
-      expect(pos.top).toBeGreaterThan(200);
-      expect(pos.left).toBeGreaterThanOrEqual(400);
+      const pos = calcCardPosition(
+        400,
+        200,
+        'bottom-right',
+        cardWidth,
+        arrowSize
+      );
+      expect(pos.top).toBe(200 + arrowSize);
+      expect(pos.left).toBe(400);
     });
 
     it('positions card below-left of click for bottom-left', () => {
-      const pos = calcCardPosition(1000, 200, 'bottom-left', arrowSize);
-      expect(pos.top).toBeGreaterThan(200);
-      expect(pos.left).toBeLessThan(1000);
+      const pos = calcCardPosition(
+        1000,
+        200,
+        'bottom-left',
+        cardWidth,
+        arrowSize
+      );
+      expect(pos.top).toBe(200 + arrowSize);
+      expect(pos.left).toBe(1000 - cardWidth);
     });
 
     it('positions card above-right of click for top-right', () => {
-      const pos = calcCardPosition(400, 600, 'top-right', arrowSize);
-      expect(pos.top).toBeLessThan(600);
-      expect(pos.left).toBeGreaterThanOrEqual(400);
+      const pos = calcCardPosition(
+        400,
+        600,
+        'top-right',
+        cardWidth,
+        arrowSize,
+        cardHeight
+      );
+      expect(pos.top).toBe(600 - arrowSize - cardHeight);
+      expect(pos.left).toBe(400);
     });
 
     it('positions card above-left of click for top-left', () => {
-      const pos = calcCardPosition(1000, 600, 'top-left', arrowSize);
-      expect(pos.top).toBeLessThan(600);
-      expect(pos.left).toBeLessThan(1000);
+      const pos = calcCardPosition(
+        1000,
+        600,
+        'top-left',
+        cardWidth,
+        arrowSize,
+        cardHeight
+      );
+      expect(pos.top).toBe(600 - arrowSize - cardHeight);
+      expect(pos.left).toBe(1000 - cardWidth);
+    });
+
+    it('uses default cardHeight when not specified', () => {
+      const pos = calcCardPosition(400, 600, 'top-right', cardWidth, arrowSize);
+      expect(pos.top).toBe(600 - arrowSize - 320);
+    });
+
+    it('card top is always above click point for top directions', () => {
+      const pos = calcCardPosition(
+        400,
+        700,
+        'top-right',
+        cardWidth,
+        arrowSize,
+        cardHeight
+      );
+      expect(pos.top).toBeLessThan(700 - arrowSize);
+    });
+  });
+
+  describe('measureBubbleTargetSize', () => {
+    it('measures scrollHeight at target width and restores original styles', () => {
+      const el = {
+        style: { width: '24px', height: '24px' },
+        scrollHeight: 180,
+      } as unknown as HTMLElement;
+
+      const result = measureBubbleTargetSize(el, 220);
+
+      expect(result).toEqual({ width: 220, height: 180 });
+      expect(el.style.width).toBe('24px');
+      expect(el.style.height).toBe('24px');
+    });
+
+    it('returns correct height when element has no prior inline styles', () => {
+      const el = {
+        style: { width: '', height: '' },
+        scrollHeight: 260,
+      } as unknown as HTMLElement;
+
+      const result = measureBubbleTargetSize(el, 300);
+
+      expect(result).toEqual({ width: 300, height: 260 });
+      expect(el.style.width).toBe('');
+      expect(el.style.height).toBe('');
     });
   });
 });

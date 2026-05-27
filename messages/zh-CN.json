@@ -352,6 +352,8 @@
   "tag_editor_create_en_placeholder": "英文名（可选）",
   "tag_editor_create_button": "创建",
   "tag_editor_create_i18n_toggle": "多语言",
+  "tag_editor_i18n_mode_multi": "多语",
+  "tag_editor_i18n_mode_single": "单语",
   "tag_editor_create_name_placeholder": "输入标签名",
   "tag_editor_edit_i18n": "编辑翻译",
   "tag_editor_edit_save": "保存",
