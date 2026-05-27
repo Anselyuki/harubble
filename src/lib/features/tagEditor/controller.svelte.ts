@@ -186,6 +186,32 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     }
   }
 
+  async function selectAlbumForEditAsync(
+    album: Album,
+    shouldDispose?: () => boolean
+  ): Promise<boolean> {
+    const seq = ++loadSeq;
+    try {
+      const detail = await deps.getAlbumDetail(album.cid);
+      if (seq !== loadSeq || shouldDispose?.()) return false;
+      tagEditorStore.editingAlbum = album;
+      tagEditorStore.editingSong = null;
+      tagEditorStore.selectedEntityType = 'album';
+      tagEditorStore.selectedCid = album.cid;
+      tagEditorStore.editingAlbumSongs = detail.songs;
+      tagEditorStore.loadingSongs = false;
+      return true;
+    } catch (e: unknown) {
+      if (seq === loadSeq) {
+        tagEditorStore.loadingSongs = false;
+      }
+      deps.notifyError(
+        `加载专辑歌曲失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return false;
+    }
+  }
+
   function selectSongForEdit(song: SongEntry) {
     tagEditorStore.editingSong = song;
     tagEditorStore.selectedEntityType = 'song';
@@ -299,6 +325,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     loadData,
     selectEntity,
     selectAlbumForEdit,
+    selectAlbumForEditAsync,
     selectSongForEdit,
     backToAlbum,
     setTag,

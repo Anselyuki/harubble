@@ -591,6 +591,33 @@ export function createAppRuntime() {
     }
   }
 
+  async function openTagEditor(album: Album): Promise<void> {
+    const current = captureCurrentEntry();
+    const target: NavigationEntry = {
+      view: 'tagEditor',
+      albumCid: album.cid,
+      songCid: null,
+    };
+    if (isSameEntry(current, target)) return;
+
+    const seq = ++navigationSeq;
+    isNavigating = true;
+    navigationStack.push(current);
+    clearNonTargetState('tagEditor');
+    shellStore.currentView = 'tagEditor';
+
+    const shouldDispose = () => seq !== navigationSeq;
+
+    try {
+      await tagEditorController.selectAlbumForEditAsync(album, shouldDispose);
+      if (shouldDispose()) return;
+    } finally {
+      if (seq === navigationSeq) {
+        isNavigating = false;
+      }
+    }
+  }
+
   async function handleSelectAlbum(album: Album) {
     shellStore.navigateToLibrary();
     clearSongSelection();
@@ -1283,6 +1310,7 @@ export function createAppRuntime() {
     navigateToTop,
     openAlbum,
     openCollection,
+    openTagEditor,
   };
 }
 
