@@ -245,7 +245,6 @@ export function createAppRuntime() {
     reorderCollectionSongs,
     exportCollection,
     importCollection,
-    navigateToCollection: shellStore.navigateToCollection,
     notifyInfo,
     notifyError,
   });

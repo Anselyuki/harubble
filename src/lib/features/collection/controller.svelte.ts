@@ -20,7 +20,6 @@ interface CollectionControllerDeps {
   reorderCollectionSongs: (id: string, songIds: string[]) => Promise<void>;
   exportCollection: (id: string) => Promise<string>;
   importCollection: (json: string) => Promise<Collection>;
-  navigateToCollection: () => void;
   notifyInfo: (message: string) => void;
   notifyError: (message: string) => void;
 }
