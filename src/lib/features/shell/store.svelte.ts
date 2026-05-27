@@ -12,6 +12,7 @@ type DownloadTasksSheetComponent = typeof DownloadTasksSheet;
 
 export type AppView =
   | 'home'
+  | 'search'
   | 'overview'
   | 'library'
   | 'tagEditor'
@@ -209,6 +210,9 @@ export const shellStore = {
   },
   navigateToHome() {
     currentView = 'home';
+  },
+  navigateToSearch() {
+    currentView = 'search';
   },
   navigateToOverview() {
     currentView = 'overview';
