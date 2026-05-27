@@ -17,7 +17,7 @@
     "lint": "bun run lint:eslint && bun run lint:rustfmt",
     "lint:eslint": "eslint .",
     "lint:rustfmt": "cargo fmt --all --check",
-    "check": "bun run format:check && bun run lint:eslint && bun run lint:rustfmt && bun run check:types && bun run check:svelte && bun run check:build && bun run check:cargo",
+    "check": "bun run i18n:generate && bun run format:check && bun run lint:eslint && bun run lint:rustfmt && bun run check:types && bun run check:svelte && bun run check:build && bun run check:cargo",
     "check:types": "bun run i18n:generate && tsc --noEmit",
     "check:svelte": "bun run i18n:generate && bunx svelte-check",
     "check:build": "vite build",
