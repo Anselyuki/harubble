@@ -55,6 +55,7 @@
     collections?: CollectionSummary[];
     onAddToCollection?: (collectionId: string, songCid: string) => void;
     onBack?: () => void;
+    isViewTransitioning?: boolean;
   }
 
   let {
@@ -100,12 +101,13 @@
     collections,
     onAddToCollection,
     onBack,
+    isViewTransitioning = false,
   }: Props = $props();
 
   let skeletonEl = $state<HTMLElement | undefined>();
 
   $effect(() => {
-    if (!skeletonEl) return;
+    if (!skeletonEl || isViewTransitioning) return;
     animateIn(skeletonEl, { opacity: 0 }, { opacity: 1 }, 180, 'ios-out');
     return () => killTweens(skeletonEl!);
   });
@@ -142,51 +144,49 @@
     aria-busy={loadingDetail}
   >
     {#if selectedAlbum}
-      {#key selectedAlbum.cid}
-        <section class="album-panel">
-          <AlbumStage
-            albumName={selectedAlbum.name}
-            artworkUrl={selectedAlbumArtworkUrl}
-            {reducedMotion}
-            stageStyle={albumStageStyle}
-            mediaHeight={albumStageMediaHeight}
-            scrimOpacity={albumStageScrimOpacity}
-            imageOpacity={albumStageImageOpacity}
-            imageTransform={albumStageImageTransform}
-            solidifyOpacity={albumStageSolidifyOpacity}
-            bind:element={albumStageElement}
-          />
-          <AlbumDetailPanel
-            album={selectedAlbum}
-            {currentSongCid}
-            {isPlaybackActive}
-            {isPlaybackPaused}
-            {downloadingAlbumCid}
-            {selectionModeEnabled}
-            {selectedSongCids}
-            {reducedMotion}
-            {onToggleSelectionMode}
-            {onSelectAllSongs}
-            {onDeselectAllSongs}
-            {onInvertSongSelection}
-            {onDownloadAlbum}
-            {onDownloadSelection}
-            {onPlaySong}
-            {onTogglePlay}
-            {onDownloadSong}
-            {onToggleSongSelection}
-            {isSongSelected}
-            {getSongDownloadState}
-            {isSongDownloadInteractionBlocked}
-            {hasAlbumDownloadJob}
-            {isSelectionDownloadDisabled}
-            {isCurrentSelectionCreating}
-            {hasCurrentSelectionJob}
-            {collections}
-            {onAddToCollection}
-          />
-        </section>
-      {/key}
+      <section class="album-panel">
+        <AlbumStage
+          albumName={selectedAlbum.name}
+          artworkUrl={selectedAlbumArtworkUrl}
+          {reducedMotion}
+          stageStyle={albumStageStyle}
+          mediaHeight={albumStageMediaHeight}
+          scrimOpacity={albumStageScrimOpacity}
+          imageOpacity={albumStageImageOpacity}
+          imageTransform={albumStageImageTransform}
+          solidifyOpacity={albumStageSolidifyOpacity}
+          bind:element={albumStageElement}
+        />
+        <AlbumDetailPanel
+          album={selectedAlbum}
+          {currentSongCid}
+          {isPlaybackActive}
+          {isPlaybackPaused}
+          {downloadingAlbumCid}
+          {selectionModeEnabled}
+          {selectedSongCids}
+          {reducedMotion}
+          {onToggleSelectionMode}
+          {onSelectAllSongs}
+          {onDeselectAllSongs}
+          {onInvertSongSelection}
+          {onDownloadAlbum}
+          {onDownloadSelection}
+          {onPlaySong}
+          {onTogglePlay}
+          {onDownloadSong}
+          {onToggleSongSelection}
+          {isSongSelected}
+          {getSongDownloadState}
+          {isSongDownloadInteractionBlocked}
+          {hasAlbumDownloadJob}
+          {isSelectionDownloadDisabled}
+          {isCurrentSelectionCreating}
+          {hasCurrentSelectionJob}
+          {collections}
+          {onAddToCollection}
+        />
+      </section>
     {:else if loadingDetail && showDetailSkeleton}
       <section class="album-panel album-panel-loading" bind:this={skeletonEl}>
         <AlbumStage

@@ -8,6 +8,8 @@
     direction: 'forward' | 'back';
     duration?: number;
     reducedMotion: boolean;
+    onTransitionStart?: () => void;
+    onTransitionEnd?: () => void;
     children: Snippet;
   }
 
@@ -16,29 +18,24 @@
     direction,
     duration = 350,
     reducedMotion,
+    onTransitionStart,
+    onTransitionEnd,
     children,
   }: Props = $props();
 
   let containerEl = $state<HTMLElement | null>(null);
   let outgoingHtml = $state<string | null>(null);
   let currentTimeline: gsap.core.Timeline | null = null;
-  let activeIncomingSlot: HTMLElement | null = null;
   let previousKey: string | null = null;
   let pendingSnapshot: string | null = null;
   let snapshotDirection: 'forward' | 'back' = 'forward';
 
-  function cleanupTransition() {
-    if (currentTimeline) {
-      currentTimeline.kill();
-      currentTimeline = null;
-    }
-    if (activeIncomingSlot) {
-      activeIncomingSlot.style.position = '';
-      activeIncomingSlot.style.inset = '';
-      gsap.set(activeIncomingSlot, { clearProps: 'xPercent,opacity' });
-      activeIncomingSlot = null;
-    }
-    outgoingHtml = null;
+  let transitionActive = false;
+
+  function notifyTransitionEnd() {
+    if (!transitionActive) return;
+    transitionActive = false;
+    onTransitionEnd?.();
   }
 
   $effect.pre(() => {
@@ -75,6 +72,7 @@
       if (currentTimeline) {
         currentTimeline.kill();
         currentTimeline = null;
+        notifyTransitionEnd();
       }
 
       const incomingSlot = container.querySelector(
@@ -94,13 +92,15 @@
         onStart: () => {
           incomingSlot.style.position = 'absolute';
           incomingSlot.style.inset = '0';
-          activeIncomingSlot = incomingSlot;
+          transitionActive = true;
+          onTransitionStart?.();
         },
         onComplete: () => {
+          gsap.set(incomingSlot, { clearProps: 'xPercent,opacity' });
           incomingSlot.style.position = '';
           incomingSlot.style.inset = '';
-          activeIncomingSlot = null;
-          cleanupTransition();
+          notifyTransitionEnd();
+          outgoingHtml = null;
         },
       });
 
@@ -127,6 +127,7 @@
         currentTimeline.kill();
         currentTimeline = null;
       }
+      notifyTransitionEnd();
     };
   });
 </script>

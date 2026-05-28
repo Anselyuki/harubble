@@ -199,6 +199,7 @@ export function createAppRuntime() {
     getReducedMotion: () => envStore.prefersReducedMotion,
     getViewportHeight: () => envStore.viewportHeight,
     getLoadingDetail: () => libraryController.loadingDetail,
+    getIsViewTransitioning: () => isViewTransitioning,
   });
 
   const homeController = createHomeController({
@@ -257,6 +258,7 @@ export function createAppRuntime() {
   let playerStateHydratedFromEvent = false;
   let navigationSeq = 0;
   let isNavigating = $state(false);
+  let isViewTransitioning = $state(false);
   let navigationDirection = $state<'forward' | 'back'>('forward');
 
   const settingsOpen = $derived(shellStore.settingsOpen);
@@ -1346,6 +1348,15 @@ export function createAppRuntime() {
     },
     get isNavigating() {
       return isNavigating;
+    },
+    get isViewTransitioning() {
+      return isViewTransitioning;
+    },
+    handleTransitionStart() {
+      isViewTransitioning = true;
+    },
+    handleTransitionEnd() {
+      isViewTransitioning = false;
     },
     get navigationDirection() {
       return navigationDirection;

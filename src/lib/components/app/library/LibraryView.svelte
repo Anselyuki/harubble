@@ -114,6 +114,7 @@
       onBack={runtime.canGoBack
         ? () => runtime.goBack()
         : runtime.handleDeselectAlbum}
+      isViewTransitioning={runtime.isViewTransitioning}
     />
   </AlbumWorkspace>
 {:else if isSearchMode}

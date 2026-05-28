@@ -19,6 +19,8 @@
   viewKey={runtime.currentView}
   direction={runtime.navigationDirection}
   reducedMotion={runtime.prefersReducedMotion}
+  onTransitionStart={runtime.handleTransitionStart}
+  onTransitionEnd={runtime.handleTransitionEnd}
 >
   {#if runtime.currentView === 'home'}
     <HomeView {runtime} />
