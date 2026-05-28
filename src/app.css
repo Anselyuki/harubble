@@ -324,6 +324,82 @@ img[data-image-state='error'] {
   padding: 12px;
 }
 
+.app-dialog {
+  --app-dialog-max-width: 28rem;
+
+  /*
+   * 镜像 Sheet 的设计 token：.sheet-section 在 app.css 中是顶层 class，
+   * 其内部使用 var(--sheet-border) / var(--sheet-section-bg)，但这些变量
+   * 仅定义在 .app-side-sheet[data-side='right'] 作用域内。把 .sheet-section
+   * 用进 Dialog 时必须在 .app-dialog 同时重声明这些 token，否则解析失败。
+   */
+  --sheet-border: color-mix(in srgb, var(--border) 78%, white 22%);
+  --sheet-section-bg: color-mix(in srgb, var(--bg-secondary) 76%, transparent);
+  --sheet-control-bg: color-mix(in srgb, var(--bg-primary) 54%, transparent);
+  --sheet-row-bg: color-mix(in srgb, var(--bg-primary) 42%, transparent);
+  --sheet-row-hover-bg: color-mix(in srgb, var(--bg-primary) 56%, transparent);
+
+  /* dialog 域内的语义别名，组件层 CSS 优先用这些别名 */
+  --dialog-border: var(--sheet-border);
+  --dialog-section-bg: var(--sheet-section-bg);
+  --dialog-control-bg: var(--sheet-control-bg);
+  --dialog-row-bg: var(--sheet-row-bg);
+  --dialog-row-hover-bg: var(--sheet-row-hover-bg);
+
+  width: min(100vw - 2rem, var(--app-dialog-max-width));
+  border: 1px solid var(--dialog-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-sheet) 92%, transparent);
+  backdrop-filter: blur(18px) saturate(1.16);
+  box-shadow: var(--hero-card-shadow);
+  padding: 0;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+
+.app-dialog .dialog-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 48px 12px 18px;
+  border-bottom: 1px solid var(--dialog-border);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-tint-strong) 64%, transparent),
+    transparent
+  );
+}
+
+.app-dialog .dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 18px 16px;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+}
+
+.app-dialog .dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--dialog-border);
+  background: color-mix(in srgb, var(--surface-sheet) 60%, transparent);
+}
+
+/* dialog 内 input 左右留白（覆盖 shadcn 基础 px-2.5） */
+.app-dialog input[data-slot='input'] {
+  padding-inline: 12px;
+}
+
+/* dialog body / footer 内非 icon 按钮水平留白（覆盖 shadcn 基础 px-2.5）
+   不影响关闭按钮（icon-sm，位于 dialog-content 顶层，不在此选择器范围内） */
+.app-dialog .dialog-footer [data-slot='button'],
+.app-dialog .dialog-body [data-slot='button'] {
+  padding-inline: 10px;
+}
+
 /* 主容器 */
 .app-shell {
   display: grid;

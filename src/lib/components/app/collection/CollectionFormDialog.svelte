@@ -63,57 +63,31 @@
     <Dialog.Header>
       <Dialog.Title>{title}</Dialog.Title>
     </Dialog.Header>
-    <div class="form-fields">
-      <label class="form-label">
-        <span class="label-text">名称</span>
+    <div class="dialog-body">
+      <label class="settings-field">
+        <span>名称</span>
         <Input
           bind:value={name}
           placeholder="输入合集名称"
-          class="form-input"
+          class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
         />
       </label>
-      <label class="form-label">
-        <span class="label-text">描述</span>
+      <label class="settings-field">
+        <span>描述</span>
         <Input
           bind:value={description}
           placeholder="输入合集描述（可选）"
-          class="form-input"
+          class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
         />
       </label>
     </div>
-    <div class="form-actions">
+    <Dialog.Footer>
       <Button variant="outline" onclick={onClose} disabled={submitting}>
         取消
       </Button>
       <Button onclick={handleSubmit} disabled={!isValid || submitting}>
         {submitLabel}
       </Button>
-    </div>
+    </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
-
-<style>
-  .form-fields {
-    display: grid;
-    gap: 16px;
-    padding: 16px 0;
-  }
-
-  .form-label {
-    display: grid;
-    gap: 6px;
-  }
-
-  .label-text {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary);
-  }
-
-  .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding-top: 8px;
-  }
-</style>

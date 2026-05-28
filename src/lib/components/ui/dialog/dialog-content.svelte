@@ -70,7 +70,7 @@
       forceMount
       data-slot="dialog-content"
       class={cn(
-        'dialog-content-fix bg-popover text-popover-foreground ring-foreground/10 grid max-w-[calc(100%-2rem)] gap-4 rounded-xl p-4 text-sm ring-1 sm:max-w-sm fixed top-1/2 left-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 outline-none',
+        'app-dialog dialog-content-fix fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 text-sm outline-none',
         className
       )}
       {...restProps}
@@ -81,7 +81,7 @@
           {#snippet child({ props })}
             <Button
               variant="ghost"
-              class="absolute top-2 right-2"
+              class="absolute top-3 right-3"
               size="icon-sm"
               {...props}
             >

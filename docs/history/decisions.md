@@ -149,3 +149,39 @@
 - 搜索索引包含所有 locale 下的 tag 值（不只是当前 locale），确保搜索不受用户语言切换影响
 - tag 值同时生成拼音全拼和首字母变体，与既有拼音召回机制一致
 - tag 命中通过 `matchedFields` 中的 `tagValues` 枚举值表达
+
+## 决策 9：保留 `* { padding: 0 }` 全局 reset，局部 unlayered CSS 覆盖
+
+**背景**：在 2026-05-28 重构 Dialog 视觉时发现，`<Input />` 与 `<Button />` 的 shadcn 默认 `px-2.5` 完全没有生效，文字紧贴边框。
+
+**根因**：`src/app.css` 顶部有 unlayered 通配符 reset：
+
+```css
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+```
+
+Tailwind v4 把所有 utility 放进 `@layer utilities`。CSS cascade layer 规范规定 **unlayered 样式优先级高于任何 layer**（与 specificity 无关），所以 unlayered 的 `* { padding: 0 }` 会屏蔽 layered 的全部 `p-*` / `px-*` / `py-*` utility。
+
+**考量**：
+
+- 彻底删除 reset：大量自研页面在视觉上依赖它（依赖 `margin/padding: 0` 的默认值），回归面积难以评估
+- 把 reset 包进 `@layer base`：可让 utilities 重新可达，但同样需要全量回归测试
+- 局部 unlayered CSS 覆盖：在需要 padding 的复合组件 / pattern 层用 specificity 更高的普通 CSS 显式声明，scope 收敛
+
+**结论**：采用第三种方案，原因是：
+
+1. harubble 的样式体系已经大量依赖局部语义 class（`.sheet-*`、`.app-dialog`、`.settings-field` 等），而非直接消费 Tailwind utility
+2. shadcn primitive 的视觉默认值在本项目里通常被业务层重新定义，padding utility 失效在大多数路径上没有可见副作用
+3. 真正需要 padding 的范围（dialog、sheet section、settings field）可以在 unlayered 局部 class 里显式声明，specificity 自然胜过通配符 reset
+
+**实践规约**：
+
+- 不要靠 `<Input class="px-3" />` 这类 layered utility 覆盖默认 padding —— 它吃不过通配符 reset
+- 不要随手加 `!` 重要标记硬刚通配符
+- 需要 padding 的局部范围，统一在对应的语义 class（如 `.app-dialog input[data-slot='input']`）里用普通 CSS 声明
+
+**未来重构方向**：如果引入更深度的 Tailwind 集成或更多 shadcn 默认视觉依赖，再统一评估是否把 reset 迁入 `@layer base`。届时需要走完整的视觉回归。
