@@ -257,6 +257,7 @@ export function createAppRuntime() {
   let playerStateHydratedFromEvent = false;
   let navigationSeq = 0;
   let isNavigating = $state(false);
+  let navigationDirection = $state<'forward' | 'back'>('forward');
 
   const settingsOpen = $derived(shellStore.settingsOpen);
   const downloadPanelOpen = $derived(shellStore.downloadPanelOpen);
@@ -525,10 +526,11 @@ export function createAppRuntime() {
 
     if (isSameEntry(current, target)) return;
 
+    navigationDirection = 'forward';
     navigationSeq++;
     navigationStack.push(current);
-    clearNonTargetState(view);
     shellStore.currentView = view;
+    clearNonTargetState(view);
   }
 
   async function openAlbum(
@@ -540,10 +542,11 @@ export function createAppRuntime() {
     if (isSameEntry(current, target)) return;
 
     const seq = ++navigationSeq;
+    navigationDirection = 'forward';
     isNavigating = true;
     navigationStack.push(current);
-    clearNonTargetState('library');
     shellStore.currentView = 'library';
+    clearNonTargetState('library');
 
     const shouldDispose = () => seq !== navigationSeq;
 
@@ -573,10 +576,11 @@ export function createAppRuntime() {
     if (isSameEntry(current, target)) return;
 
     const seq = ++navigationSeq;
+    navigationDirection = 'forward';
     isNavigating = true;
     navigationStack.push(current);
-    clearNonTargetState('collection');
     shellStore.currentView = 'collection';
+    clearNonTargetState('collection');
 
     const shouldDispose = () => seq !== navigationSeq;
 
@@ -600,10 +604,11 @@ export function createAppRuntime() {
     if (isSameEntry(current, target)) return;
 
     const seq = ++navigationSeq;
+    navigationDirection = 'forward';
     isNavigating = true;
     navigationStack.push(current);
-    clearNonTargetState('tagEditor');
     shellStore.currentView = 'tagEditor';
+    clearNonTargetState('tagEditor');
 
     const shouldDispose = () => seq !== navigationSeq;
 
@@ -622,9 +627,10 @@ export function createAppRuntime() {
 
     const entry = navigationStack.pop()!;
     const seq = ++navigationSeq;
+    navigationDirection = 'back';
     isNavigating = true;
-    clearNonTargetState(entry.view);
     shellStore.currentView = entry.view;
+    clearNonTargetState(entry.view);
 
     const shouldDispose = () => seq !== navigationSeq;
 
@@ -1340,6 +1346,9 @@ export function createAppRuntime() {
     },
     get isNavigating() {
       return isNavigating;
+    },
+    get navigationDirection() {
+      return navigationDirection;
     },
     navigateToTop,
     openAlbum,
