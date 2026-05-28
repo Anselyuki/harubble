@@ -397,7 +397,7 @@ img[data-image-state='error'] {
    不影响关闭按钮（icon-sm，位于 dialog-content 顶层，不在此选择器范围内） */
 .app-dialog .dialog-footer [data-slot='button'],
 .app-dialog .dialog-body [data-slot='button'] {
-  padding-inline: 18px;
+  padding-inline: 10px;
 }
 
 /* 主容器 */
