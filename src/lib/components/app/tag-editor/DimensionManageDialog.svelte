@@ -2,6 +2,7 @@
   import * as m from '$lib/paraglide/messages.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Input } from '$lib/components/ui/input/index.js';
   import type { TagEditorDimension } from '$lib/types';
 
   interface Props {
@@ -54,7 +55,7 @@
     </Dialog.Header>
 
     <div class="dialog-body">
-      <section class="existing-dims">
+      <section class="sheet-section existing-dims">
         <h4 class="sub-heading">{m.tag_editor_dimension_existing()}</h4>
         <ul class="dim-list">
           {#each dimensions as dim (dim.key)}
@@ -80,19 +81,23 @@
         </ul>
       </section>
 
-      <section class="add-dim">
+      <section class="sheet-section add-dim">
         <h4 class="sub-heading">{m.tag_editor_dimension_add_new()}</h4>
         <div class="add-form">
-          <input bind:value={newDimKey} placeholder="key" class="form-input" />
-          <input
+          <Input
+            bind:value={newDimKey}
+            placeholder="key"
+            class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
+          />
+          <Input
             bind:value={newDimZh}
             placeholder={m.tag_editor_placeholder_dim_zh()}
-            class="form-input"
+            class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
           />
-          <input
+          <Input
             bind:value={newDimEn}
             placeholder={m.tag_editor_placeholder_dim_en()}
-            class="form-input"
+            class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
           />
           <Button size="sm" onclick={handleAdd}>{m.tag_editor_add()}</Button>
         </div>
@@ -108,18 +113,13 @@
 </Dialog.Root>
 
 <style>
-  .dialog-body {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-    padding: 0.5rem 0;
-  }
+  /* .dialog-body は全局 .app-dialog .dialog-body で処理、局部定義を排除 */
 
   .sub-heading {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-    margin: 0 0 0.5rem;
+    margin: 0 0 8px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
   }
 
   .dim-list {
@@ -128,20 +128,23 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
   }
 
   .dim-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.375rem 0.5rem;
+    padding: 6px 8px;
     border-radius: 6px;
-    font-size: 0.8125rem;
+    font-size: 13px;
+  }
+
+  .dim-item + .dim-item {
+    border-top: 1px solid var(--dialog-border);
   }
 
   .dim-item:hover {
-    background: var(--hover-bg-elevated);
+    background: var(--dialog-row-hover-bg);
   }
 
   .dim-item-label {
@@ -149,10 +152,10 @@
   }
 
   .dim-item-key {
-    font-size: 0.6875rem;
+    font-size: 11px;
     color: var(--text-tertiary);
     font-family: var(--font-mono);
-    margin-left: 0.25rem;
+    margin-left: 4px;
   }
 
   .dim-delete-btn {
@@ -160,35 +163,25 @@
     border: none;
     cursor: pointer;
     color: var(--text-secondary);
-    font-size: 1rem;
-    padding: 0.125rem 0.375rem;
+    font-size: 16px;
+    padding: 2px 6px;
     border-radius: 4px;
+    font-family: inherit;
   }
 
   .dim-delete-btn:hover {
-    color: var(--color-danger, #ef4444);
+    color: var(--destructive);
   }
 
   .dim-delete-btn.confirming {
-    font-size: 0.6875rem;
-    color: var(--color-danger, #ef4444);
-    border: 1px solid var(--color-danger, #ef4444);
+    font-size: 11px;
+    color: var(--destructive);
+    border: 1px solid var(--destructive);
   }
 
   .add-form {
     display: flex;
-    gap: 0.25rem;
+    gap: 6px;
     align-items: center;
-  }
-
-  .form-input {
-    flex: 1;
-    font-size: 0.75rem;
-    padding: 0.375rem 0.5rem;
-    border: 1px solid var(--color-border, #d1d5db);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-primary);
-    font-family: var(--font-body);
   }
 </style>
