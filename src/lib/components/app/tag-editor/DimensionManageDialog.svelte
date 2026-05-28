@@ -113,7 +113,7 @@
 </Dialog.Root>
 
 <style>
-  /* .dialog-body は全局 .app-dialog .dialog-body で処理、局部定義を排除 */
+  /* .dialog-body 由全局 .app-dialog .dialog-body 处理，移除局部定义以避免覆盖 */
 
   .sub-heading {
     margin: 0 0 8px;
