@@ -388,6 +388,18 @@ img[data-image-state='error'] {
   background: color-mix(in srgb, var(--surface-sheet) 60%, transparent);
 }
 
+/* dialog 内 input 左右留白（覆盖 shadcn 基础 px-2.5） */
+.app-dialog input[data-slot='input'] {
+  padding-inline: 12px;
+}
+
+/* dialog body / footer 内非 icon 按钮水平留白（覆盖 shadcn 基础 px-2.5）
+   不影响关闭按钮（icon-sm，位于 dialog-content 顶层，不在此选择器范围内） */
+.app-dialog .dialog-footer [data-slot='button'],
+.app-dialog .dialog-body [data-slot='button'] {
+  padding-inline: 18px;
+}
+
 /* 主容器 */
 .app-shell {
   display: grid;
