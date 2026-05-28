@@ -134,6 +134,47 @@ CSS 变量：
 | Composite   | 面向单个业务区域的复合组件            | TopToolbar、PlayerDock、SettingsSheet  |
 | Pattern     | 跨组件复用的结构模式                  | 侧栏列表、右侧 Sheet、空状态模式       |
 
+### CSS 陷阱：全局 reset 屏蔽 Tailwind padding utility
+
+`src/app.css` 顶部存在 unlayered 的通配符 reset：
+
+```css
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+```
+
+Tailwind v4 通过 `@import 'tailwindcss'` 把所有 utility 注入 `@layer utilities`。按 CSS 规范，**unlayered 样式始终胜过 layered 样式**（与 specificity 无关），所以上面这条通配符 reset 会**完整屏蔽**所有 layered 的 `px-*` / `py-*` / `p-*` utility，包括：
+
+- shadcn `Input` 自带的 `px-2.5 py-1`
+- shadcn `Button` 各 size variant 的 `px-2.5` / `px-2` / `gap-*`
+- 任何直接写在组件里的 Tailwind padding utility
+
+**症状**：`<Input />` / `<Button />` 视觉上文字紧贴边框，明明源码写了 `px-2.5` 却完全没生效。
+
+**已采用的对策**：在范围明确的局部 class（如 `.app-dialog`、`.sheet-section`、`.settings-field`）里**用 unlayered 普通 CSS 显式声明 padding**，依靠更高 specificity 胜过通配符 reset。
+
+```css
+/* 示例：dialog 内 input/button 留白 */
+.app-dialog input[data-slot='input'] {
+  padding-inline: 12px;
+}
+.app-dialog .dialog-footer [data-slot='button'],
+.app-dialog .dialog-body [data-slot='button'] {
+  padding-inline: 10px;
+}
+```
+
+**不要**这样做：
+
+- 在组件 prop 上加 `class="px-3"` 期望它覆盖默认 padding —— layered utility 仍然吃不过通配符 reset
+- 用 `!` 重要标记（`px-3!`）硬刚 —— 视觉债务而非根治
+- 单独删 `*` reset 的 `padding: 0` —— 大量页面在视觉上依赖它，回归面积过大
+
+**根治路径**（如未来重构 Tailwind 集成时考虑）：把通配符 reset 包进 `@layer base`，让 utilities 层重新可达，但需要逐一回归现有页面。背景见 `docs/history/decisions.md` 决策 9。
+
 ## 5. 国际化（i18n）
 
 语言来源：`AppPreferences.locale` 是唯一来源，前端只镜像后端偏好。
