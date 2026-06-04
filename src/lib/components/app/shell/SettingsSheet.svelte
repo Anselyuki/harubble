@@ -78,6 +78,12 @@
   let isClearingAudioCache = $state(false);
   let lastLoadedWhileOpen = $state(false);
   let themeColorDrafts = $state<Partial<Record<ThemeColorSlot, string>>>({});
+  let lastSyncedThemeColors = $state<ThemeColorSlots>(
+    resolveThemeColors({
+      presetId: themePresetId,
+      customColors: themeCustomColors,
+    })
+  );
   const labels = $derived.by(() => {
     void localeState.current;
     return {
@@ -214,16 +220,33 @@
     return themeColorDrafts[slot] ?? resolvedThemeColors[slot];
   }
 
-  function syncThemeDraftsToResolvedColors() {
+  function syncThemeDraftsToResolvedColors(
+    nextResolvedColors = resolvedThemeColors,
+    forceAll = false
+  ) {
     themeColorDrafts = Object.fromEntries(
-      THEME_COLOR_SLOTS.map((slot) => [slot, resolvedThemeColors[slot]])
+      THEME_COLOR_SLOTS.map((slot) => {
+        const currentDraft = themeColorDrafts[slot];
+        const shouldSyncSlot =
+          forceAll ||
+          currentDraft === undefined ||
+          currentDraft === lastSyncedThemeColors[slot];
+
+        return [slot, shouldSyncSlot ? nextResolvedColors[slot] : currentDraft];
+      })
     ) as Partial<Record<ThemeColorSlot, string>>;
+    lastSyncedThemeColors = { ...nextResolvedColors };
   }
 
   function handleThemePresetChange(nextPresetId: string) {
-    themePresetId = getThemePreset(nextPresetId).id;
+    const presetId = getThemePreset(nextPresetId).id;
+    const nextResolvedColors = resolveThemeColors({
+      presetId,
+      customColors: {},
+    });
+    themePresetId = presetId;
     themeCustomColors = {};
-    syncThemeDraftsToResolvedColors();
+    syncThemeDraftsToResolvedColors(nextResolvedColors, true);
   }
 
   function handleThemeTextInput(slot: ThemeColorSlot, value: string) {
@@ -247,8 +270,12 @@
   }
 
   function resetThemeCustomColors() {
+    const nextResolvedColors = resolveThemeColors({
+      presetId: themePresetId,
+      customColors: {},
+    });
     themeCustomColors = {};
-    syncThemeDraftsToResolvedColors();
+    syncThemeDraftsToResolvedColors(nextResolvedColors, true);
   }
 
   async function refreshLogs(kind = logFileKind) {
@@ -337,7 +364,7 @@
   $effect(() => {
     void themePresetId;
     void themeCustomColors;
-    syncThemeDraftsToResolvedColors();
+    syncThemeDraftsToResolvedColors(resolvedThemeColors);
   });
 </script>
 
@@ -469,6 +496,7 @@
           {#each THEME_COLOR_SLOTS as slot (slot)}
             {@const draft = getThemeDraft(slot)}
             {@const invalid = draft.length > 0 && !isValidThemeHex(draft)}
+            {@const invalidHelpId = `theme-color-${slot}-error`}
             <label class="settings-theme-color-row" for={`theme-color-${slot}`}>
               <span
                 class="settings-theme-color-swatch"
@@ -482,6 +510,7 @@
                 class="settings-theme-hex-input h-8 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
                 value={draft}
                 aria-invalid={invalid}
+                aria-describedby={invalid ? invalidHelpId : undefined}
                 oninput={(event) =>
                   handleThemeTextInput(slot, event.currentTarget.value)}
               />
@@ -494,7 +523,7 @@
                   handleThemeColorInput(slot, event.currentTarget.value)}
               />
               {#if invalid}
-                <small class="settings-theme-invalid"
+                <small id={invalidHelpId} class="settings-theme-invalid"
                   >{labels.themeHexInvalid}</small
                 >
               {/if}
