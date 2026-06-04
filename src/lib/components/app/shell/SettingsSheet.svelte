@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import * as Sheet from '$lib/components/ui/sheet/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -224,18 +225,23 @@
     nextResolvedColors = resolvedThemeColors,
     forceAll = false
   ) {
-    themeColorDrafts = Object.fromEntries(
-      THEME_COLOR_SLOTS.map((slot) => {
-        const currentDraft = themeColorDrafts[slot];
-        const shouldSyncSlot =
-          forceAll ||
-          currentDraft === undefined ||
-          currentDraft === lastSyncedThemeColors[slot];
+    untrack(() => {
+      themeColorDrafts = Object.fromEntries(
+        THEME_COLOR_SLOTS.map((slot) => {
+          const currentDraft = themeColorDrafts[slot];
+          const shouldSyncSlot =
+            forceAll ||
+            currentDraft === undefined ||
+            currentDraft === lastSyncedThemeColors[slot];
 
-        return [slot, shouldSyncSlot ? nextResolvedColors[slot] : currentDraft];
-      })
-    ) as Partial<Record<ThemeColorSlot, string>>;
-    lastSyncedThemeColors = { ...nextResolvedColors };
+          return [
+            slot,
+            shouldSyncSlot ? nextResolvedColors[slot] : currentDraft,
+          ];
+        })
+      ) as Partial<Record<ThemeColorSlot, string>>;
+      lastSyncedThemeColors = { ...nextResolvedColors };
+    });
   }
 
   function handleThemePresetChange(nextPresetId: string) {
