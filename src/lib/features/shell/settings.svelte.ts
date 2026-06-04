@@ -1,6 +1,10 @@
 import * as m from '$lib/paraglide/messages.js';
 import type { Locale } from '$lib/i18n/types';
 import type { AppPreferences, LogLevel, OutputFormat } from '$lib/types';
+import {
+  DEFAULT_THEME_PREFERENCES,
+  type ThemeColorSlots,
+} from '$lib/themePresets';
 
 interface SettingsControllerDeps {
   getPreferences: () => Promise<AppPreferences>;
@@ -22,6 +26,8 @@ export interface SettingsState {
   logLevel: LogLevel;
   locale: Locale;
   volume: number;
+  themePresetId: string;
+  themeCustomColors: Partial<ThemeColorSlots>;
   settingsLogRefreshToken: number;
   prefsReady: boolean;
   isSaving: boolean;
@@ -35,8 +41,13 @@ export interface SettingsState {
     notifyOnPlaybackChange: boolean;
     logLevel: boolean;
     locale: boolean;
+    theme: boolean;
   };
   suspendDirtyTracking: number;
+}
+
+function normalizeThemePreferences(preferences: AppPreferences) {
+  return preferences.theme ?? DEFAULT_THEME_PREFERENCES;
 }
 
 export function createSettingsController(deps: SettingsControllerDeps) {
@@ -57,6 +68,10 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       notifyOnPlaybackChange: state.notifyOnPlaybackChange,
       logLevel: state.logLevel,
       locale: state.locale,
+      theme: {
+        presetId: state.themePresetId,
+        customColors: state.themeCustomColors,
+      },
     });
   }
 
@@ -69,6 +84,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       notifyOnPlaybackChange: preferences.notifyOnPlaybackChange,
       logLevel: preferences.logLevel,
       locale: preferences.locale,
+      theme: preferences.theme ?? DEFAULT_THEME_PREFERENCES,
     });
   }
 
@@ -102,6 +118,11 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       }
       if (!state.dirty.locale) {
         state.locale = prefs.locale;
+      }
+      const theme = normalizeThemePreferences(prefs);
+      if (!state.dirty.theme || !prefs.theme) {
+        state.themePresetId = theme.presetId;
+        state.themeCustomColors = { ...theme.customColors };
       }
       state.volume = prefs.volume;
       deps.onLocaleChanged?.(prefs.locale);
@@ -152,6 +173,10 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       logLevel: state.logLevel,
       locale: state.locale,
       volume: state.volume,
+      theme: {
+        presetId: state.themePresetId,
+        customColors: { ...state.themeCustomColors },
+      },
     };
 
     state.isSaving = true;
@@ -167,6 +192,9 @@ export function createSettingsController(deps: SettingsControllerDeps) {
           state.notifyOnPlaybackChange = updated.notifyOnPlaybackChange;
           state.logLevel = updated.logLevel;
           state.locale = updated.locale;
+          const updatedTheme = normalizeThemePreferences(updated);
+          state.themePresetId = updatedTheme.presetId;
+          state.themeCustomColors = { ...updatedTheme.customColors };
           state.persistedSnapshot = getSnapshot(state);
         } else {
           state.persistedSnapshot = requestSnapshot;
@@ -179,6 +207,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
         state.dirty.notifyOnPlaybackChange = false;
         state.dirty.logLevel = false;
         state.dirty.locale = false;
+        state.dirty.theme = false;
         state.lastSaveFailedSnapshot = '';
         return true;
       } catch (error) {

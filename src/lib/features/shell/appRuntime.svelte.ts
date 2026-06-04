@@ -63,7 +63,11 @@ import type {
   SearchLibraryResultItem,
   ThemePalette,
 } from '$lib/types';
-import { applyThemePalette, DEFAULT_THEME_PALETTE } from '$lib/theme';
+import { applyAlbumAccentPalette, applyThemeColors } from '$lib/theme';
+import {
+  DEFAULT_THEME_PREFERENCES,
+  resolveThemeColors,
+} from '$lib/themePresets';
 import { envStore } from '$lib/features/env/store.svelte';
 import { shellStore, type AppView } from '$lib/features/shell/store.svelte';
 import {
@@ -334,6 +338,8 @@ export function createAppRuntime() {
     logLevel: 'error' as LogLevel,
     locale: 'zh-CN' as Locale,
     volume: 1,
+    themePresetId: DEFAULT_THEME_PREFERENCES.presetId,
+    themeCustomColors: {},
     settingsLogRefreshToken: 0,
     prefsReady: false,
     isSaving: false,
@@ -347,6 +353,7 @@ export function createAppRuntime() {
       notifyOnPlaybackChange: false,
       logLevel: false,
       locale: false,
+      theme: false,
     },
     suspendDirtyTracking: 0,
   });
@@ -364,10 +371,20 @@ export function createAppRuntime() {
     notifyOnPlaybackChange: settingsState.notifyOnPlaybackChange,
     logLevel: settingsState.logLevel,
     locale: settingsState.locale,
+    theme: JSON.stringify({
+      presetId: settingsState.themePresetId,
+      customColors: settingsState.themeCustomColors,
+    }),
   };
 
   const playerHasPrevious = $derived(playerController.playerHasPrevious);
   const playerHasNext = $derived(playerController.playerHasNext);
+  const resolvedThemeColors = $derived.by(() =>
+    resolveThemeColors({
+      presetId: settingsState.themePresetId,
+      customColors: settingsState.themeCustomColors,
+    })
+  );
 
   const activeLyricIndex = $derived.by(() => {
     if (!lyricsOpen && !fullscreenOpen) return -1;
@@ -455,6 +472,17 @@ export function createAppRuntime() {
       notifyOnPlaybackChange: settingsState.notifyOnPlaybackChange,
       logLevel: settingsState.logLevel,
       locale: settingsState.locale,
+      theme: {
+        presetId: settingsState.themePresetId,
+        customColors: settingsState.themeCustomColors,
+      },
+    });
+  }
+
+  function getThemeSettingsSnapshot() {
+    return JSON.stringify({
+      presetId: settingsState.themePresetId,
+      customColors: settingsState.themeCustomColors,
     });
   }
 
@@ -825,13 +853,15 @@ export function createAppRuntime() {
   });
 
   $effect(() => {
+    const themeColors = resolvedThemeColors;
     const shouldApplyAlbumTheme =
       shellStore.currentView === 'library' || fullscreenOpen;
-    if (shouldApplyAlbumTheme && cachedAlbumPalette) {
-      applyThemePalette(cachedAlbumPalette);
-    } else {
-      applyThemePalette(DEFAULT_THEME_PALETTE);
-    }
+
+    applyThemeColors(themeColors);
+    applyAlbumAccentPalette(
+      shouldApplyAlbumTheme ? cachedAlbumPalette : null,
+      themeColors
+    );
   });
 
   $effect(() => {
@@ -942,6 +972,18 @@ export function createAppRuntime() {
     if (value !== lastObservedSettings.locale) {
       settingsState.dirty.locale = true;
       lastObservedSettings.locale = value;
+    }
+  });
+
+  $effect(() => {
+    const value = getThemeSettingsSnapshot();
+    if (settingsState.suspendDirtyTracking > 0) {
+      lastObservedSettings.theme = value;
+      return;
+    }
+    if (value !== lastObservedSettings.theme) {
+      settingsState.dirty.theme = true;
+      lastObservedSettings.theme = value;
     }
   });
 
