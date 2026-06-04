@@ -140,3 +140,54 @@ describe('theme CSS variables', () => {
     expect(root.style.getPropertyValue('--wave-color-0')).toBe('255, 228, 122');
   });
 });
+
+describe('theme CSS routing', () => {
+  function cssBlocksFor(appCss: string, selector: string): string[] {
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const matches = [
+      ...appCss.matchAll(new RegExp(`${escapedSelector}\\s*\\{[^}]*\\}`, 'g')),
+    ].map((match) => match[0]);
+    expect(matches, `${selector} block exists`).not.toHaveLength(0);
+    return matches;
+  }
+
+  it('routes player and album emphasis through album overlay variables', async () => {
+    // @ts-expect-error Vitest runs in Node and reads the source stylesheet.
+    const { readFileSync } = await import('node:fs');
+    const appCss = readFileSync('src/app.css', 'utf8');
+    const albumAccentBlocks = [
+      '.player-flyout',
+      '.player-flyout-header::after',
+      '.player-flyout-count',
+      '.player-lyric-line.active',
+      '.lyrics-bubble',
+      '.lyrics-bubble-header::after',
+      '.lyrics-bubble-count',
+      '.lyrics-bubble-line.active',
+      '.fullscreen-player',
+      '.fullscreen-player::before',
+      '.fullscreen-cover',
+      '.fs-download.download-active',
+      ".fs-btn[aria-pressed='true']",
+      '.fs-play.playing',
+      '.player-playlist-item:hover',
+      '.player-playlist-item.active',
+      '.album-stage-media-loading',
+      '.album-stage-solidify',
+      '.album-stage-divider',
+      '.loading-cover',
+      '.album-belong-tag',
+      '.album-download-status-badge',
+      '.album-detail-card .btn-primary',
+    ];
+
+    for (const selector of albumAccentBlocks) {
+      const blocks = cssBlocksFor(appCss, selector);
+      const combinedBlocks = blocks.join('\n');
+      expect(combinedBlocks, selector).toContain('--album-accent');
+      for (const block of blocks) {
+        expect(block, selector).not.toMatch(/var\(--accent(?:-rgb)?\)/);
+      }
+    }
+  });
+});
