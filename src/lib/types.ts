@@ -157,6 +157,21 @@ export interface ThemePalette {
   waveColors: [number, number, number][];
 }
 
+export type ThemeColorSlot =
+  | 'accent'
+  | 'surface'
+  | 'textPrimary'
+  | 'textSecondary'
+  | 'tint'
+  | 'danger';
+
+export type ThemeColorSlots = Record<ThemeColorSlot, string>;
+
+export interface ThemePreferences {
+  presetId: string;
+  customColors: Partial<ThemeColorSlots>;
+}
+
 export type OutputFormat = 'flac' | 'wav' | 'mp3';
 
 // ---------------------------------------------------------------------------
@@ -297,6 +312,7 @@ export interface AppPreferences {
   logLevel: LogLevel;
   locale: Locale;
   volume: number;
+  theme?: ThemePreferences;
 }
 
 export type AppErrorLevel = 'warn' | 'error';

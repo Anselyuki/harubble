@@ -18,6 +18,17 @@
   --accent-hover: rgb(var(--accent-hover-rgb));
   --accent-readable-foreground: #390b10;
   --accent-hover-readable-foreground: #441019;
+  --theme-surface: #d1d6db;
+  --theme-surface-rgb: 209, 214, 219;
+  --theme-text-primary: #4a5056;
+  --theme-text-secondary: #596066;
+  --theme-tint: #899cb0;
+  --theme-tint-rgb: 137, 156, 176;
+  --album-accent-rgb: var(--accent-rgb);
+  --album-accent-hover-rgb: var(--accent-hover-rgb);
+  --album-accent: var(--accent);
+  --album-accent-hover: var(--accent-hover);
+  --album-accent-readable-foreground: var(--accent-readable-foreground);
   --surface-window: color-mix(in srgb, var(--bg-primary) 100%, transparent);
   --surface-sidebar: color-mix(in srgb, var(--bg-secondary) 92%, white 8%);
   --surface-workspace: color-mix(in srgb, var(--bg-primary) 96%, white 4%);
@@ -58,7 +69,7 @@
   --secondary-foreground: var(--text-primary);
   --muted: var(--bg-tertiary);
   --muted-foreground: var(--text-secondary);
-  --destructive: #ff3b30;
+  --destructive: #c74f4f;
   --destructive-foreground: white;
   --input: var(--bg-tertiary);
   --ring: rgba(var(--accent-rgb), 0.3);
@@ -115,8 +126,8 @@
     --toolbar-shadow:
       0 18px 40px rgba(15, 23, 42, 0.14),
       0 12px 28px rgba(var(--accent-rgb), 0.08);
-    --surface-tint: rgba(var(--accent-rgb), 0.04);
-    --surface-tint-strong: rgba(var(--accent-rgb), 0.08);
+    --surface-tint: rgba(var(--theme-tint-rgb), 0.04);
+    --surface-tint-strong: rgba(var(--theme-tint-rgb), 0.08);
     --stage-shell-fill: rgba(248, 249, 251, 0.96);
     --stage-shell-border: rgba(15, 23, 42, 0.08);
     --stage-shell-shadow:
@@ -133,22 +144,22 @@
     --player-shell-bg: rgba(255, 255, 255, 0.78);
     --player-shell-border: rgba(17, 17, 17, 0.05);
     --player-shell-highlight: rgba(255, 255, 255, 0.8);
-    --player-cover-start: rgba(var(--accent-rgb), 0.14);
-    --player-cover-end: rgba(var(--accent-rgb), 0.04);
+    --player-cover-start: rgba(var(--album-accent-rgb), 0.14);
+    --player-cover-end: rgba(var(--album-accent-rgb), 0.04);
     --player-placeholder-color: rgba(28, 28, 30, 0.58);
     --player-title: rgba(28, 28, 30, 0.92);
     --player-subtitle: rgba(60, 60, 67, 0.66);
     --player-track-bg: rgba(60, 60, 67, 0.1);
-    --player-track-fill-end: rgba(var(--accent-rgb), 0.38);
+    --player-track-fill-end: rgba(var(--album-accent-rgb), 0.38);
     --player-thumb-border: rgba(255, 255, 255, 0.9);
-    --player-thumb-bg: var(--accent);
-    --player-thumb-shadow: 0 2px 10px rgba(var(--accent-rgb), 0.24);
+    --player-thumb-bg: var(--album-accent);
+    --player-thumb-shadow: 0 2px 10px rgba(var(--album-accent-rgb), 0.24);
     --player-control-color: rgba(28, 28, 30, 0.82);
-    --player-control-hover-bg: rgba(var(--accent-rgb), 0.1);
+    --player-control-hover-bg: rgba(var(--album-accent-rgb), 0.1);
     --player-time: rgba(60, 60, 67, 0.58);
     --player-play-text: white;
-    --player-play-shadow: 0 10px 24px rgba(var(--accent-rgb), 0.28);
-    --player-play-shadow-hover: 0 12px 28px rgba(var(--accent-rgb), 0.34);
+    --player-play-shadow: 0 10px 24px rgba(var(--album-accent-rgb), 0.28);
+    --player-play-shadow-hover: 0 12px 28px rgba(var(--album-accent-rgb), 0.34);
   }
 }
 
@@ -174,8 +185,8 @@
     --toolbar-highlight: rgba(255, 255, 255, 0.12);
     --toolbar-shadow:
       0 22px 48px rgba(0, 0, 0, 0.42), 0 12px 28px rgba(var(--accent-rgb), 0.14);
-    --surface-tint: rgba(var(--accent-rgb), 0.08);
-    --surface-tint-strong: rgba(var(--accent-rgb), 0.14);
+    --surface-tint: rgba(var(--theme-tint-rgb), 0.08);
+    --surface-tint-strong: rgba(var(--theme-tint-rgb), 0.14);
     --stage-shell-fill: rgba(22, 22, 26, 0.96);
     --stage-shell-border: rgba(255, 255, 255, 0.08);
     --stage-shell-shadow:
@@ -191,22 +202,22 @@
     --player-shell-bg: rgba(28, 28, 30, 0.78);
     --player-shell-border: rgba(255, 255, 255, 0.08);
     --player-shell-highlight: rgba(255, 255, 255, 0.08);
-    --player-cover-start: rgba(var(--accent-rgb), 0.24);
-    --player-cover-end: rgba(var(--accent-rgb), 0.08);
+    --player-cover-start: rgba(var(--album-accent-rgb), 0.24);
+    --player-cover-end: rgba(var(--album-accent-rgb), 0.08);
     --player-placeholder-color: rgba(255, 255, 255, 0.72);
     --player-title: rgba(255, 255, 255, 0.94);
     --player-subtitle: rgba(235, 235, 245, 0.58);
     --player-track-bg: rgba(255, 255, 255, 0.12);
-    --player-track-fill-end: rgba(var(--accent-rgb), 0.54);
+    --player-track-fill-end: rgba(var(--album-accent-rgb), 0.54);
     --player-thumb-border: rgba(17, 17, 19, 0.84);
-    --player-thumb-bg: rgba(255, 255, 255, 0.96);
-    --player-thumb-shadow: 0 3px 12px rgba(0, 0, 0, 0.34);
+    --player-thumb-bg: var(--album-accent);
+    --player-thumb-shadow: 0 3px 12px rgba(var(--album-accent-rgb), 0.34);
     --player-control-color: rgba(255, 255, 255, 0.88);
-    --player-control-hover-bg: rgba(var(--accent-rgb), 0.16);
+    --player-control-hover-bg: rgba(var(--album-accent-rgb), 0.16);
     --player-time: rgba(235, 235, 245, 0.58);
     --player-play-text: white;
-    --player-play-shadow: 0 12px 28px rgba(var(--accent-rgb), 0.3);
-    --player-play-shadow-hover: 0 14px 32px rgba(var(--accent-rgb), 0.36);
+    --player-play-shadow: 0 12px 28px rgba(var(--album-accent-rgb), 0.3);
+    --player-play-shadow-hover: 0 14px 32px rgba(var(--album-accent-rgb), 0.36);
   }
 }
 
