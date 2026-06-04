@@ -61,12 +61,11 @@ fn is_known_theme_color_slot(value: &str) -> bool {
 }
 
 fn normalize_theme_hex(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.len() == 7
-        && trimmed.starts_with('#')
-        && trimmed[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+    if value.len() == 7
+        && value.starts_with('#')
+        && value[1..].chars().all(|ch| ch.is_ascii_hexdigit())
     {
-        Some(trimmed.to_ascii_uppercase())
+        Some(value.to_ascii_uppercase())
     } else {
         None
     }
@@ -210,6 +209,26 @@ presetId = "harubble-classic"
 [theme.customColors]
 accent = "FFE47A"
 surface = "#12345G"
+tint = "#0f1a2b"
+"##,
+        ))
+        .unwrap();
+
+        assert_eq!(prefs.theme.custom_colors.get("tint").unwrap(), "#0F1A2B");
+        assert!(!prefs.theme.custom_colors.contains_key("accent"));
+        assert!(!prefs.theme.custom_colors.contains_key("surface"));
+    }
+
+    #[test]
+    fn whitespace_padded_theme_hex_values_are_dropped() {
+        let prefs: AppPreferences = toml::from_str(&existing_preferences_toml(
+            r##"
+[theme]
+presetId = "harubble-classic"
+
+[theme.customColors]
+accent = " #0f1a2b"
+surface = "#0f1a2b "
 tint = "#0f1a2b"
 "##,
         ))
