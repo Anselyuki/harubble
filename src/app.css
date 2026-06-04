@@ -64,7 +64,7 @@
   --card: var(--bg-secondary);
   --card-foreground: var(--text-primary);
   --primary: var(--accent);
-  --primary-foreground: white;
+  --primary-foreground: var(--accent-readable-foreground);
   --secondary: var(--bg-tertiary);
   --secondary-foreground: var(--text-primary);
   --muted: var(--bg-tertiary);

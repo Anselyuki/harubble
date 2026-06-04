@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_THEME_PRESET_ID,
   HARUBBLE_CLASSIC_COLORS,
+  THEME_PRESETS,
   isValidThemeHex,
   resolveThemeColors,
 } from './themePresets';
@@ -30,6 +31,40 @@ describe('theme presets', () => {
     expect(colors.textSecondary).toBe('#596066');
     expect(colors.tint).toBe('#899CB0');
     expect(colors.danger).toBe('#C74F4F');
+  });
+
+  it('falls back to the default preset when the preset id is unknown', () => {
+    expect(
+      resolveThemeColors({
+        presetId: 'unknown-preset',
+        customColors: {},
+      })
+    ).toEqual(HARUBBLE_CLASSIC_COLORS);
+  });
+
+  it('includes the required preset ids with complete color slots', () => {
+    const presetsById = new Map(
+      THEME_PRESETS.map((preset) => [preset.id, preset])
+    );
+
+    expect([...presetsById.keys()]).toEqual([
+      'harubble-classic',
+      'clear-aqua',
+      'night-console',
+    ]);
+
+    for (const preset of THEME_PRESETS) {
+      expect(Object.keys(preset.colors).sort()).toEqual([
+        'accent',
+        'danger',
+        'surface',
+        'textPrimary',
+        'textSecondary',
+        'tint',
+      ]);
+    }
+
+    expect(presetsById.get('harubble-classic')?.colors.tint).toBe('#899CB0');
   });
 
   it('applies custom slot overrides over the selected preset', () => {
@@ -189,5 +224,15 @@ describe('theme CSS routing', () => {
         expect(block, selector).not.toMatch(/var\(--accent(?:-rgb)?\)/);
       }
     }
+  });
+
+  it('routes primary foreground through the derived accent readable foreground', async () => {
+    // @ts-expect-error Vitest runs in Node and reads the source stylesheet.
+    const { readFileSync } = await import('node:fs');
+    const appCss = readFileSync('src/app.css', 'utf8');
+
+    expect(appCss).toContain(
+      '--primary-foreground: var(--accent-readable-foreground);'
+    );
   });
 });
