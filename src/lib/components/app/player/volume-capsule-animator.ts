@@ -118,7 +118,7 @@ export function createCapsuleAnimator(
       gsap.to(iconBtn, {
         color: 'var(--icon-active)',
         backgroundColor:
-          'var(--player-control-hover-bg, rgba(var(--accent-rgb), 0.1))',
+          'var(--player-control-hover-bg, rgba(var(--album-accent-rgb), 0.1))',
         duration: getMotionDuration(150),
         ease: 'ios-out',
       });
