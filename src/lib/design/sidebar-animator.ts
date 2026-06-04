@@ -104,6 +104,8 @@ const EXPANDED_WIDTH = '248px';
 const COLLAPSED_WIDTH = '56px';
 const EXPANDED_WIDTH_VALUE = Number.parseFloat(EXPANDED_WIDTH);
 const COLLAPSED_WIDTH_VALUE = Number.parseFloat(COLLAPSED_WIDTH);
+const COLLAPSED_COLLECTIONS_OVERLAY_PROPS =
+  'opacity,visibility,position,top,left,right,zIndex,height,overflow,padding';
 
 function getPinnedLogoWidthFrame(
   collapsedWidth: number,
@@ -254,7 +256,16 @@ function cleanupTransientStyles(
   gsap.set(labelEls, { clearProps: 'maxWidth,opacity' });
   gsap.set(config.navRegionEl, { clearProps: 'opacity' });
   gsap.set(config.collectionsRegionEl, { clearProps: 'opacity' });
-  gsap.set(config.collectionsCollapsedEl, { clearProps: 'opacity' });
+  if (target === 'expanded') {
+    gsap.set(config.collectionsCollapsedEl, {
+      clearProps: COLLAPSED_COLLECTIONS_OVERLAY_PROPS,
+    });
+  } else {
+    gsap.set(config.collectionsCollapsedEl, {
+      opacity: 1,
+      visibility: 'visible',
+    });
+  }
 
   config.logoCharEls.forEach((el) => {
     gsap.set(el, { clearProps: `visibility,${getLogoSlotClearProps()}` });

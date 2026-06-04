@@ -20,6 +20,7 @@
  * 完成 — 切换 CSS 布局、清理 inline 样式、恢复交互
  */
 import { gsap } from '$lib/design/gsap';
+import { tick } from 'svelte';
 import {
   collectSidebarAnimatorLabelEls,
   chainTimelineComplete,
@@ -94,6 +95,15 @@ function getLeftToRightTopToBottomOrder(charEls: HTMLSpanElement[]): number[] {
   });
 
   return indexed.map((item) => item.index);
+}
+
+function getCollapsedCollectionsOverlayTop(
+  sidebarEl: HTMLElement,
+  navRegionEl: HTMLElement
+): number {
+  const sidebarRect = sidebarEl.getBoundingClientRect();
+  const navRect = navRegionEl.getBoundingClientRect();
+  return Math.max(0, navRect.bottom - sidebarRect.top);
 }
 
 export async function runCollapse(id: number, ctx: AnimatorContext) {
@@ -191,6 +201,18 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
   // Phase 4: 宽度收缩 + 标签收缩 + 内容淡出
   // 不切换 CSS 布局——字符保持 inline x/y 在视觉上的正确位置
   const labelEls = collectSidebarAnimatorLabelEls(config);
+  gsap.set(config.collectionsCollapsedEl, {
+    position: 'absolute',
+    top: getCollapsedCollectionsOverlayTop(
+      config.sidebarEl,
+      config.navRegionEl
+    ),
+    left: 0,
+    right: 0,
+    zIndex: 1,
+    opacity: 0,
+    visibility: 'visible',
+  });
   const phase4 = gsap.timeline();
   setTimeline(phase4);
 
@@ -216,7 +238,7 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
   );
 
   phase4.to(
-    [config.collectionsRegionEl, config.navRegionEl],
+    config.collectionsRegionEl,
     {
       opacity: 0,
       duration: params.rotateDur,
@@ -225,10 +247,21 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
     0
   );
 
+  phase4.to(
+    config.collectionsCollapsedEl,
+    {
+      opacity: 1,
+      duration: params.rotateDur,
+      ease: 'ios-out',
+    },
+    params.rotateDur * 0.35
+  );
+
   await chainTimelineComplete(phase4);
   if (isStale(id)) return;
 
-  // 全部动画完成，一次性切换 CSS 布局 + 清理所有 inline 样式
+  // 全部动画完成后切换到 collapsed 内容；collapsed shortcut 保持 overlay
+  // 位置，避免在最后一帧从隐藏流重新参与布局。
   config.onLayoutSwitch(true);
   config.logoCharEls.forEach((el) => {
     gsap.set(el, { clearProps: 'x,y,opacity,transform' });
@@ -237,6 +270,9 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
   gsap.set(config.logoContainerEl, { clearProps: 'height,overflow,x' });
 
   config.onContentSwitch(true);
-  config.onContentInteractive(true);
+  await tick();
+  if (isStale(id)) return;
+
   ctx.commitState(true);
+  config.onContentInteractive(true);
 }

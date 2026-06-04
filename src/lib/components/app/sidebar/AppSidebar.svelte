@@ -238,10 +238,14 @@
   }
 
   .sidebar-collections-collapsed.hidden {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 1;
     pointer-events: none;
     overflow: hidden;
-    height: 0;
-    padding: 0;
+    opacity: 0;
+    visibility: hidden;
   }
 
   .collection-list {

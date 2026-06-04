@@ -32,6 +32,7 @@ export async function runExpand(id: number, ctx: AnimatorContext) {
 
   ctx.applyExpandedWidthFrame(collapsedLogoWidth, COLLAPSED_WIDTH_VALUE);
   gsap.set(config.logoContainerEl, { overflow: 'hidden' });
+  gsap.set(config.collectionsCollapsedEl, { opacity: 0, visibility: 'hidden' });
 
   config.onContentSwitch(false);
   await tick();
