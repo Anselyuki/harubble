@@ -6,6 +6,7 @@
   import { Switch } from '$lib/components/ui/switch/index.js';
   import BellIcon from '@lucide/svelte/icons/bell';
   import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
+  import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
   import Trash2Icon from '@lucide/svelte/icons/trash-2';
   import {
     clearAudioCache,
@@ -17,6 +18,17 @@
   import type { Locale } from '$lib/i18n/types';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
+  import {
+    DEFAULT_THEME_PRESET_ID,
+    THEME_COLOR_SLOTS,
+    THEME_PRESETS,
+    getThemePreset,
+    isValidThemeHex,
+    normalizeThemeHex,
+    resolveThemeColors,
+    type ThemeColorSlot,
+    type ThemeColorSlots,
+  } from '$lib/themePresets';
   import type {
     LogFileKind,
     LogFileStatus,
@@ -33,6 +45,8 @@
     notifyOnPlaybackChange?: boolean;
     logLevel?: LogLevel;
     locale?: Locale;
+    themePresetId?: string;
+    themeCustomColors?: Partial<ThemeColorSlots>;
     logRefreshToken?: number;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
@@ -47,6 +61,8 @@
     notifyOnPlaybackChange = $bindable(true),
     logLevel = $bindable<LogLevel>('error'),
     locale = $bindable<Locale>('zh-CN'),
+    themePresetId = $bindable(DEFAULT_THEME_PRESET_ID),
+    themeCustomColors = $bindable<Partial<ThemeColorSlots>>({}),
     logRefreshToken = 0,
     notifyInfo,
     notifyError,
@@ -61,15 +77,21 @@
   let isSendingTestNotification = $state(false);
   let isClearingAudioCache = $state(false);
   let lastLoadedWhileOpen = $state(false);
+  let themeColorDrafts = $state<Partial<Record<ThemeColorSlot, string>>>({});
   const labels = $derived.by(() => {
     void localeState.current;
     return {
       title: m.settings_title(),
       description: m.settings_description(),
       sectionPreferences: m.settings_section_preferences(),
+      sectionTheme: m.settings_section_theme(),
       sectionNotifications: m.settings_section_notifications(),
       sectionCache: m.settings_section_cache(),
       sectionLogs: m.settings_section_logs(),
+      themePreset: m.settings_theme_preset_label(),
+      themeReset: m.settings_theme_reset(),
+      themeResetTitle: m.settings_theme_reset_title(),
+      themeHexInvalid: m.settings_theme_hex_invalid(),
       languageLabel: m.settings_language_label(),
       zhCN: m.settings_language_zh_cn(),
       enUS: m.settings_language_en_us(),
@@ -128,6 +150,107 @@
   const currentLogLevelLabel = $derived(
     logLevelOptions.find((o) => o.value === logLevel)?.label ?? 'Error'
   );
+  const resolvedThemeColors = $derived(
+    resolveThemeColors({
+      presetId: themePresetId,
+      customColors: themeCustomColors,
+    })
+  );
+  const themePresetOptions = $derived.by(() => {
+    void localeState.current;
+    return THEME_PRESETS.map((preset) => ({
+      ...preset,
+      label: getPresetLabel(preset.id),
+      description: getPresetDescription(preset.id),
+    }));
+  });
+  const currentThemePresetLabel = $derived(
+    themePresetOptions.find((preset) => preset.id === themePresetId)?.label ??
+      getPresetLabel(DEFAULT_THEME_PRESET_ID)
+  );
+
+  function getPresetLabel(presetId: string): string {
+    switch (presetId) {
+      case 'clear-aqua':
+        return m.settings_theme_preset_clear_aqua_name();
+      case 'night-console':
+        return m.settings_theme_preset_night_console_name();
+      case 'harubble-classic':
+      default:
+        return m.settings_theme_preset_harubble_classic_name();
+    }
+  }
+
+  function getPresetDescription(presetId: string): string {
+    switch (presetId) {
+      case 'clear-aqua':
+        return m.settings_theme_preset_clear_aqua_description();
+      case 'night-console':
+        return m.settings_theme_preset_night_console_description();
+      case 'harubble-classic':
+      default:
+        return m.settings_theme_preset_harubble_classic_description();
+    }
+  }
+
+  function getSlotLabel(slot: ThemeColorSlot): string {
+    switch (slot) {
+      case 'accent':
+        return m.settings_theme_slot_accent();
+      case 'surface':
+        return m.settings_theme_slot_surface();
+      case 'textPrimary':
+        return m.settings_theme_slot_text_primary();
+      case 'textSecondary':
+        return m.settings_theme_slot_text_secondary();
+      case 'tint':
+        return m.settings_theme_slot_tint();
+      case 'danger':
+        return m.settings_theme_slot_danger();
+    }
+  }
+
+  function getThemeDraft(slot: ThemeColorSlot): string {
+    return themeColorDrafts[slot] ?? resolvedThemeColors[slot];
+  }
+
+  function syncThemeDraftsToResolvedColors() {
+    themeColorDrafts = Object.fromEntries(
+      THEME_COLOR_SLOTS.map((slot) => [slot, resolvedThemeColors[slot]])
+    ) as Partial<Record<ThemeColorSlot, string>>;
+  }
+
+  function handleThemePresetChange(nextPresetId: string) {
+    themePresetId = getThemePreset(nextPresetId).id;
+    themeCustomColors = {};
+    syncThemeDraftsToResolvedColors();
+  }
+
+  function handleThemeTextInput(slot: ThemeColorSlot, value: string) {
+    themeColorDrafts = { ...themeColorDrafts, [slot]: value };
+    const normalized = normalizeThemeHex(value);
+    if (!normalized) return;
+    themeCustomColors = {
+      ...themeCustomColors,
+      [slot]: normalized,
+    };
+  }
+
+  function handleThemeColorInput(slot: ThemeColorSlot, value: string) {
+    const normalized = normalizeThemeHex(value);
+    if (!normalized) return;
+    themeColorDrafts = { ...themeColorDrafts, [slot]: normalized };
+    themeCustomColors = {
+      ...themeCustomColors,
+      [slot]: normalized,
+    };
+  }
+
+  function resetThemeCustomColors() {
+    themeCustomColors = {};
+    syncThemeDraftsToResolvedColors();
+  }
+
   async function refreshLogs(kind = logFileKind) {
     const requestSeq = ++logRequestSeq;
     logViewerLoading = true;
@@ -211,6 +334,11 @@
     if (!open || !lastLoadedWhileOpen || refreshToken === 0) return;
     void refreshLogs(logFileKind);
   });
+  $effect(() => {
+    void themePresetId;
+    void themeCustomColors;
+    syncThemeDraftsToResolvedColors();
+  });
 </script>
 
 <Sheet.Root bind:open>
@@ -290,6 +418,88 @@
               >
             </div>
           </div>
+        </div>
+      </section>
+      <section class="sheet-section settings-section">
+        <div class="settings-section-heading settings-theme-heading">
+          <h3>{labels.sectionTheme}</h3>
+          <Button
+            variant="secondary"
+            class="h-8"
+            title={labels.themeResetTitle}
+            onclick={resetThemeCustomColors}
+          >
+            <RotateCcwIcon data-icon="inline-start" />{labels.themeReset}
+          </Button>
+        </div>
+        <label class="settings-field" for="theme-preset-select">
+          <span>{labels.themePreset}</span>
+          <Select.Root
+            type="single"
+            value={themePresetId}
+            onValueChange={handleThemePresetChange}
+          >
+            <Select.Trigger
+              id="theme-preset-select"
+              class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
+            >
+              {currentThemePresetLabel}
+            </Select.Trigger>
+            <Select.Content class="sheet-select-content">
+              {#each themePresetOptions as preset (preset.id)}
+                <Select.Item value={preset.id} label={preset.label}>
+                  <div class="settings-theme-preset-option">
+                    <div class="settings-theme-preset-copy">
+                      <strong>{preset.label}</strong>
+                      <small>{preset.description}</small>
+                    </div>
+                    <div class="settings-theme-swatch-strip" aria-hidden="true">
+                      {#each THEME_COLOR_SLOTS as slot (slot)}
+                        <span style={`--swatch-color: ${preset.colors[slot]}`}
+                        ></span>
+                      {/each}
+                    </div>
+                  </div>
+                </Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </label>
+        <div class="settings-theme-color-list">
+          {#each THEME_COLOR_SLOTS as slot (slot)}
+            {@const draft = getThemeDraft(slot)}
+            {@const invalid = draft.length > 0 && !isValidThemeHex(draft)}
+            <label class="settings-theme-color-row" for={`theme-color-${slot}`}>
+              <span
+                class="settings-theme-color-swatch"
+                style={`--swatch-color: ${resolvedThemeColors[slot]}`}
+              ></span>
+              <span class="settings-theme-color-label"
+                >{getSlotLabel(slot)}</span
+              >
+              <Input
+                id={`theme-color-${slot}`}
+                class="settings-theme-hex-input h-8 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
+                value={draft}
+                aria-invalid={invalid}
+                oninput={(event) =>
+                  handleThemeTextInput(slot, event.currentTarget.value)}
+              />
+              <input
+                class="settings-theme-native-color"
+                type="color"
+                value={resolvedThemeColors[slot]}
+                aria-label={getSlotLabel(slot)}
+                oninput={(event) =>
+                  handleThemeColorInput(slot, event.currentTarget.value)}
+              />
+              {#if invalid}
+                <small class="settings-theme-invalid"
+                  >{labels.themeHexInvalid}</small
+                >
+              {/if}
+            </label>
+          {/each}
         </div>
       </section>
       <section class="sheet-section settings-section">
@@ -486,6 +696,107 @@
   .settings-log-heading {
     align-items: center;
   }
+  .settings-theme-heading {
+    align-items: center;
+  }
+  .settings-theme-preset-option {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .settings-theme-preset-copy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .settings-theme-preset-copy strong {
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-theme-preset-copy small {
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-theme-swatch-strip {
+    display: grid;
+    grid-template-columns: repeat(6, 10px);
+    overflow: hidden;
+    border: 1px solid var(--sheet-border);
+    border-radius: 999px;
+  }
+  .settings-theme-swatch-strip span,
+  .settings-theme-color-swatch {
+    background: var(--swatch-color);
+  }
+  .settings-theme-swatch-strip span {
+    width: 10px;
+    height: 18px;
+  }
+  .settings-theme-color-list {
+    display: grid;
+    gap: 7px;
+  }
+  .settings-theme-color-row {
+    display: grid;
+    grid-template-columns: 18px minmax(5.5rem, 1fr) minmax(6.5rem, 8rem) 34px;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .settings-theme-color-swatch {
+    width: 18px;
+    height: 18px;
+    border: 1px solid var(--sheet-border);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 color-mix(in srgb, white 36%, transparent);
+  }
+  .settings-theme-color-label {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  :global(.settings-theme-hex-input) {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+  :global(.settings-theme-hex-input[aria-invalid='true']) {
+    border-color: color-mix(
+      in srgb,
+      var(--destructive) 55%,
+      var(--sheet-border)
+    );
+    color: var(--destructive);
+  }
+  .settings-theme-native-color {
+    width: 34px;
+    height: 32px;
+    border: 1px solid var(--sheet-border);
+    border-radius: 7px;
+    background: var(--sheet-control-bg);
+    padding: 3px;
+  }
+  .settings-theme-invalid {
+    grid-column: 3 / 5;
+    margin-top: -3px;
+    color: var(--destructive);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.35;
+  }
   .settings-segment {
     display: inline-grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -581,6 +892,15 @@
     color: var(--destructive);
   }
   @media (max-width: 420px) {
+    .settings-theme-color-row {
+      grid-template-columns: 18px minmax(0, 1fr) 34px;
+    }
+    :global(.settings-theme-hex-input) {
+      grid-column: 2 / 4;
+    }
+    .settings-theme-invalid {
+      grid-column: 2 / 4;
+    }
     .settings-path-row,
     .settings-section-heading {
       grid-template-columns: 1fr;

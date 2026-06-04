@@ -201,6 +201,8 @@
         }
         bind:logLevel={runtime.settingsState.logLevel}
         bind:locale={runtime.settingsState.locale}
+        bind:themePresetId={runtime.settingsState.themePresetId}
+        bind:themeCustomColors={runtime.settingsState.themeCustomColors}
         settingsLogRefreshToken={runtime.settingsState.settingsLogRefreshToken}
         notifyInfo={runtime.notifyInfo}
         notifyError={runtime.notifyError}

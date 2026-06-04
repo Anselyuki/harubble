@@ -2,6 +2,7 @@
   import type SettingsSheet from '$lib/components/app/shell/SettingsSheet.svelte';
   import type DownloadTasksSheet from '$lib/components/app/shell/DownloadTasksSheet.svelte';
   import type { Locale } from '$lib/i18n/types';
+  import type { ThemeColorSlots } from '$lib/themePresets';
   import type { LogLevel, OutputFormat } from '$lib/types';
   import { getDownloadContext } from '$lib/contexts';
 
@@ -20,6 +21,8 @@
     notifyOnPlaybackChange?: boolean;
     logLevel?: LogLevel;
     locale?: Locale;
+    themePresetId?: string;
+    themeCustomColors?: Partial<ThemeColorSlots>;
     settingsLogRefreshToken: number;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
@@ -38,6 +41,8 @@
     notifyOnPlaybackChange = $bindable(true),
     logLevel = $bindable<LogLevel>('error'),
     locale = $bindable<Locale>('zh-CN'),
+    themePresetId = $bindable('harubble-classic'),
+    themeCustomColors = $bindable<Partial<ThemeColorSlots>>({}),
     settingsLogRefreshToken,
     notifyInfo,
     notifyError,
@@ -57,6 +62,8 @@
     bind:notifyOnPlaybackChange
     bind:logLevel
     bind:locale
+    bind:themePresetId
+    bind:themeCustomColors
     logRefreshToken={settingsLogRefreshToken}
     {notifyInfo}
     {notifyError}
