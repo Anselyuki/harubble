@@ -1,6 +1,7 @@
 use crate::i18n::tr;
 use crate::logging::{LogCenter, LogLevel, LogPayload};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,6 +13,93 @@ pub enum Locale {
     ZhCN,
     #[serde(rename = "en-US")]
     EnUS,
+}
+
+const DEFAULT_THEME_PRESET_ID: &str = "harubble-classic";
+const THEME_PRESET_IDS: &[&str] = &["harubble-classic", "clear-aqua", "night-console"];
+const THEME_COLOR_SLOTS: &[&str] = &[
+    "accent",
+    "surface",
+    "textPrimary",
+    "textSecondary",
+    "tint",
+    "danger",
+];
+
+/// 应用主题偏好，保存当前预设以及覆盖预设的自定义颜色槽。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThemePreferences {
+    #[serde(
+        default = "default_theme_preset_id",
+        deserialize_with = "deserialize_theme_preset_id"
+    )]
+    pub(crate) preset_id: String,
+    #[serde(default, deserialize_with = "deserialize_theme_custom_colors")]
+    pub(crate) custom_colors: BTreeMap<String, String>,
+}
+
+impl Default for ThemePreferences {
+    fn default() -> Self {
+        Self {
+            preset_id: default_theme_preset_id(),
+            custom_colors: BTreeMap::new(),
+        }
+    }
+}
+
+fn default_theme_preset_id() -> String {
+    DEFAULT_THEME_PRESET_ID.to_string()
+}
+
+fn is_known_theme_preset_id(value: &str) -> bool {
+    THEME_PRESET_IDS.contains(&value)
+}
+
+fn is_known_theme_color_slot(value: &str) -> bool {
+    THEME_COLOR_SLOTS.contains(&value)
+}
+
+fn normalize_theme_hex(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.len() == 7
+        && trimmed.starts_with('#')
+        && trimmed[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+    {
+        Some(trimmed.to_ascii_uppercase())
+    } else {
+        None
+    }
+}
+
+fn deserialize_theme_preset_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?.unwrap_or_default();
+    if is_known_theme_preset_id(&value) {
+        Ok(value)
+    } else {
+        Ok(default_theme_preset_id())
+    }
+}
+
+fn deserialize_theme_custom_colors<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = BTreeMap::<String, String>::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(slot, value)| {
+            if !is_known_theme_color_slot(&slot) {
+                return None;
+            }
+            normalize_theme_hex(&value).map(|hex| (slot, hex))
+        })
+        .collect())
 }
 
 /// 统一应用偏好模型（TOML 序列化格式：camelCase 字段名）
@@ -33,6 +121,9 @@ pub struct AppPreferences {
     /// 应用级播放音量，范围 `0.0..=1.0`，独立于系统音量。
     #[serde(default = "default_volume")]
     pub(crate) volume: f64,
+    /// 应用主题偏好；缺失时使用 Harubble Classic 默认预设。
+    #[serde(default)]
+    pub(crate) theme: ThemePreferences,
 }
 
 impl AppPreferences {
@@ -68,7 +159,97 @@ impl AppPreferences {
         if !path.is_dir() {
             return Err(tr(locale, "preferences-output-dir-not-directory"));
         }
+        if !is_known_theme_preset_id(&self.theme.preset_id) {
+            return Err("unsupported theme preset".to_string());
+        }
+        for (slot, value) in &self.theme.custom_colors {
+            if !is_known_theme_color_slot(slot) || normalize_theme_hex(value).is_none() {
+                return Err("unsupported theme color".to_string());
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn existing_preferences_toml(extra: &str) -> String {
+        format!(
+            r#"
+schemaVersion = 1
+outputFormat = "flac"
+outputDir = "/tmp"
+downloadLyrics = true
+notifyOnDownloadComplete = true
+notifyOnPlaybackChange = true
+logLevel = "error"
+locale = "zh-CN"
+volume = 1.0
+{extra}
+"#
+        )
+    }
+
+    #[test]
+    fn missing_theme_field_uses_default_theme() {
+        let prefs: AppPreferences = toml::from_str(&existing_preferences_toml("")).unwrap();
+
+        assert_eq!(prefs.theme.preset_id, DEFAULT_THEME_PRESET_ID);
+        assert!(prefs.theme.custom_colors.is_empty());
+    }
+
+    #[test]
+    fn invalid_theme_hex_values_are_dropped() {
+        let prefs: AppPreferences = toml::from_str(&existing_preferences_toml(
+            r##"
+[theme]
+presetId = "harubble-classic"
+
+[theme.customColors]
+accent = "FFE47A"
+surface = "#12345G"
+tint = "#0f1a2b"
+"##,
+        ))
+        .unwrap();
+
+        assert_eq!(prefs.theme.custom_colors.get("tint").unwrap(), "#0F1A2B");
+        assert!(!prefs.theme.custom_colors.contains_key("accent"));
+        assert!(!prefs.theme.custom_colors.contains_key("surface"));
+    }
+
+    #[test]
+    fn unknown_theme_preset_id_falls_back_to_default() {
+        let prefs: AppPreferences = toml::from_str(&existing_preferences_toml(
+            r#"
+[theme]
+presetId = "future-theme"
+"#,
+        ))
+        .unwrap();
+
+        assert_eq!(prefs.theme.preset_id, DEFAULT_THEME_PRESET_ID);
+    }
+
+    #[test]
+    fn unknown_theme_color_slot_is_ignored() {
+        let prefs: AppPreferences = toml::from_str(&existing_preferences_toml(
+            r##"
+[theme]
+presetId = "clear-aqua"
+
+[theme.customColors]
+accent = "#111111"
+futureSlot = "#222222"
+"##,
+        ))
+        .unwrap();
+
+        assert_eq!(prefs.theme.preset_id, "clear-aqua");
+        assert_eq!(prefs.theme.custom_colors.get("accent").unwrap(), "#111111");
+        assert!(!prefs.theme.custom_colors.contains_key("futureSlot"));
     }
 }
 
@@ -129,6 +310,7 @@ impl Default for AppPreferences {
             log_level: default_log_level(),
             locale: Locale::default(),
             volume: default_volume(),
+            theme: ThemePreferences::default(),
         }
     }
 }
@@ -231,6 +413,7 @@ impl PreferencesStore {
             log_level: default_log_level(),
             locale: Locale::default(),
             volume: default_volume(),
+            theme: ThemePreferences::default(),
         };
         if let Err(e) = self.save(&default_prefs, load_locale) {
             if let Some(log_center) = log_center {
