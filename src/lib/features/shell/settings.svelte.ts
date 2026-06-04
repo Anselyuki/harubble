@@ -120,7 +120,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
         state.locale = prefs.locale;
       }
       const theme = normalizeThemePreferences(prefs);
-      if (!state.dirty.theme || !prefs.theme) {
+      if (!state.dirty.theme) {
         state.themePresetId = theme.presetId;
         state.themeCustomColors = { ...theme.customColors };
       }

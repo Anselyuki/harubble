@@ -64,8 +64,8 @@
         fx="50%"
         fy="100%"
       >
-        <stop offset="0%" stop-color="rgba(var(--accent-rgb), 0.4)" />
-        <stop offset="100%" stop-color="rgba(var(--accent-rgb), 0)" />
+        <stop offset="0%" stop-color="rgba(var(--album-accent-rgb), 0.4)" />
+        <stop offset="100%" stop-color="rgba(var(--album-accent-rgb), 0)" />
       </radialGradient>
     </defs>
     <rect x="0" y="18" width="200" height="32" fill="url(#bottom-glow)" />
@@ -179,7 +179,7 @@
 
   .siri-wave {
     fill: none;
-    stroke: rgba(var(--accent-rgb), 0.6);
+    stroke: rgba(var(--album-accent-rgb), 0.6);
     stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -187,6 +187,6 @@
   }
 
   .dot {
-    fill: rgba(var(--accent-rgb), 0.5);
+    fill: rgba(var(--album-accent-rgb), 0.5);
   }
 </style>

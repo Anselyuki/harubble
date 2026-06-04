@@ -56,6 +56,7 @@ function createPreferences(
 describe('createSettingsController theme preferences', () => {
   it('hydrates missing theme preferences to the default theme state', async () => {
     const state = createState();
+    state.dirty.theme = false;
     state.themePresetId = 'night-console';
     state.themeCustomColors = { accent: '#111111' };
     const controller = createSettingsController({
@@ -68,6 +69,24 @@ describe('createSettingsController theme preferences', () => {
 
     expect(state.themePresetId).toBe(DEFAULT_THEME_PREFERENCES.presetId);
     expect(state.themeCustomColors).toEqual({});
+    expect(state.prefsReady).toBe(true);
+  });
+
+  it('preserves dirty theme edits when hydrating legacy preferences without theme', async () => {
+    const state = createState();
+    state.themePresetId = 'night-console';
+    state.themeCustomColors = { accent: '#111111' };
+    const controller = createSettingsController({
+      getPreferences: async () => createPreferences(),
+      setPreferences: vi.fn(),
+      notifyError: vi.fn(),
+    });
+
+    await controller.hydratePreferences(state);
+
+    expect(state.themePresetId).toBe('night-console');
+    expect(state.themeCustomColors).toEqual({ accent: '#111111' });
+    expect(state.dirty.theme).toBe(true);
     expect(state.prefsReady).toBe(true);
   });
 

@@ -736,7 +736,7 @@
     --text-main: var(--player-title);
     --text-subtle: var(--player-subtitle);
     --icon-default: var(--player-control-color);
-    --icon-active: var(--accent);
+    --icon-active: var(--album-accent);
     --track-bg: var(--player-track-bg);
     --track-fill-end: var(--player-track-fill-end);
     --thumb-border: var(--player-thumb-border);
@@ -775,7 +775,7 @@
   .am-player[data-panel='playlist'] {
     box-shadow:
       0 18px 36px rgba(15, 23, 42, 0.14),
-      0 8px 20px rgba(var(--accent-rgb), 0.1),
+      0 8px 20px rgba(var(--album-accent-rgb), 0.1),
       inset 0 1px 0
         color-mix(in srgb, var(--surface-highlight) 90%, transparent);
   }
@@ -882,7 +882,7 @@
   .am-player[data-state='playing'] .cover {
     box-shadow:
       0 14px 28px rgba(16, 18, 28, 0.22),
-      0 0 0 1px rgba(var(--accent-rgb), 0.12);
+      0 0 0 1px rgba(var(--album-accent-rgb), 0.12);
   }
 
   .fallback {
@@ -1006,8 +1006,8 @@
     border-radius: 0;
     background: linear-gradient(
       90deg,
-      var(--accent) 0,
-      var(--accent-hover) var(--player-progress-percent),
+      var(--album-accent) 0,
+      var(--album-accent-hover) var(--player-progress-percent),
       rgba(120, 120, 128, 0.28) var(--player-progress-percent),
       rgba(120, 120, 128, 0.28) 100%
     );
@@ -1120,8 +1120,8 @@
   }
 
   .stateful-icon .toggle-badge {
-    fill: rgba(var(--accent-rgb), 0.12);
-    stroke: rgba(var(--accent-rgb), 0.24);
+    fill: rgba(var(--album-accent-rgb), 0.12);
+    stroke: rgba(var(--album-accent-rgb), 0.24);
     opacity: 0;
     transform: scale(0.72);
   }
@@ -1134,9 +1134,9 @@
 
   .icon-button:hover:not(:disabled),
   .icon-button[aria-pressed='true'] {
-    background: rgba(var(--accent-rgb), 0.08);
+    background: rgba(var(--album-accent-rgb), 0.08);
     color: var(--icon-active);
-    border-color: rgba(var(--accent-rgb), 0.08);
+    border-color: rgba(var(--album-accent-rgb), 0.08);
     box-shadow: none;
   }
 
@@ -1148,7 +1148,7 @@
   .panel-toggle.panel-active {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.2),
-      0 8px 18px rgba(var(--accent-rgb), 0.12);
+      0 8px 18px rgba(var(--album-accent-rgb), 0.12);
   }
 
   .lyrics-toggle-anchor {
@@ -1168,7 +1168,7 @@
   .icon-button.download-active {
     background: var(--player-control-hover-bg);
     color: var(--icon-active);
-    border-color: rgba(var(--accent-rgb), 0.14);
+    border-color: rgba(var(--album-accent-rgb), 0.14);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
   }
 
@@ -1224,7 +1224,7 @@
     outline: none;
     box-shadow:
       0 0 0 2px color-mix(in srgb, var(--surface-highlight) 86%, white 14%),
-      0 0 0 4px rgba(var(--accent-rgb), 0.28);
+      0 0 0 4px rgba(var(--album-accent-rgb), 0.28);
     border-radius: 999px;
   }
 
