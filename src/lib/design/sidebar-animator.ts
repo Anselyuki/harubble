@@ -8,28 +8,29 @@
  *
  * - Logo 字符旋转：折叠态字符逆时针旋转 -90°，展开态恢复 0°，带 stagger 依次触发
  * - Logo FLIP 布局切换：字符从竖向堆栈飞向横向双行（或反向），按堆栈底部优先顺序依次飞出
- * - 透明度叙事：旋转阶段字符渐变为半透明（0.35），飞行中恢复至 0.6，到位后 100ms 内实体化至 1
  * - 文字标签跟随：展开时标签不等侧栏完全展开，当可用空间达到标签宽度 50% 时即开始同速展开
  * - 侧栏宽度：展开 300ms / 折叠 200ms，使用 ios-spring 缓动
  * - 所有缓动曲线统一使用 iOS 风格 CustomEase（ios / ios-in / ios-out / ios-spring）
  *
  * ## 展开动画时间线
  *
- *  Phase 1 — 宽度展开 + 旋转 + 变淡（并行，300ms）
+ *  Phase 1 — 宽度展开 + 旋转（并行，300ms）
  *  ┌─────────────────────────────────────────────────────────────┐
  *  │ [0ms ─────────────────────────────────── 300ms]             │
  *  │  ├─ 侧栏宽度 56px → 248px (ios-spring)                     │
  *  │  ├─ 字符旋转 -90° → 0° (ios-spring, stagger 50ms)          │
- *  │  ├─ 字符透明度 1 → 0.35 (ios-in)                           │
  *  │  └─ 文字标签：可用空间 ≥ 标签宽度×50% 时开始同速展开        │
  *  └─────────────────────────────────────────────────────────────┘
  *
- *  Phase 2 — FLIP 堆栈弹出（240ms/字符，stagger 50ms，底部优先）
+ *  Phase 2 — 底座向右展开（240ms）
+ *  ┌─────────────────────────────────────────────────────────────┐
+ *  │  字符旋转完成后，底座先延展到展开态右边界                  │
+ *  └─────────────────────────────────────────────────────────────┘
+ *
+ *  Phase 3 — FLIP 堆栈弹出（240ms/字符，stagger 50ms，底部优先）
  *  ┌─────────────────────────────────────────────────────────────┐
  *  │ 字符按折叠态 Y 坐标从底到顶排序，依次飞向展开态目标位置      │
  *  │  ├─ 每个字符飞行 240ms (ios-spring)                         │
- *  │  ├─ 飞行中透明度 0.35 → 0.6 (ios-out)                      │
- *  │  ├─ 到位后 100ms 内 0.6 → 1 (ios-out)                      │
  *  │  └─ 容器高度同步过渡至目标高度 (240ms + totalStagger)        │
  *  └─────────────────────────────────────────────────────────────┘
  *
@@ -85,6 +86,7 @@ export interface AnimatorContext {
     id: number,
     toCollapsed: boolean
   ) => Promise<gsap.core.Timeline | null>;
+  expandLogoSlabRight: (id: number, pinnedLogoWidth: number) => Promise<void>;
   commitState: (collapsed: boolean) => void;
 }
 
@@ -106,6 +108,18 @@ const EXPANDED_WIDTH_VALUE = Number.parseFloat(EXPANDED_WIDTH);
 const COLLAPSED_WIDTH_VALUE = Number.parseFloat(COLLAPSED_WIDTH);
 const COLLAPSED_COLLECTIONS_OVERLAY_PROPS =
   'opacity,visibility,position,top,left,right,zIndex,height,overflow,padding';
+const LOGO_SLAB_INSETS = {
+  expanded: {
+    left: '0px',
+    right: '8px',
+  },
+  collapsed: {
+    left: '0px',
+    right: '10px',
+  },
+} as const;
+
+type LogoSlabInsetTarget = keyof typeof LOGO_SLAB_INSETS;
 
 function getPinnedLogoWidthFrame(
   collapsedWidth: number,
@@ -144,6 +158,70 @@ export function getCenterLockTransform(
 
 function resolveLogoGlyphEl(charEl: HTMLSpanElement): HTMLElement {
   return charEl.querySelector<HTMLElement>('[data-logo-glyph]') ?? charEl;
+}
+
+export function setLogoSlabInsetVars(
+  logoContainerEl: HTMLElement,
+  target: LogoSlabInsetTarget
+): void {
+  const inset = LOGO_SLAB_INSETS[target];
+  logoContainerEl.style.setProperty('--brand-logo-slab-left', inset.left);
+  logoContainerEl.style.setProperty('--brand-logo-slab-right', inset.right);
+}
+
+export function animateLogoSlabInsetVars(
+  tl: gsap.core.Timeline,
+  logoContainerEl: HTMLElement,
+  target: LogoSlabInsetTarget,
+  duration: number,
+  ease: string,
+  position: number | string = 0
+): void {
+  const inset = LOGO_SLAB_INSETS[target];
+  tl.to(
+    logoContainerEl,
+    {
+      '--brand-logo-slab-left': inset.left,
+      '--brand-logo-slab-right': inset.right,
+      duration,
+      ease,
+    } as gsap.TweenVars,
+    position
+  );
+}
+
+function clearLogoSlabInsetVars(logoContainerEl: HTMLElement): void {
+  logoContainerEl.style.removeProperty('--brand-logo-slab-left');
+  logoContainerEl.style.removeProperty('--brand-logo-slab-right');
+}
+
+function getExpandedSlabRightInsetForPinnedWidth(
+  pinnedLogoWidth: number
+): string {
+  const expandedRightEdge =
+    EXPANDED_WIDTH_VALUE - Number.parseFloat(LOGO_SLAB_INSETS.expanded.right);
+  return `${pinnedLogoWidth - expandedRightEdge}px`;
+}
+
+function animateLogoSlabRightExpansion(
+  tl: gsap.core.Timeline,
+  logoContainerEl: HTMLElement,
+  pinnedLogoWidth: number,
+  duration: number,
+  ease: string,
+  position: number | string = 0
+): void {
+  tl.to(
+    logoContainerEl,
+    {
+      '--brand-logo-slab-left': LOGO_SLAB_INSETS.expanded.left,
+      '--brand-logo-slab-right':
+        getExpandedSlabRightInsetForPinnedWidth(pinnedLogoWidth),
+      duration,
+      ease,
+    } as gsap.TweenVars,
+    position
+  );
 }
 
 function getLogoFlipTargets(
@@ -229,6 +307,10 @@ function syncToState(config: SidebarAnimatorConfig, collapsed: boolean) {
     '--sidebar-width',
     collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH
   );
+  setLogoSlabInsetVars(
+    config.logoContainerEl,
+    collapsed ? 'collapsed' : 'expanded'
+  );
 
   config.logoCharEls.forEach((el) => {
     const glyphEl = resolveLogoGlyphEl(el);
@@ -253,6 +335,7 @@ function cleanupTransientStyles(
   gsap.set(config.logoContainerEl, {
     clearProps: 'height,overflow,width,visibility,transform,alignSelf',
   });
+  clearLogoSlabInsetVars(config.logoContainerEl);
   gsap.set(labelEls, { clearProps: 'maxWidth,opacity' });
   gsap.set(config.navRegionEl, { clearProps: 'opacity' });
   gsap.set(config.collectionsRegionEl, { clearProps: 'opacity' });
@@ -364,6 +447,7 @@ export function createSidebarAnimator(
     config.logoContainerEl.style.height = `${config.logoContainerEl.offsetHeight}px`;
     if (!toCollapsed) {
       config.logoContainerEl.style.width = `${config.logoContainerEl.offsetWidth}px`;
+    } else {
       config.logoContainerEl.style.overflow = 'hidden';
     }
 
@@ -383,7 +467,12 @@ export function createSidebarAnimator(
     els.forEach((el) => (el.style.visibility = ''));
 
     if (!toCollapsed) {
-      config.logoContainerEl.style.width = '';
+      gsap.set(config.logoContainerEl, {
+        width: '',
+        overflow: 'hidden',
+        '--brand-logo-slab-left': LOGO_SLAB_INSETS.expanded.left,
+        '--brand-logo-slab-right': LOGO_SLAB_INSETS.expanded.right,
+      } as gsap.TweenVars);
     }
 
     const clone = config.logoContainerEl.cloneNode(true) as HTMLDivElement;
@@ -420,18 +509,6 @@ export function createSidebarAnimator(
       return yB - yA;
     });
 
-    sortedEls.forEach((el, i) => {
-      gsap.to(el, {
-        opacity: 0.6,
-        duration: params.moveDur,
-        delay: params.flipStagger * i,
-        ease: 'ios-out',
-        onComplete: () => {
-          gsap.to(el, { opacity: 1, duration: 0.1, ease: 'ios-out' });
-        },
-      });
-    });
-
     const flipTl = Flip.from(state, {
       targets: sortedEls,
       duration: params.moveDur,
@@ -439,9 +516,42 @@ export function createSidebarAnimator(
       ease: 'ios-spring',
       absolute: true,
     });
+    if (toCollapsed) {
+      animateLogoSlabInsetVars(
+        flipTl as gsap.core.Timeline,
+        config.logoContainerEl,
+        'collapsed',
+        params.moveDur + totalStagger,
+        'ios-spring',
+        0
+      );
+    }
     currentTimeline = flipTl as gsap.core.Timeline;
 
     return flipTl as gsap.core.Timeline;
+  }
+
+  async function expandLogoSlabRight(
+    id: number,
+    pinnedLogoWidth: number,
+    params: AnimationParams
+  ): Promise<void> {
+    const slabTl = gsap.timeline();
+    currentTimeline = slabTl;
+    setLogoSlabInsetVars(config.logoContainerEl, 'collapsed');
+    gsap.set(config.logoContainerEl, { overflow: 'visible' });
+
+    animateLogoSlabRightExpansion(
+      slabTl,
+      config.logoContainerEl,
+      pinnedLogoWidth,
+      params.moveDur,
+      'ios-spring',
+      0
+    );
+
+    await chainTimelineComplete(slabTl);
+    if (isStale(id)) return;
   }
 
   function buildContext(): AnimatorContext {
@@ -464,6 +574,8 @@ export function createSidebarAnimator(
         applyExpandedWidthFrame(currentWidth, measuredLogoWidth);
       },
       flipPhase: (id, toCollapsed) => flipPhase(id, toCollapsed, params),
+      expandLogoSlabRight: (id, pinnedLogoWidth) =>
+        expandLogoSlabRight(id, pinnedLogoWidth, params),
       commitState: (collapsed) => {
         lastCommittedCollapsed = collapsed;
         cleanupTransientStyles(config, collapsed ? 'collapsed' : 'expanded');

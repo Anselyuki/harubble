@@ -67,6 +67,24 @@ describe('theme presets', () => {
     expect(presetsById.get('harubble-classic')?.colors.tint).toBe('#899CB0');
   });
 
+  it('localizes the default preset name for Chinese and English', async () => {
+    // @ts-expect-error Vitest runs in Node and reads the source message files.
+    const { readFileSync } = await import('node:fs');
+    const zhCnMessages = JSON.parse(
+      readFileSync('messages/zh-CN.json', 'utf8')
+    );
+    const enUsMessages = JSON.parse(
+      readFileSync('messages/en-US.json', 'utf8')
+    );
+
+    expect(zhCnMessages.settings_theme_preset_harubble_classic_name).toBe(
+      '终末地工业'
+    );
+    expect(enUsMessages.settings_theme_preset_harubble_classic_name).toBe(
+      'Endfield Industrial'
+    );
+  });
+
   it('applies custom slot overrides over the selected preset', () => {
     expect(
       resolveThemeColors({

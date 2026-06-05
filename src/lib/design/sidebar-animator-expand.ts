@@ -1,15 +1,14 @@
 /**
  * 侧栏展开动画
  *
- * Phase 1 — 宽度展开 + 旋转 + 变淡（并行，300ms）
+ * Phase 1 — 宽度展开 + 旋转（并行，300ms）
  *  ├─ 侧栏宽度 56px → 248px (ios-spring)
  *  ├─ 字符旋转 -90° → 0° (ios-spring, stagger 50ms)
- *  ├─ 字符透明度 1 → 0.35 (ios-in)
  *  └─ 文字标签：可用空间 ≥ 标签宽度×50% 时开始同速展开
  *
- * Phase 2 — FLIP 堆栈弹出（240ms/字符，stagger 50ms，底部优先）
- *  ├─ 飞行中透明度 0.35 → 0.6 (ios-out)
- *  ├─ 到位后 100ms 内 0.6 → 1 (ios-out)
+ * Phase 2 — 底座向右展开，提前铺到展开态落点
+ *
+ * Phase 3 — FLIP 堆栈弹出（240ms/字符，stagger 50ms，底部优先）
  *  └─ 容器高度同步过渡至目标高度
  */
 import { tick } from 'svelte';
@@ -116,17 +115,10 @@ export async function runExpand(id: number, ctx: AnimatorContext) {
     0
   );
 
-  phase1.to(
-    config.logoCharEls,
-    {
-      opacity: 0.35,
-      duration: params.widthDur,
-      ease: 'ios-in',
-    },
-    0
-  );
-
   await chainTimelineComplete(phase1);
+  if (isStale(id)) return;
+
+  await ctx.expandLogoSlabRight(id, collapsedLogoWidth);
   if (isStale(id)) return;
 
   const flipResult = await ctx.flipPhase(id, false);

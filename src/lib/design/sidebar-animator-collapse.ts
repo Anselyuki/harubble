@@ -1,16 +1,13 @@
 /**
  * 侧栏收缩动画
  *
- * Phase 1 — 字符原地旋转 + 变淡（~200ms）
- *  ├─ 字符旋转 0° → -90° (ios-spring, stagger 50ms)
- *  └─ 字符透明度 1 → 0.35 (ios-in)
+ * Phase 1 — 字符原地旋转（~200ms）
+ *  └─ 字符旋转 0° → -90° (ios-spring, stagger 50ms)
  *
  * Phase 2+3 — logo 容器推高 + 字符飞向竖向目标位置（~240ms + stagger）
  *  ├─ 用隐藏克隆元素测量折叠态 logo 高度与各字符目标位置
  *  ├─ logo 容器高度动画至目标高度（推下方内容）
  *  ├─ 字符按左→右、上→下顺序飞向竖向目标位置
- *  ├─ 飞出瞬间开始实体化（0.35 → 0.6）
- *  └─ 到位后 100ms 内 0.6 → 1
  *
  * Phase 4 — 宽度收缩（~200ms）
  *  ├─ 侧栏宽度 248px → 56px (ios-spring)
@@ -20,10 +17,12 @@
  * 完成 — 切换 CSS 布局、清理 inline 样式、恢复交互
  */
 import { gsap } from '$lib/design/gsap';
-import { tick } from 'svelte';
+import { flushSync, tick } from 'svelte';
 import {
+  animateLogoSlabInsetVars,
   collectSidebarAnimatorLabelEls,
   chainTimelineComplete,
+  getCenterLockTransform,
 } from './sidebar-animator';
 import type { AnimatorContext } from './sidebar-animator';
 
@@ -36,15 +35,17 @@ import type { AnimatorContext } from './sidebar-animator';
 function measureCollapsedTargets(
   logoContainerEl: HTMLDivElement,
   charEls: HTMLSpanElement[],
-  collapsedWidth: string
+  collapsedLogoLayoutWidth: number
 ): { targetHeight: number; charTargets: { x: number; y: number }[] } | null {
   const clone = logoContainerEl.cloneNode(true) as HTMLDivElement;
   clone.style.position = 'absolute';
   clone.style.visibility = 'hidden';
   clone.style.height = 'auto';
-  clone.style.width = collapsedWidth;
+  clone.style.width = `${collapsedLogoLayoutWidth}px`;
   clone.style.overflow = '';
   clone.style.pointerEvents = 'none';
+  clone.style.left = `${logoContainerEl.offsetLeft}px`;
+  clone.style.top = `${logoContainerEl.offsetTop}px`;
   clone.classList.add('collapsed');
 
   // 清除克隆内 glyph 的 inline transform（旋转），以获得准确的布局位置
@@ -106,12 +107,35 @@ function getCollapsedCollectionsOverlayTop(
   return Math.max(0, navRect.bottom - sidebarRect.top);
 }
 
+function readCssPixelValue(value: string): number {
+  return Number.parseFloat(value) || 0;
+}
+
+function getCollapsedLogoLayoutWidth(
+  sidebarEl: HTMLElement,
+  collapsedWidth: string
+): number {
+  const collapsedWidthValue = Number.parseFloat(collapsedWidth);
+  const styles = getComputedStyle(sidebarEl);
+  if (styles.boxSizing !== 'border-box') {
+    return collapsedWidthValue;
+  }
+
+  const horizontalInsets =
+    readCssPixelValue(styles.paddingLeft) +
+    readCssPixelValue(styles.paddingRight) +
+    readCssPixelValue(styles.borderLeftWidth) +
+    readCssPixelValue(styles.borderRightWidth);
+
+  return Math.max(0, collapsedWidthValue - horizontalInsets);
+}
+
 export async function runCollapse(id: number, ctx: AnimatorContext) {
   const { config, logoGlyphEls, params, isStale, setTimeline } = ctx;
 
   config.onContentInteractive(false);
 
-  // Phase 1: 字符原地旋转 + 变淡
+  // Phase 1: 字符原地旋转
   const phase1 = gsap.timeline();
   setTimeline(phase1);
 
@@ -126,24 +150,18 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
     0
   );
 
-  phase1.to(
-    config.logoCharEls,
-    {
-      opacity: 0.35,
-      duration: params.rotateDur,
-      ease: 'ios-in',
-    },
-    0
-  );
-
   await chainTimelineComplete(phase1);
   if (isStale(id)) return;
 
   // Phase 2+3: 测量折叠态目标位置 → 推高容器 + 字符飞行
+  const collapsedLogoLayoutWidth = getCollapsedLogoLayoutWidth(
+    config.sidebarEl,
+    ctx.constants.COLLAPSED_WIDTH
+  );
   const measured = measureCollapsedTargets(
     config.logoContainerEl,
     config.logoCharEls,
-    ctx.constants.COLLAPSED_WIDTH
+    collapsedLogoLayoutWidth
   );
   if (!measured || isStale(id)) return;
 
@@ -180,19 +198,6 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
       },
       staggerIndex * params.flipStagger
     );
-
-    flyTl.to(
-      charEl,
-      {
-        opacity: 0.6,
-        duration: params.moveDur,
-        ease: 'ios-out',
-        onComplete: () => {
-          gsap.to(charEl, { opacity: 1, duration: 0.1, ease: 'ios-out' });
-        },
-      },
-      staggerIndex * params.flipStagger
-    );
   });
 
   await chainTimelineComplete(flyTl);
@@ -200,6 +205,24 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
 
   // Phase 4: 宽度收缩 + 标签收缩 + 内容淡出
   // 不切换 CSS 布局——字符保持 inline x/y 在视觉上的正确位置
+  const lockedCharRects = config.logoCharEls.map((el) =>
+    el.getBoundingClientRect()
+  );
+  const lockLogoCharCenters = () => {
+    config.logoCharEls.forEach((charEl, index) => {
+      const currentTransform = {
+        x: Number(gsap.getProperty(charEl, 'x')) || 0,
+        y: Number(gsap.getProperty(charEl, 'y')) || 0,
+      };
+      const nextTransform = getCenterLockTransform(
+        lockedCharRects[index],
+        charEl.getBoundingClientRect(),
+        currentTransform
+      );
+      gsap.set(charEl, nextTransform);
+    });
+  };
+
   const labelEls = collectSidebarAnimatorLabelEls(config);
   gsap.set(config.collectionsCollapsedEl, {
     position: 'absolute',
@@ -216,12 +239,23 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
   const phase4 = gsap.timeline();
   setTimeline(phase4);
 
+  animateLogoSlabInsetVars(
+    phase4,
+    config.logoContainerEl,
+    'collapsed',
+    params.rotateDur,
+    'ios-spring',
+    0
+  );
+
   phase4.to(
     config.shellEl,
     {
       '--sidebar-width': ctx.constants.COLLAPSED_WIDTH,
       duration: params.rotateDur,
       ease: 'ios-spring',
+      onUpdate: lockLogoCharCenters,
+      onComplete: lockLogoCharCenters,
     },
     0
   );
@@ -263,8 +297,9 @@ export async function runCollapse(id: number, ctx: AnimatorContext) {
   // 全部动画完成后切换到 collapsed 内容；collapsed shortcut 保持 overlay
   // 位置，避免在最后一帧从隐藏流重新参与布局。
   config.onLayoutSwitch(true);
+  flushSync();
   config.logoCharEls.forEach((el) => {
-    gsap.set(el, { clearProps: 'x,y,opacity,transform' });
+    gsap.set(el, { clearProps: 'x,y,transform' });
   });
   gsap.set(logoGlyphEls, { rotation: -90 });
   gsap.set(config.logoContainerEl, { clearProps: 'height,overflow,x' });
