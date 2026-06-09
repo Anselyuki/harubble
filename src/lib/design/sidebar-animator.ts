@@ -37,7 +37,12 @@
  *  完成 → 恢复交互、清理瞬态样式
  */
 import { tick } from 'svelte';
-import { gsap, Flip, reducedMotionQuery } from '$lib/design/gsap';
+import {
+  gsap,
+  Flip,
+  reducedMotionQuery,
+  awaitPaintReady,
+} from '$lib/design/gsap';
 import { runExpand } from './sidebar-animator-expand';
 import { runCollapse } from './sidebar-animator-collapse';
 
@@ -46,6 +51,7 @@ interface SidebarAnimatorConfig {
   sidebarEl: HTMLElement;
   logoCharEls: HTMLSpanElement[];
   logoContainerEl: HTMLDivElement;
+  logoSlabEl: HTMLElement;
   navRegionEl: HTMLElement;
   collectionsRegionEl: HTMLElement;
   collectionsCollapsedEl: HTMLElement;
@@ -62,6 +68,8 @@ export interface SidebarAnimator {
   expand(): void;
   interrupt(): void;
   dispose(): void;
+  /** 外部直接同步折叠状态（跳过动画），用于拖曳松手后的吸附场景 */
+  syncCollapsedState(collapsed: boolean): void;
 }
 
 type AnimationParams = ReturnType<typeof getAnimationParams>;
@@ -86,8 +94,9 @@ export interface AnimatorContext {
     id: number,
     toCollapsed: boolean
   ) => Promise<gsap.core.Timeline | null>;
-  expandLogoSlabRight: (id: number, pinnedLogoWidth: number) => Promise<void>;
   commitState: (collapsed: boolean) => void;
+  /** 等待首次 paint + 字体就绪，确保 getBoundingClientRect 度量准确 */
+  awaitReady: () => Promise<void>;
 }
 
 const TIMING = {
@@ -110,12 +119,12 @@ const COLLAPSED_COLLECTIONS_OVERLAY_PROPS =
   'opacity,visibility,position,top,left,right,zIndex,height,overflow,padding';
 const LOGO_SLAB_INSETS = {
   expanded: {
-    left: '0px',
-    right: '8px',
+    marginLeft: '0px',
+    marginRight: '8px',
   },
   collapsed: {
-    left: '0px',
-    right: '10px',
+    marginLeft: '0px',
+    marginRight: '10px',
   },
 } as const;
 
@@ -156,22 +165,74 @@ export function getCenterLockTransform(
   };
 }
 
+/**
+ * 计算保持元素左上角不变的锁定 transform。
+ *
+ * 与 {@link getCenterLockTransform} 不同，本函数锁定的是元素的左上角（left/top），
+ * 而非几何中心。用于折叠收尾阶段：字符飞行目标与最终 `clearProps` 落点都以
+ * 左上角为基准（取自折叠态克隆测量的 `cloneRect.left/top`），但锁定期间字符仍处于
+ * 展开态布局，其行高（`line-height: 0.88`）比折叠态（`calc(0.88em - 2px)`）高约 2px。
+ * 若按中心锁定，盒高差异会在布局切换瞬间造成约 1px 的垂直跳变；按左上角锁定可消除该跳变。
+ *
+ * @param initialRect 锁定起始时元素的边界矩形（飞行结束时捕获）
+ * @param currentRect 当前帧元素的边界矩形
+ * @param currentTransform 当前帧已应用的 x/y transform
+ * @returns 使元素左上角对齐 `initialRect` 左上角所需的新 x/y transform
+ */
+export function getTopLeftLockTransform(
+  initialRect: RectLike,
+  currentRect: RectLike,
+  currentTransform: { x: number; y: number }
+): { x: number; y: number } {
+  return {
+    x: currentTransform.x + initialRect.left - currentRect.left,
+    y: currentTransform.y + initialRect.top - currentRect.top,
+  };
+}
+
 function resolveLogoGlyphEl(charEl: HTMLSpanElement): HTMLElement {
   return charEl.querySelector<HTMLElement>('[data-logo-glyph]') ?? charEl;
 }
 
-export function setLogoSlabInsetVars(
-  logoContainerEl: HTMLElement,
+/**
+ * 测量 logo 字母内容相对容器左边缘的右边界宽度。
+ *
+ * logo 容器是 grid-area:1/1 会被拉伸到整个 sidebar 宽，内层
+ * .brand-logo-mark 作为 flex 子项默认 align-items:stretch 也会被撑满，
+ * 两者的 offsetWidth/right 都不能用作 slab 宽度。
+ * slab 应对齐最右侧字母的右边缘，因此取所有字母 right 的最大值
+ * 减去容器 left，再加上 mark 的右内边距，得到字母内容块的真实右边界。
+ */
+export function measureLogoMarkWidth(logoContainerEl: HTMLElement): number {
+  const charEls = logoContainerEl.querySelectorAll<HTMLElement>('.brand-char');
+  if (charEls.length === 0) return logoContainerEl.offsetWidth;
+  const containerLeft = logoContainerEl.getBoundingClientRect().left;
+  let maxRight = 0;
+  charEls.forEach((el) => {
+    maxRight = Math.max(maxRight, el.getBoundingClientRect().right);
+  });
+
+  // 加上 .brand-logo-mark 的右内边距，保持与折叠态视觉留白一致
+  const markEl = logoContainerEl.querySelector<HTMLElement>('.brand-logo-mark');
+  const markPaddingRight = markEl
+    ? Number.parseFloat(getComputedStyle(markEl).paddingRight) || 0
+    : 0;
+
+  return Math.max(0, maxRight - containerLeft + markPaddingRight);
+}
+
+export function setLogoSlabInsets(
+  slabEl: HTMLElement,
   target: LogoSlabInsetTarget
 ): void {
   const inset = LOGO_SLAB_INSETS[target];
-  logoContainerEl.style.setProperty('--brand-logo-slab-left', inset.left);
-  logoContainerEl.style.setProperty('--brand-logo-slab-right', inset.right);
+  slabEl.style.marginLeft = inset.marginLeft;
+  slabEl.style.marginRight = inset.marginRight;
 }
 
-export function animateLogoSlabInsetVars(
+export function animateLogoSlabInsets(
   tl: gsap.core.Timeline,
-  logoContainerEl: HTMLElement,
+  slabEl: HTMLElement,
   target: LogoSlabInsetTarget,
   duration: number,
   ease: string,
@@ -179,49 +240,26 @@ export function animateLogoSlabInsetVars(
 ): void {
   const inset = LOGO_SLAB_INSETS[target];
   tl.to(
-    logoContainerEl,
+    slabEl,
     {
-      '--brand-logo-slab-left': inset.left,
-      '--brand-logo-slab-right': inset.right,
+      marginLeft: inset.marginLeft,
+      marginRight: inset.marginRight,
       duration,
       ease,
-    } as gsap.TweenVars,
+    },
     position
   );
 }
 
-function clearLogoSlabInsetVars(logoContainerEl: HTMLElement): void {
-  logoContainerEl.style.removeProperty('--brand-logo-slab-left');
-  logoContainerEl.style.removeProperty('--brand-logo-slab-right');
-}
-
-function getExpandedSlabRightInsetForPinnedWidth(
-  pinnedLogoWidth: number
-): string {
-  const expandedRightEdge =
-    EXPANDED_WIDTH_VALUE - Number.parseFloat(LOGO_SLAB_INSETS.expanded.right);
-  return `${pinnedLogoWidth - expandedRightEdge}px`;
-}
-
-function animateLogoSlabRightExpansion(
-  tl: gsap.core.Timeline,
-  logoContainerEl: HTMLElement,
-  pinnedLogoWidth: number,
-  duration: number,
-  ease: string,
-  position: number | string = 0
-): void {
-  tl.to(
-    logoContainerEl,
-    {
-      '--brand-logo-slab-left': LOGO_SLAB_INSETS.expanded.left,
-      '--brand-logo-slab-right':
-        getExpandedSlabRightInsetForPinnedWidth(pinnedLogoWidth),
-      duration,
-      ease,
-    } as gsap.TweenVars,
-    position
-  );
+/**
+ * 计算展开态 slab 的目标 marginRight。
+ *
+ * slab 右边界对齐 logo 容器的右边缘，
+ * 即 marginRight = sidebar 宽度 - logo 容器宽度。
+ */
+function _getExpandedSlabRightForLogoWidth(logoWidth: number): string {
+  const marginRight = Math.max(0, EXPANDED_WIDTH_VALUE - logoWidth);
+  return `${marginRight}px`;
 }
 
 function getLogoFlipTargets(
@@ -302,15 +340,39 @@ function getAnimationParams() {
   };
 }
 
-function syncToState(config: SidebarAnimatorConfig, collapsed: boolean) {
-  config.shellEl.style.setProperty(
-    '--sidebar-width',
-    collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH
-  );
-  setLogoSlabInsetVars(
-    config.logoContainerEl,
-    collapsed ? 'collapsed' : 'expanded'
-  );
+/**
+ * 计算 slab 动画的目标 height。
+ *
+ * slab 通过 CSS Grid align-self:stretch 与 logo 容器等高，
+ * 但自身有 margin-top / margin-bottom 排除了 logo 的外层 padding。
+ * GSAP 动画设置的 height 是 content-box 高度，不含 margin——
+ * 所以需要从 logo 容器完整高度中减去 slab 的垂直 margin。
+ */
+export function getSlabTargetHeight(
+  slabEl: HTMLElement,
+  logoTargetHeight: number
+): number {
+  const style = getComputedStyle(slabEl);
+  const verticalMargin =
+    Number.parseFloat(style.marginTop) + Number.parseFloat(style.marginBottom);
+  return Math.max(0, logoTargetHeight - verticalMargin);
+}
+
+function syncToState(
+  config: SidebarAnimatorConfig,
+  collapsed: boolean,
+  cachedHeight?: number | null
+) {
+  // slab 宽度通过 CSS 变量驱动，始终对齐字母内容块右边缘
+  if (collapsed) {
+    const slabWidth = COLLAPSED_WIDTH_VALUE - 10; // marginRight=10 equivalent
+    config.logoSlabEl.style.setProperty('--slab-width', `${slabWidth}px`);
+  } else {
+    config.logoSlabEl.style.setProperty(
+      '--slab-width',
+      `${measureLogoMarkWidth(config.logoContainerEl)}px`
+    );
+  }
 
   config.logoCharEls.forEach((el) => {
     const glyphEl = resolveLogoGlyphEl(el);
@@ -324,6 +386,13 @@ function syncToState(config: SidebarAnimatorConfig, collapsed: boolean) {
   config.onLayoutSwitch(collapsed);
   config.onContentSwitch(collapsed);
   config.onContentInteractive(true);
+
+  // 静态同步后，用 GSAP 锁定 slab 高度与 logo 内容区域一致
+  // 优先使用缓存高度，避免在中断恢复时读到动画中间值
+  const logoHeight = cachedHeight ?? config.logoContainerEl.offsetHeight;
+  gsap.set(config.logoSlabEl, {
+    height: getSlabTargetHeight(config.logoSlabEl, logoHeight),
+  });
 }
 
 function cleanupTransientStyles(
@@ -335,7 +404,19 @@ function cleanupTransientStyles(
   gsap.set(config.logoContainerEl, {
     clearProps: 'height,overflow,width,visibility,transform,alignSelf',
   });
-  clearLogoSlabInsetVars(config.logoContainerEl);
+
+  // slab 清理：清除动画瞬态属性，CSS 变量 --slab-width 由 syncToState 管理
+  gsap.set(config.logoSlabEl, { clearProps: 'height' });
+  // 设置终态的 --slab-width
+  if (target === 'expanded') {
+    config.logoSlabEl.style.setProperty(
+      '--slab-width',
+      `${measureLogoMarkWidth(config.logoContainerEl)}px`
+    );
+  } else {
+    const slabWidth = COLLAPSED_WIDTH_VALUE - 10;
+    config.logoSlabEl.style.setProperty('--slab-width', `${slabWidth}px`);
+  }
   gsap.set(labelEls, { clearProps: 'maxWidth,opacity' });
   gsap.set(config.navRegionEl, { clearProps: 'opacity' });
   gsap.set(config.collectionsRegionEl, { clearProps: 'opacity' });
@@ -394,7 +475,27 @@ export function createSidebarAnimator(
 
   const logoGlyphEls = config.logoCharEls.map(resolveLogoGlyphEl);
 
+  // --- 首帧测量保护：双帧 rAF + 字体就绪 ---
+  let paintReadyResolved = false;
+  const paintReadyPromise = awaitPaintReady().then(() => {
+    paintReadyResolved = true;
+  });
+
+  async function awaitReady(): Promise<void> {
+    if (paintReadyResolved) return;
+    await paintReadyPromise;
+  }
+
+  // --- 终态高度缓存：中断恢复时避免读取动画中间值 ---
+  const cachedLogoHeight: {
+    collapsed: number | null;
+    expanded: number | null;
+  } = { collapsed: null, expanded: null };
+
   syncToState(config, config.initialCollapsed);
+  // 初始化后立即缓存当前稳定态高度
+  const initialKey = config.initialCollapsed ? 'collapsed' : 'expanded';
+  cachedLogoHeight[initialKey] = config.logoContainerEl.offsetHeight;
 
   function startNewAnimation(): number {
     currentAnimationId++;
@@ -407,7 +508,8 @@ export function createSidebarAnimator(
   }
 
   function normalizeToCommittedState() {
-    syncToState(config, lastCommittedCollapsed);
+    const key = lastCommittedCollapsed ? 'collapsed' : 'expanded';
+    syncToState(config, lastCommittedCollapsed, cachedLogoHeight[key]);
     cleanupTransientStyles(
       config,
       lastCommittedCollapsed ? 'collapsed' : 'expanded'
@@ -422,7 +524,7 @@ export function createSidebarAnimator(
     currentWidth: number,
     measuredLogoWidth = COLLAPSED_WIDTH_VALUE
   ) {
-    const { sidebarWidth, logoWidth, alignSelf } = getPinnedLogoWidthFrame(
+    const { logoWidth, alignSelf } = getPinnedLogoWidthFrame(
       COLLAPSED_WIDTH_VALUE,
       EXPANDED_WIDTH_VALUE,
       (currentWidth - COLLAPSED_WIDTH_VALUE) /
@@ -430,7 +532,6 @@ export function createSidebarAnimator(
       measuredLogoWidth
     );
 
-    config.shellEl.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
     gsap.set(config.logoContainerEl, {
       width: logoWidth,
       alignSelf,
@@ -470,9 +571,7 @@ export function createSidebarAnimator(
       gsap.set(config.logoContainerEl, {
         width: '',
         overflow: 'hidden',
-        '--brand-logo-slab-left': LOGO_SLAB_INSETS.expanded.left,
-        '--brand-logo-slab-right': LOGO_SLAB_INSETS.expanded.right,
-      } as gsap.TweenVars);
+      });
     }
 
     const clone = config.logoContainerEl.cloneNode(true) as HTMLDivElement;
@@ -484,6 +583,8 @@ export function createSidebarAnimator(
     clone.style.pointerEvents = 'none';
     config.logoContainerEl.parentElement!.appendChild(clone);
     const targetHeight = clone.offsetHeight;
+    // 测量目标布局下字母内容块的真实右边界宽度（展开方向用于 slab 宽度终点）
+    const targetLogoWidth = measureLogoMarkWidth(clone);
     clone.remove();
 
     const totalStagger = params.flipStagger * (els.length - 1);
@@ -496,6 +597,35 @@ export function createSidebarAnimator(
         heightTween = null;
       },
     });
+
+    // slab 高度与 logo 容器同步动画（显式 GSAP 驱动）
+    gsap.to(config.logoSlabEl, {
+      height: getSlabTargetHeight(config.logoSlabEl, targetHeight),
+      duration: params.moveDur + totalStagger,
+      ease: 'ios-spring',
+    });
+
+    // 展开方向：slab 宽度随字母散开同步展开至两行布局的真实宽度，
+    // 与 FLIP 时间线同时结束，避免 FLIP 结束时骤然展开。
+    if (!toCollapsed) {
+      const slabWidthFrame = {
+        width:
+          Number.parseFloat(
+            config.logoSlabEl.style.getPropertyValue('--slab-width')
+          ) || config.logoSlabEl.offsetWidth,
+      };
+      gsap.to(slabWidthFrame, {
+        width: targetLogoWidth,
+        duration: params.moveDur + totalStagger,
+        ease: 'ios-spring',
+        onUpdate: () => {
+          config.logoSlabEl.style.setProperty(
+            '--slab-width',
+            `${slabWidthFrame.width}px`
+          );
+        },
+      });
+    }
 
     const sortedEls = [...els].sort((a, b) => {
       const rectA = state.elementStates.find(
@@ -517,9 +647,9 @@ export function createSidebarAnimator(
       absolute: true,
     });
     if (toCollapsed) {
-      animateLogoSlabInsetVars(
+      animateLogoSlabInsets(
         flipTl as gsap.core.Timeline,
-        config.logoContainerEl,
+        config.logoSlabEl,
         'collapsed',
         params.moveDur + totalStagger,
         'ios-spring',
@@ -529,29 +659,6 @@ export function createSidebarAnimator(
     currentTimeline = flipTl as gsap.core.Timeline;
 
     return flipTl as gsap.core.Timeline;
-  }
-
-  async function expandLogoSlabRight(
-    id: number,
-    pinnedLogoWidth: number,
-    params: AnimationParams
-  ): Promise<void> {
-    const slabTl = gsap.timeline();
-    currentTimeline = slabTl;
-    setLogoSlabInsetVars(config.logoContainerEl, 'collapsed');
-    gsap.set(config.logoContainerEl, { overflow: 'visible' });
-
-    animateLogoSlabRightExpansion(
-      slabTl,
-      config.logoContainerEl,
-      pinnedLogoWidth,
-      params.moveDur,
-      'ios-spring',
-      0
-    );
-
-    await chainTimelineComplete(slabTl);
-    if (isStale(id)) return;
   }
 
   function buildContext(): AnimatorContext {
@@ -574,14 +681,16 @@ export function createSidebarAnimator(
         applyExpandedWidthFrame(currentWidth, measuredLogoWidth);
       },
       flipPhase: (id, toCollapsed) => flipPhase(id, toCollapsed, params),
-      expandLogoSlabRight: (id, pinnedLogoWidth) =>
-        expandLogoSlabRight(id, pinnedLogoWidth, params),
       commitState: (collapsed) => {
         lastCommittedCollapsed = collapsed;
         cleanupTransientStyles(config, collapsed ? 'collapsed' : 'expanded');
+        // 刷新终态高度缓存，保证下次中断恢复使用准确值
+        const key = collapsed ? 'collapsed' : 'expanded';
+        cachedLogoHeight[key] = config.logoContainerEl.offsetHeight;
         config.onComplete?.(collapsed);
         currentTimeline = null;
       },
+      awaitReady,
     };
   }
 
@@ -628,6 +737,7 @@ export function createSidebarAnimator(
       config.shellEl,
       config.sidebarEl,
       config.logoContainerEl,
+      config.logoSlabEl,
       config.navRegionEl,
       config.collectionsRegionEl,
       config.collectionsCollapsedEl,
@@ -639,5 +749,18 @@ export function createSidebarAnimator(
     allEls.forEach((el) => gsap.set(el, { clearProps: 'all' }));
   }
 
-  return { collapse, expand, interrupt, dispose };
+  function syncCollapsedState(collapsed: boolean) {
+    currentAnimationId++;
+    currentTimeline?.kill();
+    currentTimeline = null;
+    heightTween?.kill();
+    heightTween = null;
+    lastCommittedCollapsed = collapsed;
+    syncToState(config, collapsed);
+    cleanupTransientStyles(config, collapsed ? 'collapsed' : 'expanded');
+    const key = collapsed ? 'collapsed' : 'expanded';
+    cachedLogoHeight[key] = config.logoContainerEl.offsetHeight;
+  }
+
+  return { collapse, expand, interrupt, dispose, syncCollapsedState };
 }

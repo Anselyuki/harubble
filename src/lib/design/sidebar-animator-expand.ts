@@ -1,14 +1,13 @@
 /**
  * 侧栏展开动画
  *
- * Phase 1 — 宽度展开 + 旋转（并行，300ms）
+ * Phase 1 — 宽度展开 + 旋转 + slab 同步（并行，300ms）
  *  ├─ 侧栏宽度 56px → 248px (ios-spring)
  *  ├─ 字符旋转 -90° → 0° (ios-spring, stagger 50ms)
+ *  ├─ slab 宽度通过 --slab-width CSS 变量同步展开至 logo 容器宽度
  *  └─ 文字标签：可用空间 ≥ 标签宽度×50% 时开始同速展开
  *
- * Phase 2 — 底座向右展开，提前铺到展开态落点
- *
- * Phase 3 — FLIP 堆栈弹出（240ms/字符，stagger 50ms，底部优先）
+ * Phase 2 — FLIP 堆栈弹出（240ms/字符，stagger 50ms，底部优先）
  *  └─ 容器高度同步过渡至目标高度
  */
 import { tick } from 'svelte';
@@ -25,6 +24,10 @@ export async function runExpand(id: number, ctx: AnimatorContext) {
   const { COLLAPSED_WIDTH_VALUE, EXPANDED_WIDTH_VALUE } = ctx.constants;
 
   config.onContentInteractive(false);
+
+  await ctx.awaitReady();
+  if (isStale(id)) return;
+
   const collapsedLogoWidth =
     config.logoContainerEl.getBoundingClientRect().width ||
     COLLAPSED_WIDTH_VALUE;
@@ -60,6 +63,8 @@ export async function runExpand(id: number, ctx: AnimatorContext) {
     });
   };
 
+  // Phase 1：字母仍处于竖向堆叠态，slab 宽度保持折叠态不变；
+  // slab 宽度展开移到 flipPhase，随字母散开同步进行、同时结束。
   const widthFrame = { width: COLLAPSED_WIDTH_VALUE };
   const phase1 = gsap.timeline();
   setTimeline(phase1);
@@ -118,9 +123,7 @@ export async function runExpand(id: number, ctx: AnimatorContext) {
   await chainTimelineComplete(phase1);
   if (isStale(id)) return;
 
-  await ctx.expandLogoSlabRight(id, collapsedLogoWidth);
-  if (isStale(id)) return;
-
+  // slab 宽度展开在 flipPhase 中随字母散开同步进行
   const flipResult = await ctx.flipPhase(id, false);
   if (!flipResult || isStale(id)) return;
 

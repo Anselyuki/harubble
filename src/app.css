@@ -426,6 +426,17 @@ img[data-image-state='error'] {
   --safe-area-top: var(--macos-titlebar-height);
 }
 
+/* 品牌区域（独立浮层，不受 sidebar overflow 裁剪） */
+.brand-region {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10;
+  display: grid;
+  grid-template: 1fr / 1fr;
+  pointer-events: none;
+}
+
 /* 侧边栏 */
 .sidebar {
   position: relative;
@@ -441,33 +452,35 @@ img[data-image-state='error'] {
   flex-direction: column;
 }
 
-.sidebar-toggle-btn {
+/* 侧栏拖曳把手 */
+.sidebar-resize-handle {
   position: absolute;
   left: var(--sidebar-width, 248px);
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  transform: translateX(-50%);
+  cursor: col-resize;
   z-index: 100;
+  touch-action: none;
 }
 
-.sidebar-toggle-btn:hover {
-  background: var(--hover-bg-elevated);
-  color: var(--text-primary);
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  border-radius: 1px;
+  transition: background 150ms ease;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-toggle-btn {
-    transition: none;
-  }
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle.dragging::after {
+  background: var(--accent, rgba(255, 255, 255, 0.3));
 }
 
 .section-title {

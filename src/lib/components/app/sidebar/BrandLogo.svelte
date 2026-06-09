@@ -50,7 +50,6 @@
   aria-hidden="true"
   bind:this={containerEl}
 >
-  <span class="brand-logo-slab"></span>
   <span class="brand-logo-mark">
     <span class="brand-row">
       {#each ROW1 as letter, i (i)}
@@ -79,17 +78,14 @@
 
 <style>
   .brand-logo {
-    --brand-logo-slab-left: 0px;
-    --brand-logo-slab-right: 8px;
     --brand-logo-collapsed-slab-right: 10px;
     --brand-logo-collapsed-char-line-height: calc(0.88em - 2px);
     --brand-logo-glyph-size: 22px;
     --brand-logo-char-gap: 0px;
     --brand-logo-mark-offset-x: 0px;
-    --brand-logo-slab-top: calc(20px + var(--safe-area-top));
-    --brand-logo-slab-bottom: 12px;
 
-    position: relative;
+    grid-area: 1 / 1;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     padding: 20px 8px 12px 10px;
@@ -100,8 +96,6 @@
   }
 
   .brand-logo.collapsed {
-    --brand-logo-slab-left: 0px;
-    --brand-logo-slab-right: var(--brand-logo-collapsed-slab-right);
     --brand-logo-mark-offset-x: calc(
       var(--brand-logo-collapsed-slab-right) * -0.5
     );
@@ -110,18 +104,6 @@
     padding: 20px 0 12px;
     padding-top: calc(20px + var(--safe-area-top));
     flex-direction: column-reverse;
-  }
-
-  .brand-logo-slab {
-    position: absolute;
-    z-index: 0;
-    top: var(--brand-logo-slab-top);
-    right: var(--brand-logo-slab-right);
-    bottom: var(--brand-logo-slab-bottom);
-    left: var(--brand-logo-slab-left);
-    border-radius: 0 8px 8px 0;
-    background: var(--accent);
-    pointer-events: none;
   }
 
   .brand-logo-mark {

@@ -55,6 +55,36 @@ export function animateOut(
   });
 }
 
+/**
+ * 等待文档字体加载完成。
+ *
+ * 用于动画启动前确保字体度量稳定，避免 scrollWidth 等测量值因字体 fallback 而偏差。
+ * 内置 500ms 超时保护，超时后静默 resolve，不阻塞动画流程。
+ */
+export function awaitFontsReady(): Promise<void> {
+  if (typeof document === 'undefined') return Promise.resolve();
+  return Promise.race([
+    document.fonts.ready.then(() => {}),
+    new Promise<void>((resolve) => setTimeout(resolve, 500)),
+  ]);
+}
+
+/**
+ * 等待浏览器完成首次 paint（双帧 rAF）+ 字体就绪。
+ *
+ * 用于 FLIP 动画首次触发前，确保 getBoundingClientRect() 返回准确坐标。
+ * 合并双帧等待与字体加载，取两者中较晚完成的时机。
+ */
+export function awaitPaintReady(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  const frameDone = new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+  return Promise.all([frameDone, awaitFontsReady()]).then(() => {});
+}
+
 export function gsapScrollIntoView(
   container: HTMLElement,
   target: HTMLElement,

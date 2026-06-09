@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 
 let source = '';
+let sidebarSource = '';
 let animatorSource = '';
 let expandAnimatorSource = '';
 let coreAnimatorSource = '';
@@ -11,6 +12,10 @@ beforeAll(async () => {
   const { readFileSync } = await import('node:fs');
   source = readFileSync(
     'src/lib/components/app/sidebar/BrandLogo.svelte',
+    'utf8'
+  );
+  sidebarSource = readFileSync(
+    'src/lib/components/app/sidebar/AppSidebar.svelte',
     'utf8'
   );
   animatorSource = [
@@ -35,18 +40,17 @@ beforeAll(async () => {
 });
 
 describe('BrandLogo styling', () => {
-  it('renders the logo on an accent slab flush with the page edge', () => {
-    expect(source).toContain('class="brand-logo-slab"');
+  it('renders the accent slab as grid-overlapping sibling via BrandSlab component', () => {
+    expect(source).not.toContain('class="brand-slab"');
+    expect(source).not.toContain('brand-logo-slab');
+    expect(sidebarSource).toContain('BrandSlab');
+    expect(sidebarSource).toContain('bind:slabEl={logoSlabEl}');
+    expect(sidebarSource).toContain('class="brand-region"');
+    expect(sidebarSource).toContain('display: grid;');
+    expect(sidebarSource).toContain('grid-template: 1fr / 1fr;');
+    expect(source).toContain('grid-area: 1 / 1;');
+    expect(source).toContain('z-index: 1;');
     expect(source).toContain('padding: 20px 8px 12px 10px;');
-    expect(source).toContain('--brand-logo-slab-left: 0px;');
-    expect(source).toContain('--brand-logo-slab-right: 8px;');
-    expect(source).toContain('position: absolute;');
-    expect(source).toContain('left: var(--brand-logo-slab-left);');
-    expect(source).toContain('right: var(--brand-logo-slab-right);');
-    expect(source).toContain('bottom: 12px;');
-    expect(source).toContain('background: var(--accent);');
-    expect(source).toContain('border-radius: 0 8px 8px 0;');
-    expect(source).not.toContain('padding: 20px 8px 12px 24px;');
   });
 
   it('renders filled and outline logo glyphs with font text', () => {
@@ -83,10 +87,9 @@ describe('BrandLogo styling', () => {
   it('keeps BrandLogo animation under the GSAP sidebar animator', () => {
     expect(source).not.toMatch(/\btransition\s*:/);
     expect(source).not.toMatch(/\banimation\s*:/);
-    expect(animatorSource).toContain('animateLogoSlabInsetVars');
-    expect(animatorSource).toContain("left: '0px'");
-    expect(animatorSource).toContain('--brand-logo-slab-left');
-    expect(animatorSource).toContain('--brand-logo-slab-right');
+    expect(animatorSource).toContain('animateLogoSlabInsets');
+    expect(animatorSource).toContain("marginLeft: '0px'");
+    expect(animatorSource).toContain('logoSlabEl');
   });
 
   it('centers the vertical logo letters within the collapsed slab width', () => {
@@ -134,32 +137,43 @@ describe('BrandLogo styling', () => {
     );
   });
 
-  it('measures collapsed logo targets in the sidebar content box', () => {
-    const layoutWidthIndex = collapseAnimatorSource.indexOf(
-      'getCollapsedLogoLayoutWidth'
+  it('measures collapsed logo targets in the final collapsed sidebar frame', () => {
+    const frameIndex = collapseAnimatorSource.indexOf(
+      "document.createElement('aside')"
     );
     const measureIndex = collapseAnimatorSource.indexOf(
       'measureCollapsedTargets('
     );
-    const targetWidthIndex = collapseAnimatorSource.indexOf(
-      'collapsedLogoLayoutWidth'
+    const sidebarClassIndex = collapseAnimatorSource.indexOf(
+      'measurementSidebar.className = sidebarEl.className;'
+    );
+    const collapsedClassIndex = collapseAnimatorSource.indexOf(
+      "measurementSidebar.classList.add('collapsed');"
+    );
+    const sidebarWidthIndex = collapseAnimatorSource.indexOf(
+      'measurementSidebar.style.width = collapsedSidebarWidth;'
+    );
+    const frameAppendIndex = collapseAnimatorSource.indexOf(
+      'measurementSidebar.appendChild(clone);'
+    );
+    const shellAppendIndex = collapseAnimatorSource.indexOf(
+      'sidebarEl.parentElement!.appendChild(measurementSidebar);'
     );
 
-    expect(layoutWidthIndex).toBeGreaterThan(-1);
+    expect(frameIndex).toBeGreaterThan(-1);
     expect(measureIndex).toBeGreaterThan(-1);
-    expect(targetWidthIndex).toBeGreaterThan(-1);
-    expect(collapseAnimatorSource).toContain(
-      'clone.style.left = `${logoContainerEl.offsetLeft}px`;'
-    );
-    expect(collapseAnimatorSource).toContain(
-      'clone.style.top = `${logoContainerEl.offsetTop}px`;'
-    );
+    expect(sidebarClassIndex).toBeGreaterThan(frameIndex);
+    expect(collapsedClassIndex).toBeGreaterThan(sidebarClassIndex);
+    expect(sidebarWidthIndex).toBeGreaterThan(collapsedClassIndex);
+    expect(frameAppendIndex).toBeGreaterThan(sidebarWidthIndex);
+    expect(shellAppendIndex).toBeGreaterThan(frameAppendIndex);
     expect(collapseAnimatorSource).toContain(
       [
         'const measured = measureCollapsedTargets(',
+        '    config.sidebarEl,',
         '    config.logoContainerEl,',
         '    config.logoCharEls,',
-        '    collapsedLogoLayoutWidth',
+        '    ctx.constants.COLLAPSED_WIDTH',
         '  );',
       ].join('\n')
     );
@@ -170,34 +184,45 @@ describe('BrandLogo styling', () => {
       'const lockedCharRects = config.logoCharEls.map((el) =>'
     );
     const lockFunctionIndex = collapseAnimatorSource.indexOf(
-      'const lockLogoCharCenters = () =>'
+      'const lockLogoCharTopLeft = () =>'
     );
     const widthTweenIndex = collapseAnimatorSource.indexOf(
       "config.shellEl,\n    {\n      '--sidebar-width': ctx.constants.COLLAPSED_WIDTH,"
     );
     const updateIndex = collapseAnimatorSource.indexOf(
-      'onUpdate: lockLogoCharCenters'
+      'onUpdate: lockLogoCharTopLeft'
     );
     const completeIndex = collapseAnimatorSource.indexOf(
-      'onComplete: lockLogoCharCenters'
+      'onComplete: lockLogoCharTopLeft'
     );
-    const layoutSwitchIndex = collapseAnimatorSource.indexOf(
-      'config.onLayoutSwitch(true);'
-    );
-    const flushIndex = collapseAnimatorSource.indexOf('flushSync();');
-    const clearIndex = collapseAnimatorSource.indexOf(
+    const clearIndex = collapseAnimatorSource.lastIndexOf(
       "clearProps: 'x,y,transform'"
     );
 
-    expect(collapseAnimatorSource).toContain('getCenterLockTransform');
+    expect(collapseAnimatorSource).toContain('getTopLeftLockTransform');
     expect(collapseAnimatorSource).toContain('flushSync');
     expect(lockRectsIndex).toBeGreaterThan(-1);
     expect(lockFunctionIndex).toBeGreaterThan(lockRectsIndex);
     expect(widthTweenIndex).toBeGreaterThan(lockFunctionIndex);
     expect(updateIndex).toBeGreaterThan(widthTweenIndex);
     expect(completeIndex).toBeGreaterThan(widthTweenIndex);
-    expect(layoutSwitchIndex).toBeGreaterThan(completeIndex);
+    expect(clearIndex).toBeGreaterThan(completeIndex);
+  });
+
+  it('completes collapse with direct layout switch (no intermediate measurement)', () => {
+    const layoutSwitchIndex = collapseAnimatorSource.indexOf(
+      'config.onLayoutSwitch(true);'
+    );
+    const flushIndex = collapseAnimatorSource.indexOf('flushSync();');
+    const clearPropsIndex = collapseAnimatorSource.lastIndexOf(
+      "clearProps: 'x,y,transform'"
+    );
+
+    expect(layoutSwitchIndex).toBeGreaterThan(-1);
     expect(flushIndex).toBeGreaterThan(layoutSwitchIndex);
-    expect(clearIndex).toBeGreaterThan(flushIndex);
+    expect(clearPropsIndex).toBeGreaterThan(flushIndex);
+    expect(collapseAnimatorSource).not.toContain(
+      'config.onLayoutSwitch(false);'
+    );
   });
 });

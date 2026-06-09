@@ -1,7 +1,6 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import BrandLogo from '$lib/components/app/sidebar/BrandLogo.svelte';
   import SidebarItemButton from '$lib/components/app/sidebar/SidebarItemButton.svelte';
   import SidebarNav from '$lib/components/app/sidebar/SidebarNav.svelte';
   import { CollapsibleGroup } from '$lib/components/ui/collapsible-group';
@@ -26,14 +25,11 @@
     onRequestExpand?: () => void;
     contentCollapsed: boolean;
     contentInteractive: boolean;
-    layoutCollapsed: boolean;
     sidebarEl?: HTMLElement | null;
     navRegionEl?: HTMLElement | null;
     collectionsRegionEl?: HTMLElement | null;
     collectionsCollapsedEl?: HTMLElement | null;
     bottomLabelEl?: HTMLSpanElement | null;
-    logoContainerEl?: HTMLDivElement | null;
-    onCharsReady?: (els: HTMLSpanElement[]) => void;
   }
 
   let {
@@ -49,14 +45,11 @@
     onRequestExpand,
     contentCollapsed,
     contentInteractive,
-    layoutCollapsed,
     sidebarEl = $bindable(null),
     navRegionEl = $bindable(null),
     collectionsRegionEl = $bindable(null),
     collectionsCollapsedEl = $bindable(null),
     bottomLabelEl = $bindable(null),
-    logoContainerEl = $bindable(null),
-    onCharsReady,
   }: Props = $props();
 
   const officialCollections = $derived.by(() =>
@@ -91,12 +84,7 @@
     ></div>
   {/if}
 
-  <BrandLogo
-    {isMacOS}
-    {layoutCollapsed}
-    bind:containerEl={logoContainerEl}
-    {onCharsReady}
-  />
+  <div class="sidebar-brand-spacer"></div>
 
   <div class="sidebar-nav-region" bind:this={navRegionEl}>
     <SidebarNav
@@ -282,5 +270,10 @@
   .sidebar-bottom.collapsed {
     padding-right: 10px;
     padding-left: 10px;
+  }
+
+  .sidebar-brand-spacer {
+    flex-shrink: 0;
+    height: var(--brand-region-height, 80px);
   }
 </style>

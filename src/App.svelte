@@ -4,22 +4,28 @@
   import TopToolbar from '$lib/components/app/shell/TopToolbar.svelte';
   import StatusToastHost from '$lib/components/app/shell/StatusToastHost.svelte';
   import AppSidebar from '$lib/components/app/sidebar/AppSidebar.svelte';
+  import BrandLogo from '$lib/components/app/sidebar/BrandLogo.svelte';
+  import BrandSlab from '$lib/components/app/sidebar/BrandSlab.svelte';
   import PlayerFlyoutStack from '$lib/components/app/player/PlayerFlyoutStack.svelte';
   import FullscreenPlayer from '$lib/components/app/player/FullscreenPlayer.svelte';
   import AppSideSheets from '$lib/components/app/shell/AppSideSheets.svelte';
   import CollectionFormDialog from '$lib/components/app/collection/CollectionFormDialog.svelte';
   import ViewRouter from '$lib/components/app/shell/ViewRouter.svelte';
-  import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
-  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-
   import {
     createSidebarAnimator,
     type SidebarAnimator,
   } from '$lib/design/sidebar-animator';
+  import {
+    createSidebarResize,
+    animateSnapToWidth,
+    type SidebarResizeHandle,
+  } from '$lib/design/sidebar-resize';
 
   const runtime = createAppRuntime();
 
   let animator: SidebarAnimator | null = null;
+  let resizeHandle: SidebarResizeHandle | null = null;
+  let resizeHandleEl: HTMLElement | null = $state(null);
   let logoCharEls: HTMLSpanElement[] = $state([]);
   let shellEl: HTMLElement | null = $state(null);
   let sidebarEl: HTMLElement | null = $state(null);
@@ -28,10 +34,16 @@
   let collectionsCollapsedEl: HTMLElement | null = $state(null);
   let bottomLabelEl: HTMLSpanElement | null = $state(null);
   let logoContainerEl: HTMLDivElement | null = $state(null);
+  let logoSlabEl: HTMLElement | null = $state(null);
 
   let contentCollapsed = $state(runtime.sidebarCollapsed);
   let contentInteractive = $state(!runtime.sidebarCollapsed);
   let layoutCollapsed = $state(runtime.sidebarCollapsed);
+  let isDragging = $state(false);
+
+  const COLLAPSED_WIDTH = 56;
+  const EXPANDED_WIDTH = 248;
+  const COLLAPSE_THRESHOLD = 120;
 
   function handleCharsReady(els: HTMLSpanElement[]) {
     logoCharEls = els;
@@ -53,6 +65,7 @@
       shellEl &&
       sidebarEl &&
       logoContainerEl &&
+      logoSlabEl &&
       bottomLabelEl &&
       navRegionEl &&
       collectionsRegionEl &&
@@ -60,11 +73,18 @@
       logoCharEls.length === 12
     ) {
       if (animator) return;
+      // 初始化 sidebar 宽度（animator 不再控制）
+      const initWidth = runtime.sidebarCollapsed
+        ? COLLAPSED_WIDTH
+        : EXPANDED_WIDTH;
+      shellEl.style.setProperty('--sidebar-width', `${initWidth}px`);
+
       animator = createSidebarAnimator({
         shellEl,
         sidebarEl,
         logoCharEls,
         logoContainerEl,
+        logoSlabEl,
         navRegionEl,
         collectionsRegionEl,
         collectionsCollapsedEl,
@@ -88,6 +108,11 @@
     }
     if (curr === prevCollapsed) return;
     prevCollapsed = curr;
+
+    // 同步 sidebar 宽度（animator 不再控制）
+    const targetWidth = curr ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
+    animateSnapToWidth(shellEl!, targetWidth);
+
     if (curr) {
       animator.collapse();
     } else {
@@ -99,8 +124,47 @@
     return () => {
       animator?.dispose();
       animator = null;
+      resizeHandle?.dispose();
+      resizeHandle = null;
     };
   });
+
+  /* eslint-disable @typescript-eslint/no-unnecessary-condition -- $state(null) refs are populated by bind:this at runtime */
+  $effect(() => {
+    if (shellEl && resizeHandleEl) {
+      if (resizeHandle) return;
+      resizeHandle = createSidebarResize({
+        shellEl,
+        handleEl: resizeHandleEl,
+        collapsedWidth: COLLAPSED_WIDTH,
+        expandedWidth: EXPANDED_WIDTH,
+        threshold: COLLAPSE_THRESHOLD,
+        getCollapsed: () => runtime.sidebarCollapsed,
+        onWidthChange: (width) => {
+          isDragging = true;
+          // 拖曳期间实时更新 sidebar 宽度（brand-region 独立不受影响）
+          shellEl!.style.setProperty('--sidebar-width', `${width}px`);
+        },
+        onCrossThreshold: () => {
+          // 拖曳期间不切换内容布局
+        },
+        onDragEnd: (_finalWidth, shouldCollapse) => {
+          isDragging = false;
+          const wasCollapsed = runtime.sidebarCollapsed;
+
+          if (shouldCollapse !== wasCollapsed) {
+            // 跨阈值——触发 sidebar 吸附 + Logo/Slab 动画（通过 $effect）
+            runtime.shellStore.sidebarCollapsed = shouldCollapse;
+          } else {
+            // 未跨阈值——仅吸附回稳定态宽度
+            const snapTarget = wasCollapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
+            animateSnapToWidth(shellEl!, snapTarget);
+          }
+        },
+      });
+    }
+  });
+  /* eslint-enable @typescript-eslint/no-unnecessary-condition */
 </script>
 
 {#if runtime.isMacOS}
@@ -119,12 +183,21 @@
     class:macos-overlay={runtime.isMacOS}
     bind:this={shellEl}
   >
+    <div class="brand-region" aria-hidden="true">
+      <BrandSlab bind:slabEl={logoSlabEl} />
+      <BrandLogo
+        isMacOS={runtime.isMacOS}
+        {layoutCollapsed}
+        bind:containerEl={logoContainerEl}
+        onCharsReady={handleCharsReady}
+      />
+    </div>
+
     <AppSidebar
       isMacOS={runtime.isMacOS}
       currentView={runtime.currentView}
       {contentCollapsed}
       {contentInteractive}
-      {layoutCollapsed}
       onNavigate={(view) => {
         runtime.navigateToTop(view);
       }}
@@ -139,24 +212,14 @@
       bind:collectionsRegionEl
       bind:collectionsCollapsedEl
       bind:bottomLabelEl
-      bind:logoContainerEl
-      onCharsReady={handleCharsReady}
     />
 
-    <button
-      type="button"
-      class="sidebar-toggle-btn"
-      onclick={runtime.toggleSidebar}
-      aria-label={runtime.sidebarCollapsed
-        ? 'Expand sidebar'
-        : 'Collapse sidebar'}
-    >
-      {#if runtime.sidebarCollapsed}
-        <ChevronRightIcon size={14} />
-      {:else}
-        <ChevronLeftIcon size={14} />
-      {/if}
-    </button>
+    <div
+      class="sidebar-resize-handle"
+      class:dragging={isDragging}
+      bind:this={resizeHandleEl}
+      aria-hidden="true"
+    ></div>
 
     <section class="main-region">
       {#if runtime.isMacOS}
