@@ -307,7 +307,8 @@
     width: 40%;
     border-radius: 2px;
     background: var(--accent);
-    animation: index-progress-slide 1.6s ease-in-out infinite;
+    --progress-slide-travel: 350%;
+    animation: motion-progress-slide 1.6s var(--ease-ios) infinite;
   }
 
   .search-status-progress-bar.is-reduced-motion {
@@ -319,15 +320,6 @@
   .search-status-hint {
     font-size: 12px;
     color: var(--text-secondary);
-  }
-
-  @keyframes index-progress-slide {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(350%);
-    }
   }
 
   /* ── Empty state ── */

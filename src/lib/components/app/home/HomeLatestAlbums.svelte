@@ -2,15 +2,17 @@
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import { imageDataSrc } from '$lib/imageDataSrc';
+  import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
   import type { Album } from '$lib/types';
 
   interface Props {
     albums: Album[];
     loading: boolean;
+    reducedMotion?: boolean;
     onSelect: (album: Album) => void | Promise<void>;
   }
 
-  let { albums, loading, onSelect }: Props = $props();
+  let { albums, loading, reducedMotion = false, onSelect }: Props = $props();
 
   const labels = $derived.by(() => {
     void localeState.current;
@@ -27,7 +29,7 @@
   {#if loading && albums.length === 0}
     <div class="skeleton-row">
       {#each Array(6) as _, i (i)}
-        <div class="skeleton-card"></div>
+        <MotionPulseBlock className="skeleton-card" {reducedMotion} />
       {/each}
     </div>
   {:else if albums.length === 0}
@@ -128,13 +130,12 @@
     gap: 0.75rem;
   }
 
-  .skeleton-card {
+  .skeleton-row :global(.skeleton-card) {
     flex-shrink: 0;
     width: 140px;
     height: 180px;
     border-radius: 8px;
     background: var(--surface-secondary, rgba(255, 255, 255, 0.06));
-    animation: pulse 1.5s ease-in-out infinite;
   }
 
   .empty-hint {
@@ -142,15 +143,5 @@
     font-size: 0.8125rem;
     color: var(--text-tertiary, rgba(255, 255, 255, 0.4));
     margin: 0;
-  }
-
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
   }
 </style>

@@ -2,15 +2,22 @@
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import { imageDataSrc } from '$lib/imageDataSrc';
+  import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
   import type { SeriesGroup } from '$lib/types';
 
   interface Props {
     groups: SeriesGroup[];
     belongReady: boolean;
+    reducedMotion?: boolean;
     onSelectSeries: (series: string) => void;
   }
 
-  let { groups, belongReady, onSelectSeries }: Props = $props();
+  let {
+    groups,
+    belongReady,
+    reducedMotion = false,
+    onSelectSeries,
+  }: Props = $props();
 
   const labels = $derived.by(() => {
     void localeState.current;
@@ -28,7 +35,7 @@
   {#if !belongReady}
     <div class="skeleton-list">
       {#each Array(3) as _, i (i)}
-        <div class="skeleton-row"></div>
+        <MotionPulseBlock className="skeleton-row" {reducedMotion} />
       {/each}
     </div>
   {:else if groups.length === 0}
@@ -162,11 +169,10 @@
     gap: 0.5rem;
   }
 
-  .skeleton-row {
+  .skeleton-list :global(.skeleton-row) {
     height: 80px;
     border-radius: 10px;
     background: var(--surface-secondary, rgba(255, 255, 255, 0.04));
-    animation: pulse 1.5s ease-in-out infinite;
   }
 
   .empty-hint {
@@ -174,15 +180,5 @@
     font-size: 0.8125rem;
     color: var(--text-tertiary, rgba(255, 255, 255, 0.4));
     margin: 0;
-  }
-
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
   }
 </style>

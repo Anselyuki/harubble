@@ -14,6 +14,8 @@
   }: Props = $props();
 </script>
 
+<!-- motion-spin 是 app.css 中的全局 @keyframes：内联 style 无法命中
+     Svelte 作用域化后的组件内 keyframes，必须依赖全局名 -->
 <div
   class={className}
   {style}
@@ -21,14 +23,3 @@
     ? 'none'
     : `motion-spin ${duration}s linear infinite`}
 ></div>
-
-<style>
-  @keyframes motion-spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-</style>

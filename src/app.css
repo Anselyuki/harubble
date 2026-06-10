@@ -45,6 +45,15 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-decelerate: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-linear: linear;
+  /* 与 gsap.ts 注册的 'ios' CustomEase 保持同一条曲线 */
+  --ease-ios: cubic-bezier(0.25, 0.1, 0.25, 1);
+  /* hover/active 纯状态颜色反馈的受控 CSS transition（动效规则例外②，
+     详见 docs/reference/frontend-guide.md）；位移/尺寸/布局动画仍必须走 GSAP */
+  --motion-hover: background-color var(--motion-fast) var(--ease-ios),
+    color var(--motion-fast) var(--ease-ios),
+    border-color var(--motion-fast) var(--ease-ios),
+    opacity var(--motion-fast) var(--ease-ios),
+    box-shadow var(--motion-fast) var(--ease-ios);
   --font-sans: 'HarmonyOS Sans SC', sans-serif;
   --font-display: var(--font-sans);
   --font-body: var(--font-sans);
@@ -74,6 +83,45 @@
   --input: var(--bg-tertiary);
   --ring: rgba(var(--accent-rgb), 0.3);
   --radius: 0.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-hover: none;
+  }
+}
+
+/* 受控例外①：无限循环 loading / 装饰动画共享的全局 keyframes
+   （动效规则详见 docs/reference/frontend-guide.md）。
+   组件内不要再各自复制同类 keyframes；注意 MotionSpinner / MotionPulseBlock
+   通过内联 style 引用这里的名字（Svelte 会把组件内 @keyframes 作用域化，
+   内联引用只能命中全局名），重命名前先全局搜索引用。 */
+@keyframes motion-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes motion-pulse {
+  0%,
+  100% {
+    opacity: 0.46;
+  }
+  50% {
+    opacity: 0.92;
+  }
+}
+
+@keyframes motion-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(var(--progress-slide-travel, 240%));
+  }
 }
 
 @theme inline {
@@ -475,7 +523,7 @@ img[data-image-state='error'] {
   transform: translateX(-50%);
   background: transparent;
   border-radius: 1px;
-  transition: background 150ms ease;
+  transition: var(--motion-hover);
 }
 
 .sidebar-resize-handle:hover::after,
@@ -731,7 +779,7 @@ img[data-image-state='error'] {
     inset 0 1px 0 rgba(255, 255, 255, 0.94);
   color: rgba(15, 23, 42, 0.7);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: var(--motion-hover);
 }
 
 .album-workspace-content > .back-button:hover {
@@ -1885,6 +1933,13 @@ img[data-image-state='error'] {
   100% { transform: translateX(-100%); }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .fullscreen-meta-text:hover .fullscreen-title.overflowing .fullscreen-title-inner,
+  .fullscreen-meta-text:hover .fullscreen-artist.overflowing .fullscreen-artist-inner {
+    animation: none;
+  }
+}
+
 .fs-download {
   flex-shrink: 0;
   width: 24px;
@@ -1903,12 +1958,7 @@ img[data-image-state='error'] {
 }
 
 .fs-download .fs-spin {
-  animation: fs-spin-anim 1s linear infinite;
-}
-
-@keyframes fs-spin-anim {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  animation: motion-spin var(--motion-spinner) linear infinite;
 }
 
 .fullscreen-progress {

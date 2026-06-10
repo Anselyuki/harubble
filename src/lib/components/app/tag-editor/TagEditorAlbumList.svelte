@@ -140,7 +140,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: var(--motion-hover);
   }
 
   .action-button:hover {

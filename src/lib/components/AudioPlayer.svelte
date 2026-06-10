@@ -1177,7 +1177,7 @@
   }
 
   .spin-icon {
-    animation: player-download-spin 0.9s linear infinite;
+    animation: motion-spin var(--motion-spinner) linear infinite;
   }
 
   .icon-button:active:not(:disabled) {
@@ -1236,16 +1236,6 @@
   .icon-button:disabled {
     cursor: not-allowed;
     box-shadow: none;
-  }
-
-  @keyframes player-download-spin {
-    from {
-      transform: rotate(0deg);
-    }
-
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   @media (max-width: 900px) {
