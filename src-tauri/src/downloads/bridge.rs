@@ -24,12 +24,57 @@ use crate::downloads::events::{
 use crate::local_inventory::spawn_inventory_scan;
 use harubble_core::download::model::{DownloadJobKind, DownloadTaskStatus, InternalDownloadTask};
 use harubble_core::download::worker::{CompletedTaskArtifacts, TaskExecutionResult};
+use harubble_core::DownloadTaskProgressEvent;
 use harubble_core::WritePayload;
 use harubble_core::{album_cover_exists, album_output_dir, download_album_cover};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// 下载进度事件向前端广播的最小间隔。
+///
+/// 底层下载/写入回调会在每个数据分块后触发，频率极高。若每个进度事件都派发一个
+/// 异步任务并抢占下载服务锁，会造成任务队列与锁竞争堆积。进度事件统一经此间隔
+/// 节流；状态切换与传输完成帧始终放行，保证阶段变化与最终进度能及时反映到前端。
+const DOWNLOAD_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(150);
+
+/// 包装下载进度回调，按 [`DOWNLOAD_PROGRESS_EMIT_INTERVAL`] 节流转发。
+///
+/// 当任务状态发生变化（如下载阶段切换到写入阶段）或传输已完成（`bytes_done`
+/// 达到 `bytes_total`）时立即放行，其余高频进度事件按时间间隔节流，从而显著
+/// 减少派发的异步任务数量与下载服务锁竞争。返回的闭包可安全克隆，所有克隆共享
+/// 同一份节流状态。
+fn throttle_download_progress<F>(
+    inner: F,
+) -> impl Fn(DownloadTaskProgressEvent) + Send + Sync + Clone + 'static
+where
+    F: Fn(DownloadTaskProgressEvent) + Send + Sync + Clone + 'static,
+{
+    let last_emit = Arc::new(Mutex::new(None::<(Instant, DownloadTaskStatus)>));
+    move |progress| {
+        let is_transfer_complete = progress.bytes_total == Some(progress.bytes_done);
+        let should_emit = {
+            let mut guard = last_emit.lock().unwrap();
+            let now = Instant::now();
+            let throttled = matches!(
+                guard.as_ref(),
+                Some((last_time, last_status))
+                    if *last_status == progress.status
+                        && now.duration_since(*last_time) < DOWNLOAD_PROGRESS_EMIT_INTERVAL
+            );
+            if throttled && !is_transfer_complete {
+                false
+            } else {
+                *guard = Some((now, progress.status));
+                true
+            }
+        };
+        if should_emit {
+            inner(progress);
+        }
+    }
+}
 
 /// 初始化下载桥接执行循环。
 ///
@@ -210,7 +255,7 @@ async fn start_job(
                 task_for_write.execute_write_phase(&job.payload, {
                     let service = progress_ctx.service;
                     let app = progress_ctx.app;
-                    move |progress| {
+                    throttle_download_progress(move |progress| {
                         let service = Arc::clone(&service);
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {
@@ -237,7 +282,7 @@ async fn start_job(
                                 emit_download_job_updated(&app, &update.snapshot);
                             }
                         });
-                    }
+                    })
                 })
             })
             .await
@@ -322,7 +367,7 @@ async fn run_download_phase(
     task.execute_download_phase(api.as_ref(), out_dir, cancellation_flag, {
         let service = Arc::clone(&service_for_progress);
         let app = app_for_progress.clone();
-        move |progress| {
+        throttle_download_progress(move |progress| {
             let service = Arc::clone(&service);
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
@@ -349,7 +394,7 @@ async fn run_download_phase(
                     emit_download_job_updated(&app, &update.snapshot);
                 }
             });
-        }
+        })
     })
     .await
 }

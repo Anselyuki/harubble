@@ -26,3 +26,10 @@ pub fn emit_state(app: &AppHandle, state: &Arc<Mutex<PlayerState>>) {
 pub fn emit_progress(app: &AppHandle, state: &Arc<Mutex<PlayerState>>) {
     let _ = app.emit(PLAYER_PROGRESS, state.lock().unwrap().clone());
 }
+
+/// 以已有的播放器状态快照发出 [`PLAYER_PROGRESS`] 事件。
+///
+/// 适用于调用方已经持有状态快照（例如节流后的进度发射线程），可避免重复加锁与克隆。
+pub fn emit_progress_snapshot(app: &AppHandle, snapshot: &PlayerState) {
+    let _ = app.emit(PLAYER_PROGRESS, snapshot.clone());
+}
