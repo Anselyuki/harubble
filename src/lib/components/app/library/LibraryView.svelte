@@ -322,21 +322,13 @@
       rgba(var(--accent-rgb), 0.9) 45%,
       rgba(var(--accent-rgb), 0.32) 100%
     );
-    animation: search-progress-slide 1.2s ease-in-out infinite;
+    --progress-slide-travel: 240%;
+    animation: motion-progress-slide 1.2s var(--ease-ios) infinite;
   }
 
   .search-status-progress-bar.is-reduced-motion {
     width: 100%;
     opacity: 0.72;
     animation: none;
-  }
-
-  @keyframes search-progress-slide {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(240%);
-    }
   }
 </style>

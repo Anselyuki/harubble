@@ -490,12 +490,7 @@
     stroke: currentColor;
     stroke-width: 2;
     stroke-dasharray: 20 30;
-    animation: download-spin 0.9s linear infinite;
-  }
-  @keyframes download-spin {
-    to {
-      transform: rotate(360deg);
-    }
+    animation: motion-spin var(--motion-spinner) linear infinite;
   }
   .song-selection-toggle {
     appearance: none;

@@ -169,7 +169,13 @@
   }
 
   .np-cover.playing {
-    animation: spin 8s linear infinite;
+    animation: motion-spin 8s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .np-cover.playing {
+      animation: none;
+    }
   }
 
   .np-cover-placeholder {
@@ -211,14 +217,5 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
   }
 </style>

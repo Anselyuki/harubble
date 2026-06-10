@@ -37,6 +37,7 @@
       };
       handleSelectAlbum: (album: Album) => void | Promise<void>;
       handlePlay: (song: SongEntry) => void | Promise<void>;
+      prefersReducedMotion: boolean;
     };
   }
 
@@ -56,12 +57,14 @@
     <HomeLatestAlbums
       albums={runtime.homeController.latestAlbums}
       loading={runtime.homeController.loading}
+      reducedMotion={runtime.prefersReducedMotion}
       onSelect={runtime.handleSelectAlbum}
     />
 
     <HomeSeriesGroups
       groups={runtime.homeController.seriesGroups}
       belongReady={runtime.homeController.belongReady}
+      reducedMotion={runtime.prefersReducedMotion}
       onSelectSeries={() => {}}
     />
 

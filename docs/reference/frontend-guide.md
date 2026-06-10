@@ -186,8 +186,8 @@ CSS 变量：
 
 ### 动效规则
 
-- 所有动画统一通过 GSAP 控制，适配层位于 `src/lib/design/gsap.ts`
-- **禁止**使用 CSS transition / animation、Svelte transition / animate、Web Animations API 等替代方案
+- 状态驱动的动画（入场 / 出场、位移、尺寸、布局、FLIP）统一通过 GSAP 控制，适配层位于 `src/lib/design/gsap.ts`
+- 除下方「受控例外」小节列出的两类场景，**禁止**使用 CSS transition / animation、Svelte transition / animate、Web Animations API 等替代方案
 - 缓动曲线统一使用 iOS 风格 CustomEase（已在 `gsap.ts` 注册）：
 
 | 曲线         | 参数                   | 用途               |
@@ -201,6 +201,19 @@ CSS 变量：
 - 不使用 GSAP 内置的 `power2.out` / `power3.out` 等曲线
 - `reduced motion` 开启时按 `getMotionDuration` 降级
 - 通用 helper：`animateIn` / `animateOut` / `gsapScrollIntoView` / `killTweens`
+
+#### 受控例外
+
+仅以下两类场景允许使用 CSS 动画能力，且必须满足对应约束：
+
+1. **无限循环的 loading / 装饰动画**（spinner、骨架屏 pulse、不确定进度条、marquee）允许 CSS keyframes：
+   - 优先复用 Motion 原语（`MotionSpinner` / `MotionPulseBlock`）或 `app.css` 中的全局 keyframes（`motion-spin` / `motion-progress-slide`），不要在组件内复制同类 keyframes
+   - 缓动使用 `var(--ease-ios)`；匀速旋转 / 匀速位移可用 `linear`
+   - 必须提供 reduced-motion 降级：Motion 原语走 `reducedMotion` prop，直接写 keyframes 的场景用 `prefers-reduced-motion` media query 关闭动画
+2. **hover / active 等纯状态颜色反馈**允许 CSS transition，统一写 `transition: var(--motion-hover)`：
+   - 该 token 仅覆盖 background-color / color / border-color / opacity / box-shadow；位移、尺寸、布局变化仍必须走 GSAP
+   - 时长与曲线由 token 统一（`--motion-fast` + `--ease-ios`），不要自行写 `transition: all …` 或自定义时长 / 曲线
+   - reduced-motion 下该 token 全局置为 `none`，组件无需单独处理
 
 ### 组件分层
 

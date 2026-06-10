@@ -3,6 +3,7 @@
   import { localeState } from '$lib/i18n';
   import { gsap, getMotionDuration } from '$lib/design/gsap';
   import AlbumCard from '$lib/components/AlbumCard.svelte';
+  import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
   import type { Album } from '$lib/types';
 
   interface Props {
@@ -52,7 +53,7 @@
     <h2 class="section-title">{labels.title}</h2>
     <div class="loading-grid">
       {#each Array(8) as _, i (i)}
-        <div class="skeleton-card"></div>
+        <MotionPulseBlock className="skeleton-card" {reducedMotion} />
       {/each}
     </div>
   </section>
@@ -102,25 +103,9 @@
     gap: 18px;
   }
 
-  .skeleton-card {
+  .loading-grid :global(.skeleton-card) {
     aspect-ratio: 1;
     border-radius: 12px;
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.15) 25%,
-      rgba(255, 255, 255, 0.3) 50%,
-      rgba(255, 255, 255, 0.15) 75%
-    );
-    background-size: 200% 100%;
-    animation: skeleton-shimmer 1.6s ease-in-out infinite;
-  }
-
-  @keyframes skeleton-shimmer {
-    0% {
-      background-position: 200% 0;
-    }
-    100% {
-      background-position: -200% 0;
-    }
+    background: var(--surface-secondary, rgba(255, 255, 255, 0.18));
   }
 </style>
