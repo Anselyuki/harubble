@@ -28,10 +28,20 @@ let downloadTasksSheetLoader =
 let currentView = $state<AppView>('home');
 
 const SIDEBAR_COLLAPSED_KEY = 'harubble:sidebar-collapsed';
+const SIDEBAR_WIDTH_KEY = 'harubble:sidebar-width';
+const DEFAULT_SIDEBAR_WIDTH = 248;
 
 let sidebarCollapsed = $state(
   typeof window !== 'undefined' &&
     localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
+);
+
+let sidebarWidth = $state(
+  typeof window !== 'undefined'
+    ? Number.parseFloat(
+        localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? String(DEFAULT_SIDEBAR_WIDTH)
+      ) || DEFAULT_SIDEBAR_WIDTH
+    : DEFAULT_SIDEBAR_WIDTH
 );
 
 let sideSheetRequestSeq = 0;
@@ -47,6 +57,7 @@ function dispose() {
   downloadPanelOpen = false;
   currentView = 'home';
   sidebarCollapsed = false;
+  sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
   sideSheetRequestSeq = 0;
   initialized = false;
 }
@@ -206,6 +217,15 @@ export const shellStore = {
     sidebarCollapsed = !sidebarCollapsed;
     if (typeof window !== 'undefined') {
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
+    }
+  },
+  get sidebarWidth() {
+    return sidebarWidth;
+  },
+  set sidebarWidth(value: number) {
+    sidebarWidth = value;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(value));
     }
   },
   navigateToHome() {

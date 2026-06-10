@@ -271,15 +271,25 @@ export function createAlbumStageMotionController(deps: AlbumStageMotionDeps) {
 
     if (typeof ResizeObserver === 'undefined') return;
 
+    let rafId = 0;
     const observer = new ResizeObserver((entries) => {
       const newWidth = entries[0].contentRect.width;
       if (newWidth === albumStageWidth) return;
-      albumStageWidth = newWidth;
+      // 延迟到下一帧再写回，避免回调内同步改动布局触发
+      // "ResizeObserver loop completed with undelivered notifications" 警告
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        albumStageWidth = newWidth;
+      });
     });
 
     observer.observe(albumStageElement);
 
-    return () => observer.disconnect();
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
   });
 
   function dispose() {

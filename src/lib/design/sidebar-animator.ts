@@ -447,10 +447,18 @@ interface TimelineLike {
   progress(): number;
   eventCallback(name: 'onComplete'): (() => void) | undefined;
   eventCallback(name: 'onComplete', callback: () => void): unknown;
+  eventCallback(name: 'onInterrupt'): (() => void) | undefined;
+  eventCallback(name: 'onInterrupt', callback: () => void): unknown;
 }
 
 type AwaitableTimeline = Omit<gsap.core.Timeline, 'then'> | TimelineLike;
 
+/**
+ * 将 timeline 的完成（或中断）事件包装为 Promise。
+ *
+ * timeline 自然完成或被 kill 时均会 resolve，避免 Promise 悬挂导致的内存泄漏。
+ * 调用侧应配合 `isStale(id)` 判断动画是否仍有效。
+ */
 export function chainTimelineComplete(tl: AwaitableTimeline): Promise<void> {
   return new Promise<void>((resolve) => {
     if (tl.totalDuration() === 0 || tl.progress() >= 1) {
@@ -462,6 +470,12 @@ export function chainTimelineComplete(tl: AwaitableTimeline): Promise<void> {
       existingOnComplete?.();
       resolve();
     });
+    // timeline 被 kill() 时触发 onInterrupt，防止 Promise 永不 resolve
+    const existingOnInterrupt = tl.eventCallback('onInterrupt');
+    tl.eventCallback('onInterrupt', () => {
+      existingOnInterrupt?.();
+      resolve();
+    });
   });
 }
 
@@ -471,6 +485,8 @@ export function createSidebarAnimator(
   let currentAnimationId = 0;
   let currentTimeline: gsap.core.Timeline | null = null;
   let heightTween: gsap.core.Tween | null = null;
+  /** flipPhase 中与 currentTimeline 独立的辅助 tween，需在中断时统一清理 */
+  let auxiliaryTweens: gsap.core.Tween[] = [];
   let lastCommittedCollapsed = config.initialCollapsed;
 
   const logoGlyphEls = config.logoCharEls.map(resolveLogoGlyphEl);
@@ -503,6 +519,8 @@ export function createSidebarAnimator(
     currentTimeline = null;
     heightTween?.kill();
     heightTween = null;
+    auxiliaryTweens.forEach((t) => t.kill());
+    auxiliaryTweens = [];
     normalizeToCommittedState();
     return currentAnimationId;
   }
@@ -599,11 +617,12 @@ export function createSidebarAnimator(
     });
 
     // slab 高度与 logo 容器同步动画（显式 GSAP 驱动）
-    gsap.to(config.logoSlabEl, {
+    const slabHeightTween = gsap.to(config.logoSlabEl, {
       height: getSlabTargetHeight(config.logoSlabEl, targetHeight),
       duration: params.moveDur + totalStagger,
       ease: 'ios-spring',
     });
+    auxiliaryTweens.push(slabHeightTween);
 
     // 展开方向：slab 宽度随字母散开同步展开至两行布局的真实宽度，
     // 与 FLIP 时间线同时结束，避免 FLIP 结束时骤然展开。
@@ -614,7 +633,7 @@ export function createSidebarAnimator(
             config.logoSlabEl.style.getPropertyValue('--slab-width')
           ) || config.logoSlabEl.offsetWidth,
       };
-      gsap.to(slabWidthFrame, {
+      const slabWidthTween = gsap.to(slabWidthFrame, {
         width: targetLogoWidth,
         duration: params.moveDur + totalStagger,
         ease: 'ios-spring',
@@ -625,6 +644,7 @@ export function createSidebarAnimator(
           );
         },
       });
+      auxiliaryTweens.push(slabWidthTween);
     }
 
     const sortedEls = [...els].sort((a, b) => {
@@ -724,6 +744,8 @@ export function createSidebarAnimator(
     currentTimeline = null;
     heightTween?.kill();
     heightTween = null;
+    auxiliaryTweens.forEach((t) => t.kill());
+    auxiliaryTweens = [];
     normalizeToCommittedState();
   }
 
@@ -733,20 +755,9 @@ export function createSidebarAnimator(
     currentTimeline = null;
     heightTween?.kill();
     heightTween = null;
-    const allEls = [
-      config.shellEl,
-      config.sidebarEl,
-      config.logoContainerEl,
-      config.logoSlabEl,
-      config.navRegionEl,
-      config.collectionsRegionEl,
-      config.collectionsCollapsedEl,
-      config.bottomLabelEl,
-      ...collectSidebarAnimatorLabelEls(config),
-      ...config.logoCharEls,
-      ...logoGlyphEls,
-    ];
-    allEls.forEach((el) => gsap.set(el, { clearProps: 'all' }));
+    auxiliaryTweens.forEach((t) => t.kill());
+    auxiliaryTweens = [];
+    normalizeToCommittedState();
   }
 
   function syncCollapsedState(collapsed: boolean) {
@@ -755,6 +766,8 @@ export function createSidebarAnimator(
     currentTimeline = null;
     heightTween?.kill();
     heightTween = null;
+    auxiliaryTweens.forEach((t) => t.kill());
+    auxiliaryTweens = [];
     lastCommittedCollapsed = collapsed;
     syncToState(config, collapsed);
     cleanupTransientStyles(config, collapsed ? 'collapsed' : 'expanded');

@@ -212,19 +212,29 @@
   });
 
   $effect(() => {
+    let rafId = 0;
     const observer = new ResizeObserver(() => {
-      if (titleRef) {
-        titleOverflows = titleRef.scrollWidth > titleRef.clientWidth;
-      }
-      if (artistRef) {
-        artistOverflows = artistRef.scrollWidth > artistRef.clientWidth;
-      }
+      // 延迟到下一帧再写回，避免回调内同步改动布局触发
+      // "ResizeObserver loop completed with undelivered notifications" 警告
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        if (titleRef) {
+          titleOverflows = titleRef.scrollWidth > titleRef.clientWidth;
+        }
+        if (artistRef) {
+          artistOverflows = artistRef.scrollWidth > artistRef.clientWidth;
+        }
+      });
     });
 
     if (titleRef) observer.observe(titleRef);
     if (artistRef) observer.observe(artistRef);
 
-    return () => observer.disconnect();
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
   });
 
   function handleSeekInput(event: Event) {

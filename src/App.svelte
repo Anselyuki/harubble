@@ -42,7 +42,7 @@
   let isDragging = $state(false);
 
   const COLLAPSED_WIDTH = 56;
-  const EXPANDED_WIDTH = 248;
+  const MAX_SIDEBAR_WIDTH = 248;
   const COLLAPSE_THRESHOLD = 120;
 
   function handleCharsReady(els: HTMLSpanElement[]) {
@@ -76,7 +76,7 @@
       // 初始化 sidebar 宽度（animator 不再控制）
       const initWidth = runtime.sidebarCollapsed
         ? COLLAPSED_WIDTH
-        : EXPANDED_WIDTH;
+        : runtime.shellStore.sidebarWidth;
       shellEl.style.setProperty('--sidebar-width', `${initWidth}px`);
 
       animator = createSidebarAnimator({
@@ -110,7 +110,9 @@
     prevCollapsed = curr;
 
     // 同步 sidebar 宽度（animator 不再控制）
-    const targetWidth = curr ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
+    const targetWidth = curr
+      ? COLLAPSED_WIDTH
+      : runtime.shellStore.sidebarWidth;
     animateSnapToWidth(shellEl!, targetWidth);
 
     if (curr) {
@@ -137,7 +139,7 @@
         shellEl,
         handleEl: resizeHandleEl,
         collapsedWidth: COLLAPSED_WIDTH,
-        expandedWidth: EXPANDED_WIDTH,
+        expandedWidth: MAX_SIDEBAR_WIDTH,
         threshold: COLLAPSE_THRESHOLD,
         getCollapsed: () => runtime.sidebarCollapsed,
         onWidthChange: (width) => {
@@ -148,17 +150,25 @@
         onCrossThreshold: () => {
           // 拖曳期间不切换内容布局
         },
-        onDragEnd: (_finalWidth, shouldCollapse) => {
+        onDragEnd: (finalWidth, shouldCollapse) => {
           isDragging = false;
           const wasCollapsed = runtime.sidebarCollapsed;
 
           if (shouldCollapse !== wasCollapsed) {
-            // 跨阈值——触发 sidebar 吸附 + Logo/Slab 动画（通过 $effect）
+            // 跨阈值——切换折叠态
+            if (!shouldCollapse) {
+              // 折叠 → 展开：以释放位置作为新的展开宽度并持久化，
+              // 否则 $effect 会吸附回记忆中的展开宽度，丢失拖曳位置
+              runtime.shellStore.sidebarWidth = finalWidth;
+            }
+            // 触发 sidebar 吸附 + Logo/Slab 动画（通过 $effect）
             runtime.shellStore.sidebarCollapsed = shouldCollapse;
+          } else if (wasCollapsed) {
+            // 折叠态未跨阈值——弹回折叠宽度
+            animateSnapToWidth(shellEl!, COLLAPSED_WIDTH);
           } else {
-            // 未跨阈值——仅吸附回稳定态宽度
-            const snapTarget = wasCollapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
-            animateSnapToWidth(shellEl!, snapTarget);
+            // 展开态未跨阈值——保留当前宽度并持久化
+            runtime.shellStore.sidebarWidth = finalWidth;
           }
         },
       });

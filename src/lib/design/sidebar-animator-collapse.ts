@@ -64,6 +64,13 @@ function measureCollapsedTargets(
     el.style.transform = '';
   });
 
+  // 清除克隆内 brand-char 的所有 inline 样式——
+  // FLIP absolute 模式可能注入 position/top/left/width/height 等属性，
+  // 若中断后立即折叠，克隆体会继承这些瞬态样式导致测量偏差。
+  clone.querySelectorAll<HTMLElement>('.brand-char').forEach((el) => {
+    el.removeAttribute('style');
+  });
+
   measurementSidebar.appendChild(clone);
   sidebarEl.parentElement!.appendChild(measurementSidebar);
 
