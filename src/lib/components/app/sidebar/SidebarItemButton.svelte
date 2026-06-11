@@ -11,9 +11,7 @@
     active?: boolean;
     hiddenLabel?: boolean;
     title?: string;
-    ariaCurrent?: 'page';
-    role?: string;
-    ariaSelected?: boolean;
+    ariaCurrent?: 'page' | 'true';
     ariaExpanded?: boolean;
     disabled?: boolean;
     expandOnCollapsedClick?: boolean;
@@ -32,8 +30,6 @@
     hiddenLabel = collapsed,
     title,
     ariaCurrent,
-    role,
-    ariaSelected,
     ariaExpanded,
     disabled = false,
     expandOnCollapsedClick = false,
@@ -43,7 +39,7 @@
     children,
   }: Props = $props();
 
-  const roleValue = $derived(element === 'button' ? role : (role ?? 'button'));
+  const roleValue = $derived(element === 'button' ? undefined : 'button');
   const tabIndex = $derived(element === 'button' || disabled ? undefined : 0);
 
   function handleClick() {
@@ -80,7 +76,6 @@
   role={roleValue}
   tabindex={tabIndex}
   aria-current={ariaCurrent}
-  aria-selected={ariaSelected}
   aria-expanded={ariaExpanded}
   aria-disabled={disabled || undefined}
   title={collapsed ? (title ?? label) : title}
@@ -175,11 +170,5 @@
     display: flex;
     align-items: center;
     gap: 2px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .sidebar-item-label {
-      transition: none;
-    }
   }
 </style>

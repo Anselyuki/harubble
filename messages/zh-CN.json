@@ -341,6 +341,7 @@
   "search_results_placeholder_hint": "正在开发中，敬请期待",
   "shell_nav_tags": "标签",
   "shell_nav_collections": "合集",
+  "shell_nav_aria_main": "主导航",
   "sidebar_search_placeholder": "搜索...",
   "sidebar_collections_title": "合集",
   "sidebar_collections_import": "导入合集",

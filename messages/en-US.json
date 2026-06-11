@@ -341,6 +341,7 @@
   "search_results_placeholder_hint": "This feature is under development",
   "shell_nav_tags": "Tags",
   "shell_nav_collections": "Collections",
+  "shell_nav_aria_main": "Main navigation",
   "sidebar_search_placeholder": "Search...",
   "sidebar_collections_title": "Collections",
   "sidebar_collections_import": "Import collection",

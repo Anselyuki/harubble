@@ -274,7 +274,6 @@
       }}
       collections={runtime.collectionController.collections}
       selectedCollectionId={runtime.collectionController.selectedCollectionId}
-      isCollectionsLoading={runtime.collectionController.isLoading}
       onSelectCollection={(id) => runtime.openCollection(id)}
       onCreateCollection={runtime.collectionController.openCreateDialog}
       onRequestExpand={runtime.toggleSidebar}

@@ -18,10 +18,8 @@
     onNavigate: (view: AppView) => void;
     collections: CollectionSummary[];
     selectedCollectionId: string | null;
-    isCollectionsLoading: boolean;
     onSelectCollection: (id: string) => void;
     onCreateCollection: () => void;
-    onPlayCollection?: (id: string) => void;
     onRequestExpand?: () => void;
     contentCollapsed: boolean;
     contentInteractive: boolean;
@@ -38,10 +36,8 @@
     onNavigate,
     collections,
     selectedCollectionId,
-    isCollectionsLoading: _isCollectionsLoading,
     onSelectCollection,
     onCreateCollection,
-    onPlayCollection: _onPlayCollection,
     onRequestExpand,
     contentCollapsed,
     contentInteractive,
@@ -113,7 +109,6 @@
       collapsed={true}
       expandOnCollapsedClick
       {onRequestExpand}
-      onclick={onCreateCollection}
     />
   </div>
 
@@ -128,16 +123,19 @@
       icon={StarIcon}
       empty={officialCollections.length === 0}
     >
-      <div class="collection-list" role="listbox" aria-label={labels.official}>
+      <div class="collection-list" role="list" aria-label={labels.official}>
         {#each officialCollections as collection (collection.id)}
-          <SidebarItemButton
-            label={collection.name}
-            collapsed={false}
-            active={selectedCollectionId === collection.id}
-            role="option"
-            ariaSelected={selectedCollectionId === collection.id}
-            onclick={() => onSelectCollection(collection.id)}
-          />
+          <div role="listitem">
+            <SidebarItemButton
+              label={collection.name}
+              collapsed={false}
+              active={selectedCollectionId === collection.id}
+              ariaCurrent={selectedCollectionId === collection.id
+                ? 'true'
+                : undefined}
+              onclick={() => onSelectCollection(collection.id)}
+            />
+          </div>
         {/each}
       </div>
     </CollapsibleGroup>
@@ -158,16 +156,19 @@
           <PlusIcon size={14} />
         </button>
       {/snippet}
-      <div class="collection-list" role="listbox" aria-label={labels.custom}>
+      <div class="collection-list" role="list" aria-label={labels.custom}>
         {#each userCollections as collection (collection.id)}
-          <SidebarItemButton
-            label={collection.name}
-            collapsed={false}
-            active={selectedCollectionId === collection.id}
-            role="option"
-            ariaSelected={selectedCollectionId === collection.id}
-            onclick={() => onSelectCollection(collection.id)}
-          />
+          <div role="listitem">
+            <SidebarItemButton
+              label={collection.name}
+              collapsed={false}
+              active={selectedCollectionId === collection.id}
+              ariaCurrent={selectedCollectionId === collection.id
+                ? 'true'
+                : undefined}
+              onclick={() => onSelectCollection(collection.id)}
+            />
+          </div>
         {/each}
       </div>
     </CollapsibleGroup>

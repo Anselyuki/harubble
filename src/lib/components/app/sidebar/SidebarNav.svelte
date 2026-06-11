@@ -25,6 +25,7 @@
       home: m.shell_nav_home(),
       search: m.shell_nav_search(),
       library: m.shell_nav_library(),
+      ariaMain: m.shell_nav_aria_main(),
     };
   });
 
@@ -55,7 +56,7 @@
   ];
 </script>
 
-<nav class="sidebar-nav" class:collapsed aria-label="Main navigation">
+<nav class="sidebar-nav" class:collapsed aria-label={labels.ariaMain}>
   {#each navItems as item (item.view)}
     <SidebarItemButton
       label={labels[item.labelKey]}
