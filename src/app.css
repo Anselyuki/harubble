@@ -479,7 +479,12 @@ img[data-image-state='error'] {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 10;
+  /* 高于侧栏拖曳把手（z-index: 100），让把手的主题色高亮线绘制在
+     logo / slab 之下；brand-region 本身 pointer-events: none，不影响拖曳命中 */
+  z-index: 110;
+  /* 宽度对齐侧栏，使折叠态 logo 居中偏移（-5px）与 slab 中线吻合；
+     否则浮层会收缩到 slab 宽度，logo 与 slab 左右间距不一致 */
+  width: var(--sidebar-width, 248px);
   display: grid;
   grid-template: 1fr / 1fr;
   pointer-events: none;

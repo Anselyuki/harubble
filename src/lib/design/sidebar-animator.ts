@@ -43,7 +43,7 @@ import {
   reducedMotionQuery,
   awaitPaintReady,
 } from '$lib/design/gsap';
-import { runExpand } from './sidebar-animator-expand';
+import { runExpand, runExpandLogoOnly } from './sidebar-animator-expand';
 import { runCollapse } from './sidebar-animator-collapse';
 
 interface SidebarAnimatorConfig {
@@ -66,6 +66,35 @@ interface SidebarAnimatorConfig {
 export interface SidebarAnimator {
   collapse(): void;
   expand(): void;
+  /**
+   * 仅展开 logo（拖曳松手专用）。
+   *
+   * 用于「拖曳从折叠态拉出」的松手吸附：侧栏宽度与内容布局已在拖曳期间随宽度
+   * 实时切到展开态，这里只补 logo 的折叠竖排 → 展开横排 FLIP，**不**重置内容
+   * 布局（避免内容从展开态闪回折叠态）。
+   */
+  expandLogoOnly(): void;
+  /**
+   * 拖曳期间实时切换侧栏内容布局（仅内容，不动 logo / slab）。
+   *
+   * 用于「拖曳实时展开」：随宽度跨越阈值时即时把导航、收藏区在折叠（图标）与
+   * 展开（带标签）两种布局间切换，并正确处理折叠收藏浮层的内联 opacity/visibility
+   * （否则上一轮动画或清理留下的内联样式会盖过 `.hidden` 类，导致浮层无法隐藏）。
+   * logo 字形旋转、layout 折叠态与 slab 均保持不变，由松手后的 {@link expandLogoOnly}
+   * 单独补完 logo FLIP。
+   */
+  previewContentCollapsed(collapsed: boolean): void;
+  /**
+   * 拖曳调整侧栏宽度时，实时把展开态 slab 右边界跟随侧栏宽度变化。
+   *
+   * 仅在「展开稳定态」下生效（committed 折叠态保持折叠宽度不跟随）：按
+   * {@link measureExpandedSlabWidth} 的跟随插值重算 `--slab-width`，使 slab 右边界
+   * 落在 logo 右缘与侧栏右缘之间，而 logo 本身不动。动画进行中（展开 / 折叠过渡）
+   * 不介入，避免与正在运行的 slab 宽度 tween 抢写。
+   *
+   * @param sidebarWidth 当前侧栏宽度（px）
+   */
+  updateSlabFollow(sidebarWidth: number): void;
   interrupt(): void;
   dispose(): void;
   /** 外部直接同步折叠状态（跳过动画），用于拖曳松手后的吸附场景 */
@@ -115,6 +144,15 @@ const EXPANDED_WIDTH = '248px';
 const COLLAPSED_WIDTH = '56px';
 const EXPANDED_WIDTH_VALUE = Number.parseFloat(EXPANDED_WIDTH);
 const COLLAPSED_WIDTH_VALUE = Number.parseFloat(COLLAPSED_WIDTH);
+/**
+ * 展开（横向）态 slab 右边界在「logo 字母内容块右边缘」与「侧栏右边界」之间的插值比例。
+ *
+ * slab 右边界不再固定贴着 logo 右缘，而是随侧栏宽度变化在 logo 右缘与侧栏右缘
+ * 之间按此比例插值：`slab 宽度 = logoRight + (sidebarWidth - logoRight) * 比例`。
+ * 这样拖曳调整侧栏宽度时 slab 右边界跟随侧栏移动，而 logo 本身保持不动。
+ * 仅作用于展开态，折叠态宽度仍由 `COLLAPSED_WIDTH_VALUE - 10` 决定，不受影响。
+ */
+const SLAB_FOLLOW_RATIO = 0.75;
 const COLLAPSED_COLLECTIONS_OVERLAY_PROPS =
   'opacity,visibility,position,top,left,right,zIndex,height,overflow,padding';
 const LOGO_SLAB_INSETS = {
@@ -219,6 +257,43 @@ export function measureLogoMarkWidth(logoContainerEl: HTMLElement): number {
     : 0;
 
   return Math.max(0, maxRight - containerLeft + markPaddingRight);
+}
+
+/**
+ * 计算展开（横向）态 slab 的目标宽度。
+ *
+ * slab 右边界在「logo 字母内容块右边缘」与「侧栏右边界」之间按
+ * {@link SLAB_FOLLOW_RATIO} 插值：
+ * `slabWidth = logoRight + (sidebarWidth - logoRight) * SLAB_FOLLOW_RATIO`。
+ * 这样侧栏宽度变化（拖曳 / 吸附）时 slab 右边界跟随侧栏移动，而 logo 不动。
+ * 当 `sidebarWidth` 小于 logo 右缘时退化为贴紧 logo 右缘（不会出现负向收缩）。
+ *
+ * 所有展开方向写入 `--slab-width` 的位置都应走此函数，保持静态同步、动画终点与
+ * 中断恢复三处取值一致。
+ *
+ * @param logoContainerEl logo 容器元素，用于测量字母内容块右边缘
+ * @param sidebarWidth 当前侧栏宽度（px），缺省时回退到展开态宽度 {@link EXPANDED_WIDTH_VALUE}
+ */
+export function measureExpandedSlabWidth(
+  logoContainerEl: HTMLElement,
+  sidebarWidth: number = EXPANDED_WIDTH_VALUE
+): number {
+  const logoRight = measureLogoMarkWidth(logoContainerEl);
+  const available = Math.max(0, sidebarWidth - logoRight);
+  return logoRight + available * SLAB_FOLLOW_RATIO;
+}
+
+/**
+ * 读取壳层当前的侧栏宽度（`--sidebar-width` CSS 变量）。
+ *
+ * 拖曳 / 吸附期间侧栏宽度由外部实时写入 `--sidebar-width`，slab 跟随计算需要
+ * 取这个实时值而非展开态常量。读取失败（变量缺失或非法）时回退到展开态宽度，
+ * 保证 {@link measureExpandedSlabWidth} 始终拿到合理的基准。
+ */
+function readSidebarWidth(shellEl: HTMLElement): number {
+  const raw = shellEl.style.getPropertyValue('--sidebar-width');
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : EXPANDED_WIDTH_VALUE;
 }
 
 export function setLogoSlabInsets(
@@ -370,7 +445,10 @@ function syncToState(
   } else {
     config.logoSlabEl.style.setProperty(
       '--slab-width',
-      `${measureLogoMarkWidth(config.logoContainerEl)}px`
+      `${measureExpandedSlabWidth(
+        config.logoContainerEl,
+        readSidebarWidth(config.shellEl)
+      )}px`
     );
   }
 
@@ -411,7 +489,10 @@ function cleanupTransientStyles(
   if (target === 'expanded') {
     config.logoSlabEl.style.setProperty(
       '--slab-width',
-      `${measureLogoMarkWidth(config.logoContainerEl)}px`
+      `${measureExpandedSlabWidth(
+        config.logoContainerEl,
+        readSidebarWidth(config.shellEl)
+      )}px`
     );
   } else {
     const slabWidth = COLLAPSED_WIDTH_VALUE - 10;
@@ -601,8 +682,11 @@ export function createSidebarAnimator(
     clone.style.pointerEvents = 'none';
     config.logoContainerEl.parentElement!.appendChild(clone);
     const targetHeight = clone.offsetHeight;
-    // 测量目标布局下字母内容块的真实右边界宽度（展开方向用于 slab 宽度终点）
-    const targetLogoWidth = measureLogoMarkWidth(clone);
+    // 测量目标布局下字母内容块的真实右边界宽度（展开方向用于 slab 宽度终点），
+    // 展开方向按当前侧栏宽度走跟随插值，与静态同步、中断恢复保持一致。
+    const targetLogoWidth = toCollapsed
+      ? measureLogoMarkWidth(clone)
+      : measureExpandedSlabWidth(clone, readSidebarWidth(config.shellEl));
     clone.remove();
 
     const totalStagger = params.flipStagger * (els.length - 1);
@@ -738,6 +822,63 @@ export function createSidebarAnimator(
     });
   }
 
+  /**
+   * 仅展开 logo（拖曳松手专用）——见 {@link SidebarAnimator.expandLogoOnly}。
+   *
+   * 与 {@link expand} 不同，这里不调用 `startNewAnimation()`（它会
+   * `normalizeToCommittedState()` 把内容布局重置回折叠态，造成拖曳期间已展开的内容
+   * 闪回）。改为手动作废上一动画并清理动画瞬态 tween，但保留当前的内容布局状态。
+   */
+  function expandLogoOnly() {
+    currentAnimationId++;
+    const id = currentAnimationId;
+    currentTimeline?.kill();
+    currentTimeline = null;
+    heightTween?.kill();
+    heightTween = null;
+    auxiliaryTweens.forEach((t) => t.kill());
+    auxiliaryTweens = [];
+    if (!lastCommittedCollapsed) return;
+    runExpandLogoOnly(id, buildContext()).catch(() => {
+      if (!isStale(id)) {
+        lastCommittedCollapsed = false;
+        syncToState(config, false);
+        cleanupTransientStyles(config, 'expanded');
+      }
+    });
+  }
+
+  function previewContentCollapsed(collapsed: boolean) {
+    if (collapsed) {
+      // 切回折叠（图标）布局：恢复折叠收藏浮层可见，隐藏展开收藏区由 CSS .hidden 接管
+      gsap.set(config.collectionsCollapsedEl, {
+        clearProps: COLLAPSED_COLLECTIONS_OVERLAY_PROPS,
+      });
+      gsap.set(config.collectionsCollapsedEl, {
+        opacity: 1,
+        visibility: 'visible',
+      });
+    } else {
+      // 切到展开（带标签）布局：隐藏折叠收藏浮层，清掉标签的折叠态内联 maxWidth/opacity
+      gsap.set(config.collectionsCollapsedEl, {
+        opacity: 0,
+        visibility: 'hidden',
+      });
+      const labelEls = collectSidebarAnimatorLabelEls(config);
+      gsap.set(labelEls, { clearProps: 'maxWidth,opacity' });
+    }
+    config.onContentSwitch(collapsed);
+  }
+
+  function updateSlabFollow(sidebarWidth: number) {
+    // 仅展开稳定态跟随：折叠态保持折叠宽度，动画进行中交给运行中的 tween 处理
+    if (lastCommittedCollapsed || currentTimeline) return;
+    config.logoSlabEl.style.setProperty(
+      '--slab-width',
+      `${measureExpandedSlabWidth(config.logoContainerEl, sidebarWidth)}px`
+    );
+  }
+
   function interrupt() {
     currentAnimationId++;
     currentTimeline?.kill();
@@ -775,5 +916,14 @@ export function createSidebarAnimator(
     cachedLogoHeight[key] = config.logoContainerEl.offsetHeight;
   }
 
-  return { collapse, expand, interrupt, dispose, syncCollapsedState };
+  return {
+    collapse,
+    expand,
+    expandLogoOnly,
+    previewContentCollapsed,
+    updateSlabFollow,
+    interrupt,
+    dispose,
+    syncCollapsedState,
+  };
 }

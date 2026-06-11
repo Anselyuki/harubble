@@ -133,3 +133,70 @@ export async function runExpand(id: number, ctx: AnimatorContext) {
   config.onContentInteractive(true);
   ctx.commitState(false);
 }
+
+/**
+ * 仅 logo 的展开动画——用于拖曳松手后的展开吸附。
+ *
+ * 与 {@link runExpand} 不同，本函数假定侧栏内容（导航、收藏、标签）已在拖曳期间
+ * 随宽度实时切换并定位到展开态，宽度也已停在松手位置，因此这里**只**把 logo
+ * 从折叠竖排 FLIP 到展开横排：
+ *
+ *  - 不再驱动侧栏宽度帧、不再做标签 maxWidth/opacity 揭示
+ *  - 不触发内容布局切换（`onContentSwitch`），避免内容从展开态闪回折叠态
+ *
+ * 前置条件：logo 处于折叠静止态（字形旋转 -90°、折叠布局、slab 折叠宽度），
+ * 这正是拖曳期间未触碰 logo 时的状态。
+ */
+export async function runExpandLogoOnly(id: number, ctx: AnimatorContext) {
+  const { config, logoGlyphEls, params, isStale, setTimeline } = ctx;
+
+  config.onContentInteractive(false);
+
+  await ctx.awaitReady();
+  if (isStale(id)) return;
+
+  // 旋转期间锁定字形几何中心，避免 -90°→0° 改变包围盒导致字形漂移
+  const lockedGlyphRects = logoGlyphEls.map((el) => el.getBoundingClientRect());
+  const lockLogoGlyphCenters = () => {
+    logoGlyphEls.forEach((glyphEl, index) => {
+      const currentTransform = {
+        x: Number(gsap.getProperty(glyphEl, 'x')) || 0,
+        y: Number(gsap.getProperty(glyphEl, 'y')) || 0,
+      };
+      const nextTransform = getCenterLockTransform(
+        lockedGlyphRects[index],
+        glyphEl.getBoundingClientRect(),
+        currentTransform
+      );
+      gsap.set(glyphEl, nextTransform);
+    });
+  };
+
+  // Phase 1：字形原地旋转回正（仍处折叠竖排布局）
+  const phase1 = gsap.timeline();
+  setTimeline(phase1);
+  phase1.to(
+    logoGlyphEls,
+    {
+      rotation: 0,
+      duration: params.rotateDur,
+      stagger: params.stagger,
+      ease: 'ios-spring',
+      onUpdate: lockLogoGlyphCenters,
+    },
+    0
+  );
+
+  await chainTimelineComplete(phase1);
+  if (isStale(id)) return;
+
+  // Phase 2：FLIP 堆栈弹出（含 slab 宽/高同步），与 runExpand 共用同一实现
+  const flipResult = await ctx.flipPhase(id, false);
+  if (!flipResult || isStale(id)) return;
+
+  await chainTimelineComplete(flipResult);
+  if (isStale(id)) return;
+
+  config.onContentInteractive(true);
+  ctx.commitState(false);
+}

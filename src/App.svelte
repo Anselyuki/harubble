@@ -35,6 +35,7 @@
   let bottomLabelEl: HTMLSpanElement | null = $state(null);
   let logoContainerEl: HTMLDivElement | null = $state(null);
   let logoSlabEl: HTMLElement | null = $state(null);
+  let brandRegionEl: HTMLElement | null = $state(null);
 
   let contentCollapsed = $state(runtime.sidebarCollapsed);
   let contentInteractive = $state(!runtime.sidebarCollapsed);
@@ -146,9 +147,18 @@
           isDragging = true;
           // 拖曳期间实时更新 sidebar 宽度（brand-region 独立不受影响）
           shellEl!.style.setProperty('--sidebar-width', `${width}px`);
+          // 展开稳定态下让 slab 右边界跟随侧栏宽度（logo 保持不动）；
+          // 折叠态拖出时 animator 内部会自行跳过，slab 维持折叠宽度。
+          animator?.updateSlabFollow(width);
         },
-        onCrossThreshold: () => {
-          // 拖曳期间不切换内容布局
+        onCrossThreshold: (collapsed) => {
+          // 仅在「从折叠态向外拖出」时实时切换内容布局：
+          // 此时 committed 的 sidebarCollapsed 仍为 true，直到松手才提交。
+          // 让导航 / 收藏区随宽度跨越阈值即时在图标态 / 带标签态之间切换，
+          // logo 与 slab 保持折叠态不动，松手后由 expandLogoOnly 补完 logo FLIP。
+          if (runtime.sidebarCollapsed) {
+            animator?.previewContentCollapsed(collapsed);
+          }
         },
         onDragEnd: (finalWidth, shouldCollapse) => {
           isDragging = false;
@@ -157,14 +167,21 @@
           if (shouldCollapse !== wasCollapsed) {
             // 跨阈值——切换折叠态
             if (!shouldCollapse) {
-              // 折叠 → 展开：以释放位置作为新的展开宽度并持久化，
-              // 否则 $effect 会吸附回记忆中的展开宽度，丢失拖曳位置
+              // 折叠 → 展开：内容已在拖曳期间实时展开，这里只补 logo 的
+              // 竖排 → 横排 FLIP，并以释放位置作为新的展开宽度持久化。
+              // 抢先把 prevCollapsed 同步为目标值，抑制共享 $effect 再次跑
+              // 完整 expand()（那会把已展开的内容重置回折叠态再重放）。
               runtime.shellStore.sidebarWidth = finalWidth;
+              prevCollapsed = false;
+              runtime.shellStore.sidebarCollapsed = false;
+              animator?.expandLogoOnly();
+            } else {
+              // 展开 → 折叠：内容在拖曳期间保持展开，交由共享 $effect 跑完整 collapse()
+              runtime.shellStore.sidebarCollapsed = true;
             }
-            // 触发 sidebar 吸附 + Logo/Slab 动画（通过 $effect）
-            runtime.shellStore.sidebarCollapsed = shouldCollapse;
           } else if (wasCollapsed) {
-            // 折叠态未跨阈值——弹回折叠宽度
+            // 折叠态未跨阈值——内容回到折叠布局并弹回折叠宽度
+            animator?.previewContentCollapsed(true);
             animateSnapToWidth(shellEl!, COLLAPSED_WIDTH);
           } else {
             // 展开态未跨阈值——保留当前宽度并持久化
@@ -173,6 +190,50 @@
         },
       });
     }
+  });
+  /* eslint-enable @typescript-eslint/no-unnecessary-condition */
+
+  /**
+   * 同步品牌浮层（logo + slab）的实际高度到 --brand-region-height。
+   *
+   * .brand-region 是 position:absolute 浮层，不参与侧栏 flex 流，
+   * 由 .sidebar-brand-spacer 用该变量预留等高安全区把导航推到浮层下方。
+   * 折叠态下字母竖排会显著增高，必须实时跟随，否则 spacer 停在 80px
+   * 兜底值，logo/slab 会直接覆盖在导航之上。
+   */
+  /* eslint-disable @typescript-eslint/no-unnecessary-condition -- $state(null) refs are populated by bind:this at runtime */
+  $effect(() => {
+    if (!shellEl || !brandRegionEl) return;
+    const shell = shellEl;
+    const region = brandRegionEl;
+
+    const syncHeight = () => {
+      shell.style.setProperty(
+        '--brand-region-height',
+        `${region.offsetHeight}px`
+      );
+    };
+
+    syncHeight();
+
+    if (typeof ResizeObserver === 'undefined') return;
+
+    let rafId = 0;
+    const observer = new ResizeObserver(() => {
+      // 延迟到下一帧再写回，避免回调内同步改动布局触发
+      // "ResizeObserver loop completed with undelivered notifications" 警告
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        syncHeight();
+      });
+    });
+    observer.observe(region);
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
   });
   /* eslint-enable @typescript-eslint/no-unnecessary-condition */
 </script>
@@ -193,7 +254,7 @@
     class:macos-overlay={runtime.isMacOS}
     bind:this={shellEl}
   >
-    <div class="brand-region" aria-hidden="true">
+    <div class="brand-region" aria-hidden="true" bind:this={brandRegionEl}>
       <BrandSlab bind:slabEl={logoSlabEl} />
       <BrandLogo
         isMacOS={runtime.isMacOS}

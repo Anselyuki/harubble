@@ -100,6 +100,13 @@
       var(--brand-logo-collapsed-slab-right) * -0.5
     );
 
+    /* 折叠态把 logo 固定在折叠宽度（56px）的左侧足迹内居中，使其位置
+       不随 brand-region 宽度（= --sidebar-width）变化。否则拖曳展开时
+       brand-region 变宽，居中参考随之右移，竖向 logo 会跟着侧栏漂移，
+       而左锚定的 slab 不动，二者错位。固定足迹后未触发 FLIP 时 logo 不动。 */
+    width: var(--brand-collapsed-width, 56px);
+    justify-self: start;
+
     align-items: center;
     padding: 20px 0 12px;
     padding-top: calc(20px + var(--safe-area-top));
