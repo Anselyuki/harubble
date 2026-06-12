@@ -5,7 +5,12 @@
   import LyricsBubble from '$lib/components/app/player/LyricsBubble.svelte';
   import VolumeCapsule from '$lib/components/app/player/VolumeCapsule.svelte';
   import type { LyricLine } from '$lib/features/player/lyrics';
-  import { gsap, getMotionDuration, killTweens } from '$lib/design/gsap';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
   type RepeatMode = 'all' | 'one';
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
   interface Song {
@@ -309,7 +314,7 @@
     if (!button) return {};
 
     const applyState = (pressed: boolean, animate: boolean) => {
-      const dur = animate ? getMotionDuration(200) : 0;
+      const dur = animate ? getMotionDuration(MOTION.BASE) : 0;
       if (pressed) {
         killTweens(badge);
         killTweens(mark);
@@ -352,13 +357,13 @@
         x: 0.5,
         scale: 0.82,
         opacity: 0,
-        duration: getMotionDuration(200),
+        duration: getMotionDuration(MOTION.BASE),
         ease: 'ios',
       });
       gsap.to(pauseEl, {
         scale: 1,
         opacity: 1,
-        duration: getMotionDuration(200),
+        duration: getMotionDuration(MOTION.BASE),
         ease: 'ios',
       });
     } else {
@@ -366,13 +371,13 @@
         x: 0.5,
         scale: 1,
         opacity: 1,
-        duration: getMotionDuration(200),
+        duration: getMotionDuration(MOTION.BASE),
         ease: 'ios',
       });
       gsap.to(pauseEl, {
         scale: 0.82,
         opacity: 0,
-        duration: getMotionDuration(200),
+        duration: getMotionDuration(MOTION.BASE),
         ease: 'ios',
       });
     }
@@ -386,7 +391,7 @@
       killTweens(hint);
       gsap.to(hint, {
         opacity: 1,
-        duration: getMotionDuration(150),
+        duration: getMotionDuration(MOTION.FAST),
         ease: 'ios',
       });
     };
@@ -394,7 +399,7 @@
       killTweens(hint);
       gsap.to(hint, {
         opacity: 0,
-        duration: getMotionDuration(150),
+        duration: getMotionDuration(MOTION.FAST),
         ease: 'ios',
       });
     };

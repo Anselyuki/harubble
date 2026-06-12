@@ -1,6 +1,6 @@
 import type { EventListeners, OverlayScrollbars } from 'overlayscrollbars';
 import { clamp } from '$lib/features/library/helpers';
-import { gsap, getMotionDuration } from '$lib/design/gsap';
+import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
 
 interface AlbumStageMotionDeps {
   getReducedMotion: () => boolean;
@@ -107,7 +107,7 @@ export function createAlbumStageMotionController(deps: AlbumStageMotionDeps) {
     if (!contentElement) return;
     gsap.to(contentElement, {
       scrollTo: { y: 0 },
-      duration: getMotionDuration(400),
+      duration: getMotionDuration(MOTION.PAGE),
       ease: 'ios-out',
     });
   }

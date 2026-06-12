@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { animateIn, killTweens } from '$lib/design/gsap';
+  import { killTweens } from '$lib/design/gsap';
+  import { runLayeredIn } from '$lib/design/view-transition';
   import SongRow from '$lib/components/SongRow.svelte';
   import MetadataPopover from '$lib/components/MetadataPopover.svelte';
   import {
@@ -48,34 +49,20 @@
   let heroInfoEl = $state<HTMLElement | undefined>();
   let songListEl = $state<HTMLElement | undefined>();
 
+  // 详情面板分层进入：封面卡片 → Hero 信息 → 歌曲列表，统一节奏与曲线。
   $effect(() => {
     if (!cardEl) return;
-    animateIn(cardEl, { opacity: 0 }, { opacity: 1 }, 220, 'ios-out');
-    return () => killTweens(cardEl!);
-  });
-
-  $effect(() => {
-    if (!heroInfoEl) return;
-    animateIn(
-      heroInfoEl,
-      { opacity: 0, y: 14 },
-      { opacity: 1, y: 0 },
-      220,
-      'ios-spring'
-    );
-    return () => killTweens(heroInfoEl!);
-  });
-
-  $effect(() => {
-    if (!songListEl) return;
-    animateIn(
-      songListEl,
-      { opacity: 0, y: 10 },
-      { opacity: 1, y: 0 },
-      200,
-      'ios-spring'
-    );
-    return () => killTweens(songListEl!);
+    const tl = runLayeredIn([
+      { target: cardEl },
+      { target: heroInfoEl, fromY: 14 },
+      { target: songListEl, fromY: 10 },
+    ]);
+    return () => {
+      tl.kill();
+      killTweens(cardEl!);
+      if (heroInfoEl) killTweens(heroInfoEl);
+      if (songListEl) killTweens(songListEl);
+    };
   });
 
   const selectedSongCount = $derived.by(() => props.selectedSongCids.length);

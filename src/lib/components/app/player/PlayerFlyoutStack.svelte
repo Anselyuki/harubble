@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { animateIn, animateOut, killTweens } from '$lib/design/gsap';
+  import { animateIn, animateOut, killTweens, MOTION } from '$lib/design/gsap';
   import PlayerDock from '$lib/components/app/player/PlayerDock.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
@@ -67,7 +67,7 @@
       wrapperEl,
       { opacity: 0, y: 18 },
       { opacity: 1, y: 0 },
-      220,
+      MOTION.SLOW,
       'ios-spring'
     );
     return () => killTweens(wrapperEl!);
@@ -75,7 +75,7 @@
 
   $effect(() => {
     if (hasSong || !wrapperMounted || !wrapperEl) return;
-    animateOut(wrapperEl, { opacity: 0 }, 220, {
+    animateOut(wrapperEl, { opacity: 0 }, MOTION.SLOW_OUT, {
       onComplete: () => {
         wrapperMounted = false;
       },
@@ -92,7 +92,7 @@
       flyoutEl,
       { opacity: 0, y: 12 },
       { opacity: 1, y: 0 },
-      180,
+      MOTION.BASE,
       'ios-spring'
     );
     return () => killTweens(flyoutEl!);
@@ -100,7 +100,7 @@
 
   $effect(() => {
     if (playlistOpen || !flyoutMounted || !flyoutEl) return;
-    animateOut(flyoutEl, { opacity: 0, y: 8 }, 180, {
+    animateOut(flyoutEl, { opacity: 0, y: 8 }, MOTION.BASE, {
       onComplete: () => {
         flyoutMounted = false;
       },

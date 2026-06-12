@@ -5,7 +5,12 @@
     getDownloadBadgeLabel,
     shouldShowAlbumListDownloadBadge,
   } from '$lib/downloadBadge';
-  import { gsap, getMotionDuration, killTweens } from '$lib/design/gsap';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
 
   interface Props {
     album: Album;
@@ -49,7 +54,7 @@
         boxShadow: isGrid
           ? '0 6px 16px rgba(15, 23, 42, 0.1)'
           : '0 2px 8px rgba(15, 23, 42, 0.05)',
-        duration: getMotionDuration(160),
+        duration: getMotionDuration(MOTION.FAST),
         ease: 'ios-spring',
       });
     };
@@ -64,7 +69,7 @@
       gsap.to(node, {
         y: 0,
         boxShadow: 'none',
-        duration: getMotionDuration(160),
+        duration: getMotionDuration(MOTION.FAST),
         ease: 'ios',
       });
     };
@@ -79,7 +84,7 @@
       gsap.to(node, {
         y: 0,
         scale: 0.99,
-        duration: getMotionDuration(100),
+        duration: getMotionDuration(MOTION.MICRO),
         ease: 'ios-in',
       });
     };
@@ -93,7 +98,7 @@
       killTweens(node);
       gsap.to(node, {
         scale: 1,
-        duration: getMotionDuration(160),
+        duration: getMotionDuration(MOTION.FAST),
         ease: 'ios-spring',
       });
     };

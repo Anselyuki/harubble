@@ -21,6 +21,53 @@ export function getMotionDuration(baseMs: number): number {
   return reducedMotionQuery?.matches ? 0 : baseMs / 1000;
 }
 
+/**
+ * 统一动效时长令牌（毫秒）。
+ *
+ * 作为前端 GSAP 动画时长的单一真相来源，主档位与 `src/app.css` 中的
+ * `--motion-fast / --motion-base / --motion-slow / --motion-page` CSS 变量
+ * 一一对应；新增动画请从这里取值，不要在组件内硬编码毫秒数。
+ *
+ * 进出语义档位：
+ * - `MICRO`：极快微交互（按下回弹、小浮层关闭），快于 `FAST`
+ * - `FAST`：hover / 细粒度状态反馈（对应 `--motion-fast`）
+ * - `BASE`：常规元素进出（对应 `--motion-base`）
+ * - `SLOW`：覆盖层 / 较大元素进出（对应 `--motion-slow`）
+ * - `PAGE`：主视图页面级转场（对应 `--motion-page`）
+ *
+ * 出场普遍略短于入场，以营造“快速让位、从容入场”的 iOS 观感，
+ * 因此常规档位提供独立的 `*_OUT` 值。
+ *
+ * 专用入场档：
+ * - `OVERLAY_IN`：浮层（dialog / select / tooltip / popover）的统一入场时长，
+ *   与浮层出场（`BASE_OUT` / `MICRO`）配对使用，使各类浮层进出节奏一致。
+ *
+ * 注：少数经权衡的有意特例（如音量胶囊收缩的非对称时长）不走令牌，
+ * 在调用点就地以注释说明，不强行并入档位。
+ */
+export const MOTION = {
+  MICRO: 100,
+  FAST: 140,
+  BASE: 180,
+  SLOW: 260,
+  PAGE: 320,
+  BASE_OUT: 150,
+  SLOW_OUT: 200,
+  PAGE_OUT: 280,
+  OVERLAY_IN: 200,
+} as const;
+
+/**
+ * 页面级转场的水平位移量（百分比）。
+ *
+ * 入场视图从屏幕外整屏滑入（`100`），离场视图反向小幅位移（`18`）并淡出，
+ * 形成方向一致、互不遮挡的“推进 / 后退”观感。
+ */
+export const VIEW_SHIFT = {
+  IN: 100,
+  OUT: 18,
+} as const;
+
 export function killTweens(targets: gsap.TweenTarget): void {
   gsap.killTweensOf(targets);
 }
@@ -116,7 +163,7 @@ export function gsapScrollIntoView(
 
   gsap.to(container, {
     scrollTo: { y: scrollTarget },
-    duration: getMotionDuration(300),
+    duration: getMotionDuration(MOTION.PAGE),
     ease: 'ios-out',
   });
 }

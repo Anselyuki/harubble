@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
-  import { animateIn, animateOut, killTweens } from '$lib/design/gsap';
+  import { animateIn, animateOut, killTweens, MOTION } from '$lib/design/gsap';
+  import { runLayeredIn } from '$lib/design/view-transition';
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import type { PartialOptions } from 'overlayscrollbars';
   import SongRow from '$lib/components/SongRow.svelte';
@@ -182,47 +183,39 @@
 
   $effect(() => {
     if (!loadingEl) return;
-    animateIn(loadingEl, { opacity: 0 }, { opacity: 1 }, 200, 'ios-out');
+    animateIn(
+      loadingEl,
+      { opacity: 0 },
+      { opacity: 1 },
+      MOTION.SLOW,
+      'ios-out'
+    );
     return () => killTweens(loadingEl!);
   });
 
+  // 合集详情分层进入：封面卡片 → Hero 信息 → 歌曲列表，统一节奏与曲线。
   $effect(() => {
     if (!cardEl || !hasCollection) return;
-    animateIn(cardEl, { opacity: 0 }, { opacity: 1 }, 220, 'ios-out');
-    return () => killTweens(cardEl!);
+    const tl = runLayeredIn([
+      { target: cardEl },
+      { target: heroInfoEl, fromY: 14 },
+      { target: songListEl, fromY: 10 },
+    ]);
+    return () => {
+      tl.kill();
+      killTweens(cardEl!);
+      if (heroInfoEl) killTweens(heroInfoEl);
+      if (songListEl) killTweens(songListEl);
+    };
   });
 
   $effect(() => {
     if (hasCollection || !cardMounted || !cardEl) return;
-    animateOut(cardEl, { opacity: 0 }, 220, {
+    animateOut(cardEl, { opacity: 0 }, MOTION.SLOW_OUT, {
       onComplete: () => {
         cardMounted = false;
       },
     });
-  });
-
-  $effect(() => {
-    if (!heroInfoEl) return;
-    animateIn(
-      heroInfoEl,
-      { opacity: 0, y: 14 },
-      { opacity: 1, y: 0 },
-      220,
-      'ios-spring'
-    );
-    return () => killTweens(heroInfoEl!);
-  });
-
-  $effect(() => {
-    if (!songListEl) return;
-    animateIn(
-      songListEl,
-      { opacity: 0, y: 10 },
-      { opacity: 1, y: 0 },
-      200,
-      'ios-spring'
-    );
-    return () => killTweens(songListEl!);
   });
 
   function handleDragStart(event: DragEvent, index: number) {

@@ -2,7 +2,12 @@
   import { Dialog as SheetPrimitive } from 'bits-ui';
   import { cn } from '$lib/utils.js';
   import { getContext } from 'svelte';
-  import { gsap, getMotionDuration, killTweens } from '$lib/design/gsap';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
 
   let {
     ref = $bindable(null),
@@ -25,7 +30,7 @@
     gsap.fromTo(
       ref,
       { opacity: 0 },
-      { opacity: 1, duration: getMotionDuration(200), ease: 'ios-out' }
+      { opacity: 1, duration: getMotionDuration(MOTION.BASE), ease: 'ios-out' }
     );
   });
 
@@ -34,7 +39,7 @@
     killTweens(ref);
     gsap.to(ref, {
       opacity: 0,
-      duration: getMotionDuration(150),
+      duration: getMotionDuration(MOTION.FAST),
       ease: 'ios-in',
       onComplete: () => {
         mounted = false;

@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { gsap, getMotionDuration, killTweens } from '$lib/design/gsap';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
   import SidebarItemButton from '$lib/components/app/sidebar/SidebarItemButton.svelte';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import type { LucideProps } from '@lucide/svelte';
@@ -44,7 +49,7 @@
       {
         height: 'auto',
         overflow: 'visible',
-        duration: getMotionDuration(200),
+        duration: getMotionDuration(MOTION.OVERLAY_IN),
         ease: 'ios-out',
       }
     );
@@ -56,7 +61,7 @@
     gsap.to(contentEl, {
       height: 0,
       overflow: 'hidden',
-      duration: getMotionDuration(150),
+      duration: getMotionDuration(MOTION.BASE_OUT),
       ease: 'ios-in',
       onComplete: () => {
         contentMounted = false;

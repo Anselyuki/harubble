@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { animateIn, killTweens } from '$lib/design/gsap';
+  import { killTweens } from '$lib/design/gsap';
+  import { runLayeredIn } from '$lib/design/view-transition';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
@@ -15,22 +16,20 @@
   let heroInfoEl = $state<HTMLElement | undefined>();
   let loadingEl = $state<HTMLElement | undefined>();
 
+  // 骨架屏与真实详情面板同构的分层进入，避免加载态与就绪态之间的观感跳变。
   $effect(() => {
     if (!cardEl) return;
-    animateIn(cardEl, { opacity: 0 }, { opacity: 1 }, 180, 'ios-out');
-    return () => killTweens(cardEl!);
-  });
-
-  $effect(() => {
-    if (!heroInfoEl) return;
-    animateIn(heroInfoEl, { opacity: 0 }, { opacity: 1 }, 220, 'ios-out');
-    return () => killTweens(heroInfoEl!);
-  });
-
-  $effect(() => {
-    if (!loadingEl) return;
-    animateIn(loadingEl, { opacity: 0 }, { opacity: 1 }, 200, 'ios-out');
-    return () => killTweens(loadingEl!);
+    const tl = runLayeredIn([
+      { target: cardEl },
+      { target: heroInfoEl },
+      { target: loadingEl },
+    ]);
+    return () => {
+      tl.kill();
+      killTweens(cardEl!);
+      if (heroInfoEl) killTweens(heroInfoEl);
+      if (loadingEl) killTweens(loadingEl);
+    };
   });
 
   const labels = $derived.by(() => {

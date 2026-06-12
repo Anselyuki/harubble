@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import { animateIn, killTweens } from '$lib/design/gsap';
+  import { animateIn, killTweens, MOTION } from '$lib/design/gsap';
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import type { EventListeners, PartialOptions } from 'overlayscrollbars';
   import type { AlbumDetail, CollectionSummary, SongEntry } from '$lib/types';
@@ -108,7 +108,13 @@
 
   $effect(() => {
     if (!skeletonEl || isViewTransitioning) return;
-    animateIn(skeletonEl, { opacity: 0 }, { opacity: 1 }, 180, 'ios-out');
+    animateIn(
+      skeletonEl,
+      { opacity: 0 },
+      { opacity: 1 },
+      MOTION.BASE,
+      'ios-out'
+    );
     return () => killTweens(skeletonEl!);
   });
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import { gsap, getMotionDuration } from '$lib/design/gsap';
+  import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
   import type { RecentQuery } from '$lib/features/search/store.svelte';
 
   interface Props {
@@ -69,7 +69,7 @@
         opacity: 1,
         y: 0,
         stagger: 0.05,
-        duration: getMotionDuration(320),
+        duration: getMotionDuration(MOTION.PAGE),
         ease: 'ios-spring',
       }
     );

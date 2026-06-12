@@ -1,12 +1,15 @@
 <script lang="ts">
-  import { gsap, getMotionDuration } from '$lib/design/gsap';
+  import {
+    freezeViewSnapshot,
+    runViewTransition,
+  } from '$lib/design/view-transition';
+  import { gsap } from '$lib/design/gsap';
   import type { Snippet } from 'svelte';
   import { tick } from 'svelte';
 
   interface Props {
     viewKey: string;
     direction: 'forward' | 'back';
-    duration?: number;
     reducedMotion: boolean;
     onTransitionStart?: () => void;
     onTransitionEnd?: () => void;
@@ -16,7 +19,6 @@
   let {
     viewKey,
     direction,
-    duration = 350,
     reducedMotion,
     onTransitionStart,
     onTransitionEnd,
@@ -24,10 +26,10 @@
   }: Props = $props();
 
   let containerEl = $state<HTMLElement | null>(null);
-  let outgoingHtml = $state<string | null>(null);
   let currentTimeline: gsap.core.Timeline | null = null;
+  let frozenNode: HTMLElement | null = null;
   let previousKey: string | null = null;
-  let pendingSnapshot: string | null = null;
+  let pendingSnapshot: HTMLElement | null = null;
   let snapshotDirection: 'forward' | 'back' = 'forward';
 
   let transitionActive = false;
@@ -36,6 +38,14 @@
     if (!transitionActive) return;
     transitionActive = false;
     onTransitionEnd?.();
+  }
+
+  /** 移除并清理当前挂载的出场快照节点。 */
+  function disposeFrozenNode() {
+    if (frozenNode) {
+      frozenNode.remove();
+      frozenNode = null;
+    }
   }
 
   $effect.pre(() => {
@@ -53,7 +63,8 @@
       '[data-view-slot="current"]'
     ) as HTMLElement | null;
     if (slot) {
-      pendingSnapshot = slot.innerHTML;
+      // 在新视图渲染替换 slot 内容之前，冻结当前视图的真实 DOM 节点。
+      pendingSnapshot = freezeViewSnapshot(slot);
       snapshotDirection = direction;
     }
   });
@@ -63,32 +74,32 @@
     const container: HTMLElement | null = containerEl;
     if (!pendingSnapshot || !container) return;
 
-    const html = pendingSnapshot;
+    const snapshot = pendingSnapshot;
     const dir = snapshotDirection;
     pendingSnapshot = null;
-    outgoingHtml = html;
 
     void tick().then(() => {
       if (currentTimeline) {
         currentTimeline.kill();
         currentTimeline = null;
-        notifyTransitionEnd();
       }
+      disposeFrozenNode();
+      notifyTransitionEnd();
 
       const incomingSlot = container.querySelector(
         '[data-view-slot="current"]'
       ) as HTMLElement | null;
-      const outgoingSlot = container.querySelector(
-        '[data-view-slot="outgoing"]'
-      ) as HTMLElement | null;
-      if (!incomingSlot || !outgoingSlot) return;
+      if (!incomingSlot) return;
 
-      const dur = getMotionDuration(duration);
-      const isForward = dir === 'forward';
-      const inFromPercent = isForward ? 100 : -100;
-      const outToPercent = isForward ? -30 : 30;
+      // 把冻结快照作为绝对定位的出场层挂到容器中。
+      snapshot.classList.add('view-slot', 'view-slot--outgoing');
+      container.appendChild(snapshot);
+      frozenNode = snapshot;
 
-      const tl = gsap.timeline({
+      currentTimeline = runViewTransition({
+        incoming: incomingSlot,
+        outgoing: snapshot,
+        direction: dir,
         onStart: () => {
           incomingSlot.style.position = 'absolute';
           incomingSlot.style.inset = '0';
@@ -99,25 +110,11 @@
           gsap.set(incomingSlot, { clearProps: 'xPercent,opacity' });
           incomingSlot.style.position = '';
           incomingSlot.style.inset = '';
+          disposeFrozenNode();
+          currentTimeline = null;
           notifyTransitionEnd();
-          outgoingHtml = null;
         },
       });
-
-      tl.fromTo(
-        incomingSlot,
-        { xPercent: inFromPercent, opacity: 1 },
-        { xPercent: 0, opacity: 1, duration: dur, ease: 'ios-spring' },
-        0
-      );
-      tl.fromTo(
-        outgoingSlot,
-        { xPercent: 0, opacity: 1 },
-        { xPercent: outToPercent, opacity: 0.3, duration: dur, ease: 'ios' },
-        0
-      );
-
-      currentTimeline = tl;
     });
   });
 
@@ -127,6 +124,7 @@
         currentTimeline.kill();
         currentTimeline = null;
       }
+      disposeFrozenNode();
       notifyTransitionEnd();
     };
   });
@@ -136,12 +134,6 @@
   <div data-view-slot="current" class="view-slot">
     {@render children()}
   </div>
-  {#if outgoingHtml}
-    <div data-view-slot="outgoing" class="view-slot view-slot--outgoing">
-      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-      {@html outgoingHtml}
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -157,7 +149,7 @@
     height: 100%;
   }
 
-  .view-slot--outgoing {
+  :global(.view-transition-container > .view-slot--outgoing) {
     position: absolute;
     inset: 0;
     pointer-events: none;

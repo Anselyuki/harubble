@@ -202,6 +202,29 @@ CSS 变量：
 - `reduced motion` 开启时按 `getMotionDuration` 降级
 - 通用 helper：`animateIn` / `animateOut` / `gsapScrollIntoView` / `killTweens`
 
+#### 时长令牌
+
+动画时长统一从 `gsap.ts` 导出的 `MOTION` 常量取值，作为 JS 侧单一真相来源，主档位与 `app.css` 的 `--motion-*` CSS 变量一一对应；不要在组件内硬编码毫秒数，也不要在 GSAP 调用里直接写秒制字面量（`duration: 0.2`）——一律走 `getMotionDuration(MOTION.*)` 以同时获得 reduced-motion 降级。出场普遍略短于入场，以营造“快速让位、从容入场”的 iOS 观感，故常规档位提供独立的 `*_OUT` 值。
+
+| 令牌                | 入场  | 出场（`*_OUT`） | 用途                                                                           |
+| ------------------- | ----- | --------------- | ------------------------------------------------------------------------------ |
+| `MOTION.MICRO`      | 100ms | —               | 极快微交互：按下回弹、小浮层关闭                                               |
+| `MOTION.FAST`       | 140ms | —               | hover / 细粒度状态反馈                                                         |
+| `MOTION.BASE`       | 180ms | 150ms           | 常规元素进出                                                                   |
+| `MOTION.SLOW`       | 260ms | 200ms           | 覆盖层 / 较大元素进出                                                          |
+| `MOTION.PAGE`       | 320ms | 280ms           | 主视图页面级转场                                                               |
+| `MOTION.OVERLAY_IN` | 200ms | —               | 浮层统一入场（dialog/select/tooltip 等），与浮层出场 `BASE_OUT` / `MICRO` 配对 |
+
+少数经权衡的有意特例不并入令牌：如音量胶囊「展开 400ms / 收缩 799ms」的非对称节奏、列表 stagger 的起步 `delay` 与气泡内容的错位 `delay`（这些是编排偏移而非元素时长）。这类点保留就地数值，但须在调用处以注释说明为何是特例。
+
+#### 转场原语
+
+页面级与分层进入的转场统一走 `src/lib/design/view-transition.ts`，不要在组件内各自拼时间线：
+
+- `runViewTransition`：主视图“推进 / 后退”转场。入场视图整屏滑入并保持不透明，离场快照同向小幅位移并淡出，避免重叠期重影。仅由 `ViewTransition.svelte` 使用
+- `freezeViewSnapshot`：把离场视图的真实 DOM 节点 `cloneNode(true)` 冻结为静态快照并同步 `scrollTop`，保留已渲染图片与滚动位置，规避重新加载导致的闪白
+- `runLayeredIn`：为一组层叠元素编排统一节奏的“分层进入”（封面 → 标题 → 列表），用于详情面板与骨架屏，保证加载态与就绪态观感同构
+
 #### 受控例外
 
 仅以下两类场景允许使用 CSS 动画能力，且必须满足对应约束：

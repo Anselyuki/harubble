@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
-  import { gsap } from '$lib/design/gsap';
+  import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
   import type { TagEditorLocalizedValue } from '$lib/types';
 
   interface Props {
@@ -56,7 +56,7 @@
       width: 14,
       opacity: 1,
       marginLeft: 2,
-      duration: 0.15,
+      duration: getMotionDuration(MOTION.FAST),
       ease: 'ios-out',
     });
   }
@@ -70,7 +70,7 @@
       width: 0,
       opacity: 0,
       marginLeft: 0,
-      duration: 0.12,
+      duration: getMotionDuration(MOTION.MICRO),
       ease: 'ios-in',
     });
   }

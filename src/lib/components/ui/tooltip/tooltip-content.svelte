@@ -5,7 +5,12 @@
   import type { ComponentProps } from 'svelte';
   import type { WithoutChildrenOrChild } from '$lib/utils.js';
   import { getContext } from 'svelte';
-  import { gsap, getMotionDuration, killTweens } from '$lib/design/gsap';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
 
   let {
     ref = $bindable(null),
@@ -39,7 +44,7 @@
       {
         opacity: 1,
         scale: 1,
-        duration: getMotionDuration(150),
+        duration: getMotionDuration(MOTION.OVERLAY_IN),
         ease: 'ios-out',
       }
     );
@@ -51,7 +56,7 @@
     gsap.to(ref, {
       opacity: 0,
       scale: 0.95,
-      duration: getMotionDuration(100),
+      duration: getMotionDuration(MOTION.MICRO),
       ease: 'ios-in',
       onComplete: () => {
         mounted = false;

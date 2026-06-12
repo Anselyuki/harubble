@@ -1,4 +1,4 @@
-import { gsap, killTweens, getMotionDuration } from '$lib/design/gsap';
+import { gsap, killTweens, getMotionDuration, MOTION } from '$lib/design/gsap';
 
 const CAPSULE_WIDTH = 200;
 
@@ -32,7 +32,7 @@ export function createCapsuleAnimator(
       gsap.fromTo(
         refs.badge,
         { y: '100%' },
-        { y: '0%', duration: getMotionDuration(200), ease: 'ios-out' }
+        { y: '0%', duration: getMotionDuration(MOTION.BASE), ease: 'ios-out' }
       );
     }
   }
@@ -42,7 +42,7 @@ export function createCapsuleAnimator(
     killTweens(refs.badge);
     gsap.to(refs.badge, {
       y: '100%',
-      duration: getMotionDuration(180),
+      duration: getMotionDuration(MOTION.BASE_OUT),
       ease: 'ios-in',
       onComplete: () => {
         badgeVisible = false;
@@ -55,6 +55,8 @@ export function createCapsuleAnimator(
       const refs = getRefs();
       if (!refs.track) return;
 
+      // 胶囊展开/收缩是一对经权衡的非对称特例：展开 400ms 从容铺开，
+      // 收缩 799ms 慢速回收，节奏刻意不对称，故不并入通用时长令牌。
       const duration = getMotionDuration(400);
       const bg = getComputedStyle(refs.track)
         .getPropertyValue('--capsule-track-bg')
@@ -82,7 +84,7 @@ export function createCapsuleAnimator(
       if (!refs.track) return;
 
       const shrinkDuration = getMotionDuration(799);
-      const badgeHideDuration = getMotionDuration(180);
+      const badgeHideDuration = getMotionDuration(MOTION.BASE_OUT);
 
       killTweens(refs.track);
       hideBadgeInternal(refs);
@@ -119,7 +121,7 @@ export function createCapsuleAnimator(
         color: 'var(--icon-active)',
         backgroundColor:
           'var(--player-control-hover-bg, rgba(var(--album-accent-rgb), 0.1))',
-        duration: getMotionDuration(150),
+        duration: getMotionDuration(MOTION.FAST),
         ease: 'ios-out',
       });
     },
@@ -130,7 +132,7 @@ export function createCapsuleAnimator(
       gsap.to(iconBtn, {
         color: 'var(--icon-default)',
         backgroundColor: 'transparent',
-        duration: getMotionDuration(150),
+        duration: getMotionDuration(MOTION.FAST),
         ease: 'ios-in',
       });
     },

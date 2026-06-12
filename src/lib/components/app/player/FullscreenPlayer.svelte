@@ -5,6 +5,7 @@
     getMotionDuration,
     killTweens,
     gsapScrollIntoView,
+    MOTION,
   } from '$lib/design/gsap';
   import { getImageDataUrl } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
@@ -87,7 +88,7 @@
         opacity: 1,
         y: 0,
         scale: 1,
-        duration: getMotionDuration(380),
+        duration: getMotionDuration(MOTION.PAGE),
         ease: 'ios-spring',
       }
     );
@@ -100,7 +101,7 @@
       coverWrapEl,
       { opacity: 0, scale: 0.85 },
       { opacity: 1, scale: 1 },
-      300,
+      MOTION.SLOW,
       'ios-spring'
     );
     return () => killTweens(coverWrapEl!);

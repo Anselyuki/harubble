@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import { getShellContext } from '$lib/contexts';
-  import { gsap, getMotionDuration } from '$lib/design/gsap';
+  import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
   import SearchBar from './SearchBar.svelte';
   import SearchRecentQueries from './SearchRecentQueries.svelte';
   import SearchRecentlyPlayed from './SearchRecentlyPlayed.svelte';
@@ -33,7 +33,7 @@
     gsap.fromTo(
       discoveryEl,
       { opacity: 0 },
-      { opacity: 1, duration: getMotionDuration(200), ease: 'ios' }
+      { opacity: 1, duration: getMotionDuration(MOTION.BASE), ease: 'ios' }
     );
   });
 
@@ -42,7 +42,12 @@
     gsap.fromTo(
       placeholderEl,
       { opacity: 0, y: 10 },
-      { opacity: 1, y: 0, duration: getMotionDuration(240), ease: 'ios-spring' }
+      {
+        opacity: 1,
+        y: 0,
+        duration: getMotionDuration(MOTION.SLOW),
+        ease: 'ios-spring',
+      }
     );
   });
 

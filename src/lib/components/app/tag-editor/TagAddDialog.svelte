@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
-  import { gsap } from '$lib/design/gsap';
+  import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
   import type { TagEditorLocalizedValue } from '$lib/types';
   import { type TagLibrary } from '$lib/features/tagEditor/tagLibrary';
   import {
@@ -213,7 +213,12 @@
     gsap.fromTo(
       tabContentEl,
       { opacity: 0, x: fromRight ? 12 : -12 },
-      { opacity: 1, x: 0, duration: 0.22, ease: 'ios-out' }
+      {
+        opacity: 1,
+        x: 0,
+        duration: getMotionDuration(MOTION.OVERLAY_IN),
+        ease: 'ios-out',
+      }
     );
   });
 
@@ -222,7 +227,7 @@
     const isRight = activeTab === 'create';
     gsap.to(sliderEl, {
       x: isRight ? '100%' : '0%',
-      duration: hasMounted ? 0.2 : 0,
+      duration: hasMounted ? getMotionDuration(MOTION.BASE) : 0,
       ease: 'ios-spring',
     });
   });
@@ -269,7 +274,7 @@
           width: targetSize.width,
           height: targetSize.height,
           borderRadius: 10,
-          duration: 0.24,
+          duration: getMotionDuration(MOTION.SLOW),
           ease: 'ios-out',
           onComplete: () => {
             gsap.set(el, { height: 'auto' });
@@ -282,7 +287,13 @@
         gsap.fromTo(
           contentEl,
           { opacity: 0 },
-          { opacity: 1, duration: 0.15, delay: 0.12, ease: 'ios-out' }
+          {
+            opacity: 1,
+            duration: getMotionDuration(MOTION.OVERLAY_IN),
+            // 内容相对气泡展开的错位起步延迟（非元素时长），不并入时长令牌。
+            delay: getMotionDuration(120),
+            ease: 'ios-out',
+          }
         )
       );
     }

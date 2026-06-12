@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import { gsap, getMotionDuration } from '$lib/design/gsap';
+  import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
   import AlbumCard from '$lib/components/AlbumCard.svelte';
   import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
   import type { Album } from '$lib/types';
@@ -40,8 +40,9 @@
         opacity: 1,
         y: 0,
         stagger: 0.03,
-        duration: getMotionDuration(360),
+        duration: getMotionDuration(MOTION.PAGE),
         ease: 'ios-spring',
+        // 整组列表入场的起步延迟（非元素时长），刻意短促，不并入时长令牌。
         delay: getMotionDuration(80),
       }
     );

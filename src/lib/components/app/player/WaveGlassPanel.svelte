@@ -2,7 +2,12 @@
   import { onDestroy } from 'svelte';
   import { createWaveLoop, WAVE_LAYERS } from './volume-capsule-wave';
   import type { WaveController } from './volume-capsule-wave';
-  import { gsap, killTweens, getMotionDuration } from '$lib/design/gsap';
+  import {
+    gsap,
+    killTweens,
+    getMotionDuration,
+    MOTION,
+  } from '$lib/design/gsap';
 
   const GLASS_WIDTH = 200;
 
@@ -30,14 +35,18 @@
       gsap.fromTo(
         glassEl,
         { height: 0 },
-        { height: 50, duration: getMotionDuration(300), ease: 'ios-out' }
+        {
+          height: 50,
+          duration: getMotionDuration(MOTION.PAGE),
+          ease: 'ios-out',
+        }
       );
     } else {
       waveCtrl?.stop();
       killTweens(glassEl);
       gsap.to(glassEl, {
         height: 0,
-        duration: getMotionDuration(180),
+        duration: getMotionDuration(MOTION.BASE),
         ease: 'ios-in',
         onComplete: () => {
           gsap.set(glassEl!, { visibility: 'hidden' });
