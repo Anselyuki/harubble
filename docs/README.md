@@ -58,9 +58,9 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 前端架构、组件约定、域边界、运行时架构、UI 系统（设计 token、字体方案、动效规则）、国际化、交互模式与内容规范。
 
-#### [ui-album-overview-redesign.md](./reference/ui-album-overview-redesign.md) `草案`
+#### [ui-album-overview-redesign.md](./reference/ui-album-overview-redesign.md) `已实现`
 
-Sidebar 精简与 Album Overview 页改版方案。涵盖移除 `AlbumSidebarSection`、新增 `overview` AppView、卡片网格布局、搜索结果迁移到主内容区、Collections 作为播放列表语义入口的完整设计与实现指引。设计草案阶段，待前端实现。
+Sidebar 精简与 Album Overview 页改版方案。涵盖移除 `AlbumSidebarSection`、新增 `overview` AppView、卡片网格布局、搜索结果迁移到主内容区、Collections 作为播放列表语义入口的完整设计与实现指引。方案核心已落地，文档保留为设计背景记录（实现偏差见文首「as-built」小节），as-built 真相以 frontend-guide.md 为准。
 
 #### [resource-update.md](./reference/resource-update.md)
 

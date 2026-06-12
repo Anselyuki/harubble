@@ -41,8 +41,8 @@ src/
    ├ settingsApi.ts                 # 设置面板专用 IPC bridge
    ├ collectionApi.ts               # 合集相关 IPC bridge
    ├ types.ts                       # 前后端共享数据结构
-   ├ theme.ts                       # 主题切换
-   ├ cache.ts / lazyLoad.ts / imageDataSrc.ts / downloadBadge.ts
+   ├ theme.ts / themePresets.ts     # 主题切换与预设
+   ├ cache.ts / lazyLoad.ts / imageDataSrc.ts / downloadBadge.ts / utils.ts
    │
    ├ components/
    │  ├ ui/                         # shadcn-svelte / Bits UI primitive 包装

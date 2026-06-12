@@ -39,12 +39,13 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - `src/lib/api.ts`：主 Tauri command bridge
 - `src/lib/settingsApi.ts`：设置面板专用 IPC bridge
 - `src/lib/types.ts`：前后端共享数据结构
-- `src/lib/features/`：按 `env / library / player / download / home / shell / collection / tagEditor` 划分的领域目录
+- `src/lib/features/`：按 `env / library / player / download / home / search / shell / collection / tagEditor` 划分的领域目录
 - `src/lib/components/app/`：前端壳层组件目录，按业务域划分子目录：
   - `sidebar/`：侧栏框架（AppSidebar、SidebarNav、BrandLogo 等）
   - `player/`：播放控制（PlayerFlyoutStack、FullscreenPlayer、VolumeCapsule、LyricsBubble 等）
   - `home/`：首页视图（HomeView 及各 Home\* 子组件）
   - `library/`：库存主视图（LibraryView）
+  - `search/`：全局搜索视图（SearchView、SearchBar、SearchRecentQueries、SearchRecentlyPlayed 等）
   - `album/`：专辑与库存（AlbumOverview、AlbumWorkspace、AlbumDetailPanel 等）
   - `collection/`：合集（CollectionDetailPanel、CollectionFormDialog、AddToCollectionMenu 等）
   - `tag-editor/`：标签编辑器（TagEditorView、TagEditorPanel、TagEditorConflict\* 等）

@@ -1,3 +1,14 @@
+//! 首页数据模型。
+//!
+//! 定义首页各区块所需的聚合数据结构，作为前后端共享契约的核心库侧来源：
+//! 按系列分组的专辑（[`SeriesGroup`]）、收听历史与事件（[`HistoryEntry`] /
+//! [`ListeningEvent`]）、状态仪表盘（[`HomepageStatus`]）以及按 Tag 分组的
+//! 专辑集合（[`TagGroup`]）。
+//!
+//! 本模块只承载序列化数据形状，不包含持久化或业务编排逻辑；首页数据的
+//! 装配、收听历史读写等行为由上层服务与 Tauri command 层负责。所有结构均以
+//! `camelCase` 序列化，与前端 `src/lib/types.ts` 中对应类型保持形状一致。
+
 use serde::{Deserialize, Serialize};
 
 use crate::api::Album;
