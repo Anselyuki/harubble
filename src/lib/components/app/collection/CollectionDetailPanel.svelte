@@ -283,9 +283,16 @@
           {/if}
           <div class="collection-hero-meta">
             <span class="collection-song-count">{songCountLabel}</span>
+            <button
+              type="button"
+              class="btn btn-meta"
+              onclick={() => props.onExport(collection.id)}
+            >
+              导出
+            </button>
           </div>
-          <div class="controls collection-hero-actions">
-            {#if isEditable}
+          {#if isEditable}
+            <div class="controls collection-hero-actions">
               <button type="button" class="btn" onclick={props.onEdit}>
                 编辑
               </button>
@@ -304,16 +311,8 @@
               >
                 删除
               </button>
-            {/if}
-            <span class="collection-actions-spacer"></span>
-            <button
-              type="button"
-              class="btn"
-              onclick={() => props.onExport(collection.id)}
-            >
-              导出
-            </button>
-          </div>
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -409,6 +408,7 @@
 <style>
   :global(.collection-scroll-container) {
     flex: 1;
+    height: 100%;
     min-height: 0;
     overflow: hidden;
   }
@@ -442,10 +442,20 @@
   }
 
   .collection-official-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 20px;
     font-size: 11px;
     font-weight: 600;
-    color: var(--accent);
+    line-height: 1;
+    color: var(--accent-readable-foreground);
+    background: var(--accent);
+    padding: 1px 8px 0;
+    border-radius: 999px;
     letter-spacing: 0.04em;
+    width: fit-content;
   }
 
   .collection-hero-title {
@@ -480,10 +490,6 @@
     align-items: center;
     gap: 8px;
     margin-top: 8px;
-  }
-
-  .collection-actions-spacer {
-    flex: 1;
   }
 
   .btn {
