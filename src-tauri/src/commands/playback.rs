@@ -1,6 +1,6 @@
 //! 播放控制与播放器状态读取相关的 Tauri command。
 //!
-//! 当前暴露的接口覆盖点播、暂停、恢复、停止、跳转、上下曲切换与状态查询，
+//! 当前暴露的接口覆盖点播、暂停、恢复、跳转、上下曲切换与状态查询，
 //! 主要服务于前端播放器、系统媒体控制和播放进度交互。
 
 use crate::app_state::AppState;
@@ -22,16 +22,6 @@ pub async fn play_song(
     state
         .play_song_internal(song_cid, cover_url, playback_context)
         .await
-}
-
-/// 停止当前播放并清空播放态。
-///
-/// 适用于用户主动停止播放、清理播放器状态或在需要彻底终止当前会话时调用。
-/// 入参 `state` 为共享后端状态；返回值在成功时为空。
-/// 该接口会使当前播放会话失效，并清空当前歌曲、进度和播放状态；若只是暂时中断，优先使用暂停而不是停止。
-#[tauri::command]
-pub fn stop_playback(state: State<'_, AppState>) -> Result<(), String> {
-    state.player.stop().map_err(|e| e.to_string())
 }
 
 /// 暂停当前播放。

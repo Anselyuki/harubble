@@ -13,7 +13,7 @@
 //! - 播放控制：[`commands::play_song`]、[`commands::pause_playback`]、
 //!   [`commands::resume_playback`]、[`commands::seek_current_playback`]、
 //!   [`commands::play_next`]、[`commands::play_previous`]、
-//!   [`commands::stop_playback`]、[`commands::get_player_state`]、
+//!   [`commands::get_player_state`]、
 //!   [`commands::set_playback_volume`]
 //! - 下载和工具：[`commands::get_default_output_dir`]、
 //!   [`commands::clear_audio_cache`]、[`commands::extract_image_theme`]
@@ -163,7 +163,6 @@ fn main() {
             commands::library::get_default_output_dir,
             commands::search::search_library,
             commands::playback::play_song,
-            commands::playback::stop_playback,
             commands::playback::pause_playback,
             commands::playback::resume_playback,
             commands::playback::seek_current_playback,
