@@ -174,10 +174,8 @@
     transform: translateY(0) scale(1);
   }
 
-  @media (prefers-color-scheme: dark) {
-    :global(.album-card.selected) {
-      background: rgba(var(--accent-rgb), 0.18);
-    }
+  :global(.dark .album-card.selected) {
+    background: rgba(var(--accent-rgb), 0.18);
   }
 
   :global(.album-card:focus-visible:not(.selected)) {

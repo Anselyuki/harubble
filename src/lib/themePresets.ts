@@ -1,10 +1,11 @@
 import type {
+  ColorScheme,
   ThemeColorSlot,
   ThemeColorSlots,
   ThemePreferences,
 } from './types';
 
-export type { ThemeColorSlot, ThemeColorSlots, ThemePreferences };
+export type { ColorScheme, ThemeColorSlot, ThemeColorSlots, ThemePreferences };
 
 export interface ThemePreset {
   id: string;
@@ -71,6 +72,7 @@ export const THEME_PRESETS: ThemePreset[] = [
 export const DEFAULT_THEME_PREFERENCES: ThemePreferences = {
   presetId: DEFAULT_THEME_PRESET_ID,
   customColors: {},
+  colorScheme: 'auto',
 };
 
 export function isThemeColorSlot(value: string): value is ThemeColorSlot {

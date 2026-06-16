@@ -12,6 +12,17 @@
 
 :root {
   color-scheme: light dark;
+}
+
+:root.light {
+  color-scheme: light;
+}
+
+:root.dark {
+  color-scheme: dark;
+}
+
+:root {
   --accent-rgb: 250, 45, 72;
   --accent-hover-rgb: 255, 59, 92;
   --accent: rgb(var(--accent-rgb));
@@ -152,121 +163,117 @@
 }
 
 /* 亮色模式配色 */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg-primary: #ffffff;
-    --bg-secondary: #f5f5f7;
-    --bg-tertiary: #e8e8ed;
-    --bg-elevated: rgba(255, 255, 255, 0.8);
-    --text-primary: #1d1d1f;
-    --text-secondary: #6e6e73;
-    --text-tertiary: #86868b;
-    --accent-light: rgba(var(--accent-rgb), 0.1);
-    --border: rgba(0, 0, 0, 0.08);
-    --scrollbar-thumb: rgba(0, 0, 0, 0.2);
-    --hover-bg: rgba(0, 0, 0, 0.04);
-    --hover-bg-elevated: rgba(0, 0, 0, 0.06);
-    --toolbar-bg: rgba(255, 255, 255, 0.78);
-    --toolbar-surface: rgba(255, 255, 255, 0.72);
-    --toolbar-segment: rgba(17, 17, 17, 0.05);
-    --toolbar-separator: rgba(17, 17, 17, 0.08);
-    --toolbar-highlight: rgba(255, 255, 255, 0.82);
-    --toolbar-shadow:
-      0 18px 40px rgba(15, 23, 42, 0.14),
-      0 12px 28px rgba(var(--accent-rgb), 0.08);
-    --surface-tint: rgba(var(--theme-tint-rgb), 0.04);
-    --surface-tint-strong: rgba(var(--theme-tint-rgb), 0.08);
-    --stage-shell-fill: rgba(248, 249, 251, 0.96);
-    --stage-shell-border: rgba(15, 23, 42, 0.08);
-    --stage-shell-shadow:
-      0 28px 60px rgba(15, 23, 42, 0.14),
-      0 12px 28px rgba(var(--accent-rgb), 0.08);
-    --stage-media-shadow: 0 18px 38px rgba(15, 23, 42, 0.12);
-    --stage-top-scrim: rgba(7, 10, 18, 0.18);
-    --stage-edge-scrim: rgba(7, 10, 18, 0.1);
-    --hero-card-bg: rgba(255, 255, 255, 0.78);
-    --hero-card-border: rgba(15, 23, 42, 0.08);
-    --hero-card-highlight: rgba(255, 255, 255, 0.7);
-    --hero-card-shadow:
-      0 24px 48px rgba(15, 23, 42, 0.12), 0 10px 24px rgba(15, 23, 42, 0.08);
-    --player-shell-bg: rgba(255, 255, 255, 0.78);
-    --player-shell-border: rgba(17, 17, 17, 0.05);
-    --player-shell-highlight: rgba(255, 255, 255, 0.8);
-    --player-cover-start: rgba(var(--album-accent-rgb), 0.14);
-    --player-cover-end: rgba(var(--album-accent-rgb), 0.04);
-    --player-placeholder-color: rgba(28, 28, 30, 0.58);
-    --player-title: rgba(28, 28, 30, 0.92);
-    --player-subtitle: rgba(60, 60, 67, 0.66);
-    --player-track-bg: rgba(60, 60, 67, 0.1);
-    --player-track-fill-end: rgba(var(--album-accent-rgb), 0.38);
-    --player-thumb-border: rgba(255, 255, 255, 0.9);
-    --player-thumb-bg: var(--album-accent);
-    --player-thumb-shadow: 0 2px 10px rgba(var(--album-accent-rgb), 0.24);
-    --player-control-color: rgba(28, 28, 30, 0.82);
-    --player-control-hover-bg: rgba(var(--album-accent-rgb), 0.1);
-    --player-time: rgba(60, 60, 67, 0.58);
-    --player-play-text: white;
-    --player-play-shadow: 0 10px 24px rgba(var(--album-accent-rgb), 0.28);
-    --player-play-shadow-hover: 0 12px 28px rgba(var(--album-accent-rgb), 0.34);
-  }
+:root.light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f7;
+  --bg-tertiary: #e8e8ed;
+  --bg-elevated: rgba(255, 255, 255, 0.8);
+  --text-primary: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-tertiary: #86868b;
+  --accent-light: rgba(var(--accent-rgb), 0.1);
+  --border: rgba(0, 0, 0, 0.08);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --hover-bg-elevated: rgba(0, 0, 0, 0.06);
+  --toolbar-bg: rgba(255, 255, 255, 0.78);
+  --toolbar-surface: rgba(255, 255, 255, 0.72);
+  --toolbar-segment: rgba(17, 17, 17, 0.05);
+  --toolbar-separator: rgba(17, 17, 17, 0.08);
+  --toolbar-highlight: rgba(255, 255, 255, 0.82);
+  --toolbar-shadow:
+    0 18px 40px rgba(15, 23, 42, 0.14),
+    0 12px 28px rgba(var(--accent-rgb), 0.08);
+  --surface-tint: rgba(var(--theme-tint-rgb), 0.04);
+  --surface-tint-strong: rgba(var(--theme-tint-rgb), 0.08);
+  --stage-shell-fill: rgba(248, 249, 251, 0.96);
+  --stage-shell-border: rgba(15, 23, 42, 0.08);
+  --stage-shell-shadow:
+    0 28px 60px rgba(15, 23, 42, 0.14),
+    0 12px 28px rgba(var(--accent-rgb), 0.08);
+  --stage-media-shadow: 0 18px 38px rgba(15, 23, 42, 0.12);
+  --stage-top-scrim: rgba(7, 10, 18, 0.18);
+  --stage-edge-scrim: rgba(7, 10, 18, 0.1);
+  --hero-card-bg: rgba(255, 255, 255, 0.78);
+  --hero-card-border: rgba(15, 23, 42, 0.08);
+  --hero-card-highlight: rgba(255, 255, 255, 0.7);
+  --hero-card-shadow:
+    0 24px 48px rgba(15, 23, 42, 0.12), 0 10px 24px rgba(15, 23, 42, 0.08);
+  --player-shell-bg: rgba(255, 255, 255, 0.78);
+  --player-shell-border: rgba(17, 17, 17, 0.05);
+  --player-shell-highlight: rgba(255, 255, 255, 0.8);
+  --player-cover-start: rgba(var(--album-accent-rgb), 0.14);
+  --player-cover-end: rgba(var(--album-accent-rgb), 0.04);
+  --player-placeholder-color: rgba(28, 28, 30, 0.58);
+  --player-title: rgba(28, 28, 30, 0.92);
+  --player-subtitle: rgba(60, 60, 67, 0.66);
+  --player-track-bg: rgba(60, 60, 67, 0.1);
+  --player-track-fill-end: rgba(var(--album-accent-rgb), 0.38);
+  --player-thumb-border: rgba(255, 255, 255, 0.9);
+  --player-thumb-bg: var(--album-accent);
+  --player-thumb-shadow: 0 2px 10px rgba(var(--album-accent-rgb), 0.24);
+  --player-control-color: rgba(28, 28, 30, 0.82);
+  --player-control-hover-bg: rgba(var(--album-accent-rgb), 0.1);
+  --player-time: rgba(60, 60, 67, 0.58);
+  --player-play-text: white;
+  --player-play-shadow: 0 10px 24px rgba(var(--album-accent-rgb), 0.28);
+  --player-play-shadow-hover: 0 12px 28px rgba(var(--album-accent-rgb), 0.34);
 }
 
 /* 暗色模式配色 */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-primary: #000000;
-    --bg-secondary: #1c1c1e;
-    --bg-tertiary: #2c2c2e;
-    --bg-elevated: rgba(28, 28, 30, 0.8);
-    --text-primary: #ffffff;
-    --text-secondary: #8e8e93;
-    --text-tertiary: #636366;
-    --accent-light: rgba(var(--accent-rgb), 0.18);
-    --border: rgba(255, 255, 255, 0.08);
-    --scrollbar-thumb: rgba(255, 255, 255, 0.15);
-    --hover-bg: rgba(255, 255, 255, 0.05);
-    --hover-bg-elevated: rgba(255, 255, 255, 0.08);
-    --toolbar-bg: rgba(28, 28, 30, 0.78);
-    --toolbar-surface: rgba(58, 58, 60, 0.68);
-    --toolbar-segment: rgba(255, 255, 255, 0.06);
-    --toolbar-separator: rgba(255, 255, 255, 0.12);
-    --toolbar-highlight: rgba(255, 255, 255, 0.12);
-    --toolbar-shadow:
-      0 22px 48px rgba(0, 0, 0, 0.42), 0 12px 28px rgba(var(--accent-rgb), 0.14);
-    --surface-tint: rgba(var(--theme-tint-rgb), 0.08);
-    --surface-tint-strong: rgba(var(--theme-tint-rgb), 0.14);
-    --stage-shell-fill: rgba(22, 22, 26, 0.96);
-    --stage-shell-border: rgba(255, 255, 255, 0.08);
-    --stage-shell-shadow:
-      0 30px 66px rgba(0, 0, 0, 0.4), 0 10px 24px rgba(0, 0, 0, 0.28);
-    --stage-media-shadow: 0 20px 42px rgba(0, 0, 0, 0.34);
-    --stage-top-scrim: rgba(0, 0, 0, 0.22);
-    --stage-edge-scrim: rgba(0, 0, 0, 0.2);
-    --hero-card-bg: rgba(30, 30, 34, 0.76);
-    --hero-card-border: rgba(255, 255, 255, 0.08);
-    --hero-card-highlight: rgba(255, 255, 255, 0.08);
-    --hero-card-shadow:
-      0 26px 50px rgba(0, 0, 0, 0.34), 0 12px 26px rgba(0, 0, 0, 0.24);
-    --player-shell-bg: rgba(28, 28, 30, 0.78);
-    --player-shell-border: rgba(255, 255, 255, 0.08);
-    --player-shell-highlight: rgba(255, 255, 255, 0.08);
-    --player-cover-start: rgba(var(--album-accent-rgb), 0.24);
-    --player-cover-end: rgba(var(--album-accent-rgb), 0.08);
-    --player-placeholder-color: rgba(255, 255, 255, 0.72);
-    --player-title: rgba(255, 255, 255, 0.94);
-    --player-subtitle: rgba(235, 235, 245, 0.58);
-    --player-track-bg: rgba(255, 255, 255, 0.12);
-    --player-track-fill-end: rgba(var(--album-accent-rgb), 0.54);
-    --player-thumb-border: rgba(17, 17, 19, 0.84);
-    --player-thumb-bg: var(--album-accent);
-    --player-thumb-shadow: 0 3px 12px rgba(var(--album-accent-rgb), 0.34);
-    --player-control-color: rgba(255, 255, 255, 0.88);
-    --player-control-hover-bg: rgba(var(--album-accent-rgb), 0.16);
-    --player-time: rgba(235, 235, 245, 0.58);
-    --player-play-text: white;
-    --player-play-shadow: 0 12px 28px rgba(var(--album-accent-rgb), 0.3);
-    --player-play-shadow-hover: 0 14px 32px rgba(var(--album-accent-rgb), 0.36);
-  }
+:root.dark {
+  --bg-primary: #000000;
+  --bg-secondary: #1c1c1e;
+  --bg-tertiary: #2c2c2e;
+  --bg-elevated: rgba(28, 28, 30, 0.8);
+  --text-primary: #ffffff;
+  --text-secondary: #8e8e93;
+  --text-tertiary: #636366;
+  --accent-light: rgba(var(--accent-rgb), 0.18);
+  --border: rgba(255, 255, 255, 0.08);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --hover-bg: rgba(255, 255, 255, 0.05);
+  --hover-bg-elevated: rgba(255, 255, 255, 0.08);
+  --toolbar-bg: rgba(28, 28, 30, 0.78);
+  --toolbar-surface: rgba(58, 58, 60, 0.68);
+  --toolbar-segment: rgba(255, 255, 255, 0.06);
+  --toolbar-separator: rgba(255, 255, 255, 0.12);
+  --toolbar-highlight: rgba(255, 255, 255, 0.12);
+  --toolbar-shadow:
+    0 22px 48px rgba(0, 0, 0, 0.42), 0 12px 28px rgba(var(--accent-rgb), 0.14);
+  --surface-tint: rgba(var(--theme-tint-rgb), 0.08);
+  --surface-tint-strong: rgba(var(--theme-tint-rgb), 0.14);
+  --stage-shell-fill: rgba(22, 22, 26, 0.96);
+  --stage-shell-border: rgba(255, 255, 255, 0.08);
+  --stage-shell-shadow:
+    0 30px 66px rgba(0, 0, 0, 0.4), 0 10px 24px rgba(0, 0, 0, 0.28);
+  --stage-media-shadow: 0 20px 42px rgba(0, 0, 0, 0.34);
+  --stage-top-scrim: rgba(0, 0, 0, 0.22);
+  --stage-edge-scrim: rgba(0, 0, 0, 0.2);
+  --hero-card-bg: rgba(30, 30, 34, 0.76);
+  --hero-card-border: rgba(255, 255, 255, 0.08);
+  --hero-card-highlight: rgba(255, 255, 255, 0.08);
+  --hero-card-shadow:
+    0 26px 50px rgba(0, 0, 0, 0.34), 0 12px 26px rgba(0, 0, 0, 0.24);
+  --player-shell-bg: rgba(28, 28, 30, 0.78);
+  --player-shell-border: rgba(255, 255, 255, 0.08);
+  --player-shell-highlight: rgba(255, 255, 255, 0.08);
+  --player-cover-start: rgba(var(--album-accent-rgb), 0.24);
+  --player-cover-end: rgba(var(--album-accent-rgb), 0.08);
+  --player-placeholder-color: rgba(255, 255, 255, 0.72);
+  --player-title: rgba(255, 255, 255, 0.94);
+  --player-subtitle: rgba(235, 235, 245, 0.58);
+  --player-track-bg: rgba(255, 255, 255, 0.12);
+  --player-track-fill-end: rgba(var(--album-accent-rgb), 0.54);
+  --player-thumb-border: rgba(17, 17, 19, 0.84);
+  --player-thumb-bg: var(--album-accent);
+  --player-thumb-shadow: 0 3px 12px rgba(var(--album-accent-rgb), 0.34);
+  --player-control-color: rgba(255, 255, 255, 0.88);
+  --player-control-hover-bg: rgba(var(--album-accent-rgb), 0.16);
+  --player-time: rgba(235, 235, 245, 0.58);
+  --player-play-text: white;
+  --player-play-shadow: 0 12px 28px rgba(var(--album-accent-rgb), 0.3);
+  --player-play-shadow-hover: 0 14px 32px rgba(var(--album-accent-rgb), 0.36);
 }
 
 body {

@@ -167,9 +167,12 @@ export type ThemeColorSlot =
 
 export type ThemeColorSlots = Record<ThemeColorSlot, string>;
 
+export type ColorScheme = 'auto' | 'light' | 'dark';
+
 export interface ThemePreferences {
   presetId: string;
   customColors: Partial<ThemeColorSlots>;
+  colorScheme?: ColorScheme;
 }
 
 export type OutputFormat = 'flac' | 'wav' | 'mp3';

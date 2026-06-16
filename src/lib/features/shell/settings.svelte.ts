@@ -3,6 +3,7 @@ import type { Locale } from '$lib/i18n/types';
 import type { AppPreferences, LogLevel, OutputFormat } from '$lib/types';
 import {
   DEFAULT_THEME_PREFERENCES,
+  type ColorScheme,
   type ThemeColorSlots,
 } from '$lib/themePresets';
 
@@ -28,6 +29,7 @@ export interface SettingsState {
   volume: number;
   themePresetId: string;
   themeCustomColors: Partial<ThemeColorSlots>;
+  colorScheme: ColorScheme;
   settingsLogRefreshToken: number;
   prefsReady: boolean;
   isSaving: boolean;
@@ -71,6 +73,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       theme: {
         presetId: state.themePresetId,
         customColors: state.themeCustomColors,
+        colorScheme: state.colorScheme,
       },
     });
   }
@@ -123,6 +126,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       if (!state.dirty.theme) {
         state.themePresetId = theme.presetId;
         state.themeCustomColors = { ...theme.customColors };
+        state.colorScheme = theme.colorScheme ?? 'auto';
       }
       state.volume = prefs.volume;
       deps.onLocaleChanged?.(prefs.locale);
@@ -176,6 +180,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       theme: {
         presetId: state.themePresetId,
         customColors: { ...state.themeCustomColors },
+        colorScheme: state.colorScheme,
       },
     };
 
@@ -195,6 +200,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
           const updatedTheme = normalizeThemePreferences(updated);
           state.themePresetId = updatedTheme.presetId;
           state.themeCustomColors = { ...updatedTheme.customColors };
+          state.colorScheme = updatedTheme.colorScheme ?? 'auto';
           state.persistedSnapshot = getSnapshot(state);
         } else {
           state.persistedSnapshot = requestSnapshot;

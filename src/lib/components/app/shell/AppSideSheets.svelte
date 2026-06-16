@@ -4,6 +4,7 @@
   import type { Locale } from '$lib/i18n/types';
   import {
     DEFAULT_THEME_PRESET_ID,
+    type ColorScheme,
     type ThemeColorSlots,
   } from '$lib/themePresets';
   import type { LogLevel, OutputFormat } from '$lib/types';
@@ -26,6 +27,7 @@
     locale?: Locale;
     themePresetId?: string;
     themeCustomColors?: Partial<ThemeColorSlots>;
+    colorScheme?: ColorScheme;
     settingsLogRefreshToken: number;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
@@ -46,6 +48,7 @@
     locale = $bindable<Locale>('zh-CN'),
     themePresetId = $bindable(DEFAULT_THEME_PRESET_ID),
     themeCustomColors = $bindable<Partial<ThemeColorSlots>>({}),
+    colorScheme = $bindable<ColorScheme>('auto'),
     settingsLogRefreshToken,
     notifyInfo,
     notifyError,
@@ -67,6 +70,7 @@
     bind:locale
     bind:themePresetId
     bind:themeCustomColors
+    bind:colorScheme
     logRefreshToken={settingsLogRefreshToken}
     {notifyInfo}
     {notifyError}

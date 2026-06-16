@@ -149,31 +149,29 @@
     pointer-events: none;
   }
 
-  @media (prefers-color-scheme: dark) {
-    .wave-glass {
-      border-color: rgba(255, 255, 255, 0.12);
-      box-shadow:
-        0 4px 16px rgba(0, 0, 0, 0.28),
-        0 1px 4px rgba(0, 0, 0, 0.18);
-    }
+  :global(.dark) .wave-glass {
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.28),
+      0 1px 4px rgba(0, 0, 0, 0.18);
+  }
 
-    .wave-glass-blur {
-      background:
-        linear-gradient(
-          180deg,
-          rgba(255, 255, 255, 0.12),
-          rgba(255, 255, 255, 0.035)
-        ),
-        color-mix(in srgb, var(--player-shell-bg) 18%, transparent);
-    }
-
-    .wave-glass-blur::before {
-      background: linear-gradient(
+  :global(.dark) .wave-glass-blur {
+    background:
+      linear-gradient(
         180deg,
         rgba(255, 255, 255, 0.12),
-        rgba(255, 255, 255, 0)
-      );
-    }
+        rgba(255, 255, 255, 0.035)
+      ),
+      color-mix(in srgb, var(--player-shell-bg) 18%, transparent);
+  }
+
+  :global(.dark) .wave-glass-blur::before {
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.12),
+      rgba(255, 255, 255, 0)
+    );
   }
 
   .ripple-backdrop {

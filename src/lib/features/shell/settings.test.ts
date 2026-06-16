@@ -18,6 +18,7 @@ function createState(): SettingsState {
     volume: 1,
     themePresetId: DEFAULT_THEME_PREFERENCES.presetId,
     themeCustomColors: {},
+    colorScheme: 'auto',
     settingsLogRefreshToken: 0,
     prefsReady: true,
     isSaving: false,
@@ -113,6 +114,7 @@ describe('createSettingsController theme preferences', () => {
             accent: '#123ABC',
             danger: '#AA3300',
           },
+          colorScheme: 'auto',
         },
       })
     );

@@ -15,6 +15,19 @@ pub enum Locale {
     EnUS,
 }
 
+/// 应用外观配色方案：跟随系统、浅色或深色。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ColorScheme {
+    /// 跟随操作系统的亮 / 暗模式偏好。
+    #[default]
+    Auto,
+    /// 始终使用浅色模式。
+    Light,
+    /// 始终使用深色模式。
+    Dark,
+}
+
 const DEFAULT_THEME_PRESET_ID: &str = "harubble-classic";
 const THEME_PRESET_IDS: &[&str] = &["harubble-classic", "clear-aqua", "night-console"];
 const THEME_COLOR_SLOTS: &[&str] = &[
@@ -37,6 +50,9 @@ pub(crate) struct ThemePreferences {
     pub(crate) preset_id: String,
     #[serde(default, deserialize_with = "deserialize_theme_custom_colors")]
     pub(crate) custom_colors: BTreeMap<String, String>,
+    /// 配色方案偏好；缺失时默认跟随系统。
+    #[serde(default)]
+    pub(crate) color_scheme: ColorScheme,
 }
 
 impl Default for ThemePreferences {
@@ -44,6 +60,7 @@ impl Default for ThemePreferences {
         Self {
             preset_id: default_theme_preset_id(),
             custom_colors: BTreeMap::new(),
+            color_scheme: ColorScheme::default(),
         }
     }
 }

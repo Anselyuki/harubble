@@ -242,10 +242,8 @@
     z-index: 20;
   }
 
-  @media (prefers-color-scheme: dark) {
-    .volume-hover-zone {
-      --capsule-track-bg: #2c2c2e;
-    }
+  :global(.dark) .volume-hover-zone {
+    --capsule-track-bg: #2c2c2e;
   }
 
   .capsule-track {

@@ -340,6 +340,7 @@ export function createAppRuntime() {
     volume: 1,
     themePresetId: DEFAULT_THEME_PREFERENCES.presetId,
     themeCustomColors: {},
+    colorScheme: DEFAULT_THEME_PREFERENCES.colorScheme ?? 'auto',
     settingsLogRefreshToken: 0,
     prefsReady: false,
     isSaving: false,
@@ -374,6 +375,7 @@ export function createAppRuntime() {
     theme: JSON.stringify({
       presetId: settingsState.themePresetId,
       customColors: settingsState.themeCustomColors,
+      colorScheme: settingsState.colorScheme,
     }),
   };
 
@@ -475,6 +477,7 @@ export function createAppRuntime() {
       theme: {
         presetId: settingsState.themePresetId,
         customColors: settingsState.themeCustomColors,
+        colorScheme: settingsState.colorScheme,
       },
     });
   }
@@ -483,6 +486,7 @@ export function createAppRuntime() {
     return JSON.stringify({
       presetId: settingsState.themePresetId,
       customColors: settingsState.themeCustomColors,
+      colorScheme: settingsState.colorScheme,
     });
   }
 
@@ -862,6 +866,35 @@ export function createAppRuntime() {
       shouldApplyAlbumTheme ? cachedAlbumPalette : null,
       themeColors
     );
+  });
+
+  // 配色方案：根据 colorScheme 设置在 <html> 上切换 .light / .dark 类
+  $effect(() => {
+    const scheme = settingsState.colorScheme;
+    const html = document.documentElement;
+
+    function applyScheme(isDark: boolean) {
+      html.classList.toggle('dark', isDark);
+      html.classList.toggle('light', !isDark);
+      html.style.colorScheme = isDark ? 'dark' : 'light';
+    }
+
+    if (scheme === 'light') {
+      applyScheme(false);
+      return;
+    }
+    if (scheme === 'dark') {
+      applyScheme(true);
+      return;
+    }
+
+    // auto: 跟随系统
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    applyScheme(mq.matches);
+
+    const handler = (e: MediaQueryListEvent) => applyScheme(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
   });
 
   $effect(() => {

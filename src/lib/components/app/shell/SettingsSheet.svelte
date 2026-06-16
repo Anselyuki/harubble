@@ -27,6 +27,7 @@
     isValidThemeHex,
     normalizeThemeHex,
     resolveThemeColors,
+    type ColorScheme,
     type ThemeColorSlot,
     type ThemeColorSlots,
   } from '$lib/themePresets';
@@ -48,6 +49,7 @@
     locale?: Locale;
     themePresetId?: string;
     themeCustomColors?: Partial<ThemeColorSlots>;
+    colorScheme?: ColorScheme;
     logRefreshToken?: number;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
@@ -64,6 +66,7 @@
     locale = $bindable<Locale>('zh-CN'),
     themePresetId = $bindable(DEFAULT_THEME_PRESET_ID),
     themeCustomColors = $bindable<Partial<ThemeColorSlots>>({}),
+    colorScheme = $bindable<ColorScheme>('auto'),
     logRefreshToken = 0,
     notifyInfo,
     notifyError,
@@ -125,6 +128,11 @@
       logStatusNone: m.settings_log_status_none(),
       logLoading: m.settings_log_loading(),
       logEmpty: m.settings_log_empty(),
+      appearanceLabel: m.settings_appearance_label(),
+      appearanceAuto: m.settings_appearance_auto(),
+      appearanceLight: m.settings_appearance_light(),
+      appearanceDark: m.settings_appearance_dark(),
+      appearanceSegmentAria: m.settings_appearance_segment_aria(),
     };
   });
   const formatOptions = $derived.by(() => {
@@ -464,6 +472,35 @@
           >
             <RotateCcwIcon data-icon="inline-start" />{labels.themeReset}
           </Button>
+        </div>
+        <div class="settings-field settings-appearance-field">
+          <span>{labels.appearanceLabel}</span>
+          <div
+            class="settings-segment"
+            aria-label={labels.appearanceSegmentAria}
+          >
+            <button
+              type="button"
+              class:active={colorScheme === 'auto'}
+              aria-pressed={colorScheme === 'auto'}
+              onclick={() => (colorScheme = 'auto')}
+              >{labels.appearanceAuto}</button
+            >
+            <button
+              type="button"
+              class:active={colorScheme === 'light'}
+              aria-pressed={colorScheme === 'light'}
+              onclick={() => (colorScheme = 'light')}
+              >{labels.appearanceLight}</button
+            >
+            <button
+              type="button"
+              class:active={colorScheme === 'dark'}
+              aria-pressed={colorScheme === 'dark'}
+              onclick={() => (colorScheme = 'dark')}
+              >{labels.appearanceDark}</button
+            >
+          </div>
         </div>
         <label class="settings-field" for="theme-preset-select">
           <span>{labels.themePreset}</span>
