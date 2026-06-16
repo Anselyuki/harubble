@@ -20,6 +20,7 @@
     animateSnapToWidth,
     type SidebarResizeHandle,
   } from '$lib/design/sidebar-resize';
+  import { MOTION } from '$lib/design/gsap';
 
   const runtime = createAppRuntime();
 
@@ -110,11 +111,19 @@
     if (curr === prevCollapsed) return;
     prevCollapsed = curr;
 
+    // 视图驱动的强制收缩/展开（如进入 Tag Editor）走压缩同步编排：
+    // 侧栏宽度与 logo 动画压成单一时间线，与页面转场（MOTION.PAGE）同时收尾。
+    const compact = runtime.shellStore.sidebarTransientCompact;
+
     // 同步 sidebar 宽度（animator 不再控制）
     const targetWidth = curr
       ? COLLAPSED_WIDTH
       : runtime.shellStore.sidebarWidth;
-    animateSnapToWidth(shellEl!, targetWidth);
+    animateSnapToWidth(
+      shellEl!,
+      targetWidth,
+      compact ? MOTION.PAGE : undefined
+    );
 
     if (curr) {
       animator.collapse();
@@ -336,6 +345,7 @@
         bind:locale={runtime.settingsState.locale}
         bind:themePresetId={runtime.settingsState.themePresetId}
         bind:themeCustomColors={runtime.settingsState.themeCustomColors}
+        bind:colorScheme={runtime.settingsState.colorScheme}
         settingsLogRefreshToken={runtime.settingsState.settingsLogRefreshToken}
         notifyInfo={runtime.notifyInfo}
         notifyError={runtime.notifyError}

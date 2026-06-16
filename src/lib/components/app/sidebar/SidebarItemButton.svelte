@@ -118,6 +118,7 @@
     font-weight: 500;
     cursor: pointer;
     text-align: left;
+    transition: var(--motion-hover);
   }
 
   .sidebar-item-button.collapsed {
@@ -132,7 +133,7 @@
   }
 
   .sidebar-item-button.active {
-    background: var(--surface-state);
+    background: var(--accent-light);
     color: var(--text-primary);
     font-weight: 600;
   }
