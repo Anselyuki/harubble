@@ -5,6 +5,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Switch } from '$lib/components/ui/switch/index.js';
+  import * as Tooltip from '$lib/components/ui/tooltip/index.js';
   import BellIcon from '@lucide/svelte/icons/bell';
   import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
@@ -390,298 +391,327 @@
       <Sheet.Title>{labels.title}</Sheet.Title>
       <Sheet.Description>{labels.description}</Sheet.Description>
     </Sheet.Header>
-    <div class="sheet-body">
-      <section class="sheet-section settings-section">
-        <div class="settings-section-heading">
-          <h3>{labels.sectionPreferences}</h3>
-        </div>
-        <div class="settings-field-grid">
-          <label class="settings-field" for="locale-select">
-            <span>{labels.languageLabel}</span>
-            <Select.Root type="single" bind:value={locale}
-              ><Select.Trigger
-                id="locale-select"
-                class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
-                >{currentLocaleLabel}</Select.Trigger
-              ><Select.Content class="sheet-select-content"
-                >{#each localeOptions as option (option.value)}<Select.Item
-                    value={option.value}
-                    label={option.label}
-                  />{/each}</Select.Content
-              ></Select.Root
+    <Tooltip.Provider>
+      <div class="sheet-body">
+        <section class="sheet-section settings-section">
+          <div class="settings-section-heading">
+            <h3>{labels.sectionPreferences}</h3>
+          </div>
+          <div class="settings-field-grid">
+            <label class="settings-field" for="locale-select">
+              <span>{labels.languageLabel}</span>
+              <Select.Root type="single" bind:value={locale}
+                ><Select.Trigger
+                  id="locale-select"
+                  class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
+                  >{currentLocaleLabel}</Select.Trigger
+                ><Select.Content class="sheet-select-content"
+                  >{#each localeOptions as option (option.value)}<Select.Item
+                      value={option.value}
+                      label={option.label}
+                    />{/each}</Select.Content
+                ></Select.Root
+              >
+            </label>
+            <label class="settings-field" for="format-select">
+              <span>{labels.outputFormat}</span>
+              <Select.Root type="single" bind:value={format}
+                ><Select.Trigger
+                  id="format-select"
+                  class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
+                  >{currentFormatLabel}</Select.Trigger
+                ><Select.Content class="sheet-select-content"
+                  >{#each formatOptions as option (option.value)}<Select.Item
+                      value={option.value}
+                      label={option.label}
+                    />{/each}</Select.Content
+                ></Select.Root
+              >
+            </label>
+            <label class="settings-field" for="log-level-select">
+              <span>{labels.logLevel}</span>
+              <Select.Root type="single" bind:value={logLevel}
+                ><Select.Trigger
+                  id="log-level-select"
+                  class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
+                  >{currentLogLevelLabel}</Select.Trigger
+                ><Select.Content class="sheet-select-content"
+                  >{#each logLevelOptions as option (option.value)}<Select.Item
+                      value={option.value}
+                      label={option.label}
+                    />{/each}</Select.Content
+                ></Select.Root
+              >
+            </label>
+            <div class="settings-field">
+              <label for="output-dir">{labels.outputDir}</label>
+              <div class="settings-path-row">
+                <Tooltip.Root>
+                  <Tooltip.Trigger>
+                    {#snippet child({ props })}
+                      {@const {
+                        type: _type,
+                        id: _triggerId,
+                        ...triggerProps
+                      } = props}
+                      <Input
+                        {...triggerProps}
+                        id="output-dir"
+                        class="settings-path-input h-9 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
+                        readonly
+                        value={outputDir}
+                        title={outputDir}
+                      />
+                    {/snippet}
+                  </Tooltip.Trigger>
+                  <Tooltip.Content
+                    class="settings-path-tooltip"
+                    side="top"
+                    sideOffset={8}
+                  >
+                    {outputDir}
+                  </Tooltip.Content>
+                </Tooltip.Root>
+                <Button
+                  variant="secondary"
+                  class="h-9 shrink-0"
+                  onclick={() => void handleSelectDirectory()}
+                  ><FolderOpenIcon
+                    data-icon="inline-start"
+                  />{labels.outputDirSelect}</Button
+                >
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="sheet-section settings-section">
+          <div class="settings-section-heading settings-theme-heading">
+            <h3>{labels.sectionTheme}</h3>
+            <Button
+              variant="secondary"
+              class="h-8"
+              title={labels.themeResetTitle}
+              onclick={resetThemeCustomColors}
             >
-          </label>
-          <label class="settings-field" for="format-select">
-            <span>{labels.outputFormat}</span>
-            <Select.Root type="single" bind:value={format}
-              ><Select.Trigger
-                id="format-select"
-                class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
-                >{currentFormatLabel}</Select.Trigger
-              ><Select.Content class="sheet-select-content"
-                >{#each formatOptions as option (option.value)}<Select.Item
-                    value={option.value}
-                    label={option.label}
-                  />{/each}</Select.Content
-              ></Select.Root
+              <RotateCcwIcon data-icon="inline-start" />{labels.themeReset}
+            </Button>
+          </div>
+          <div class="settings-field settings-appearance-field">
+            <span>{labels.appearanceLabel}</span>
+            <div
+              class="settings-segment"
+              aria-label={labels.appearanceSegmentAria}
             >
-          </label>
-          <label class="settings-field" for="log-level-select">
-            <span>{labels.logLevel}</span>
-            <Select.Root type="single" bind:value={logLevel}
-              ><Select.Trigger
-                id="log-level-select"
-                class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
-                >{currentLogLevelLabel}</Select.Trigger
-              ><Select.Content class="sheet-select-content"
-                >{#each logLevelOptions as option (option.value)}<Select.Item
-                    value={option.value}
-                    label={option.label}
-                  />{/each}</Select.Content
-              ></Select.Root
-            >
-          </label>
-          <div class="settings-field">
-            <label for="output-dir">{labels.outputDir}</label>
-            <div class="settings-path-row">
-              <Input
-                id="output-dir"
-                class="h-9 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
-                readonly
-                value={outputDir}
-              />
-              <Button
-                class="h-9 shrink-0"
-                onclick={() => void handleSelectDirectory()}
-                ><FolderOpenIcon
-                  data-icon="inline-start"
-                />{labels.outputDirSelect}</Button
+              <button
+                type="button"
+                class:active={colorScheme === 'auto'}
+                aria-pressed={colorScheme === 'auto'}
+                onclick={() => (colorScheme = 'auto')}
+                >{labels.appearanceAuto}</button
+              >
+              <button
+                type="button"
+                class:active={colorScheme === 'light'}
+                aria-pressed={colorScheme === 'light'}
+                onclick={() => (colorScheme = 'light')}
+                >{labels.appearanceLight}</button
+              >
+              <button
+                type="button"
+                class:active={colorScheme === 'dark'}
+                aria-pressed={colorScheme === 'dark'}
+                onclick={() => (colorScheme = 'dark')}
+                >{labels.appearanceDark}</button
               >
             </div>
           </div>
-        </div>
-      </section>
-      <section class="sheet-section settings-section">
-        <div class="settings-section-heading settings-theme-heading">
-          <h3>{labels.sectionTheme}</h3>
-          <Button
-            variant="secondary"
-            class="h-8"
-            title={labels.themeResetTitle}
-            onclick={resetThemeCustomColors}
-          >
-            <RotateCcwIcon data-icon="inline-start" />{labels.themeReset}
-          </Button>
-        </div>
-        <div class="settings-field settings-appearance-field">
-          <span>{labels.appearanceLabel}</span>
-          <div
-            class="settings-segment"
-            aria-label={labels.appearanceSegmentAria}
-          >
-            <button
-              type="button"
-              class:active={colorScheme === 'auto'}
-              aria-pressed={colorScheme === 'auto'}
-              onclick={() => (colorScheme = 'auto')}
-              >{labels.appearanceAuto}</button
+          <label class="settings-field" for="theme-preset-select">
+            <span>{labels.themePreset}</span>
+            <Select.Root
+              type="single"
+              value={themePresetId}
+              onValueChange={handleThemePresetChange}
             >
-            <button
-              type="button"
-              class:active={colorScheme === 'light'}
-              aria-pressed={colorScheme === 'light'}
-              onclick={() => (colorScheme = 'light')}
-              >{labels.appearanceLight}</button
-            >
-            <button
-              type="button"
-              class:active={colorScheme === 'dark'}
-              aria-pressed={colorScheme === 'dark'}
-              onclick={() => (colorScheme = 'dark')}
-              >{labels.appearanceDark}</button
-            >
-          </div>
-        </div>
-        <label class="settings-field" for="theme-preset-select">
-          <span>{labels.themePreset}</span>
-          <Select.Root
-            type="single"
-            value={themePresetId}
-            onValueChange={handleThemePresetChange}
-          >
-            <Select.Trigger
-              id="theme-preset-select"
-              class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
-            >
-              {currentThemePresetLabel}
-            </Select.Trigger>
-            <Select.Content class="sheet-select-content">
-              {#each themePresetOptions as preset (preset.id)}
-                <Select.Item value={preset.id} label={preset.label}>
-                  <div class="settings-theme-preset-option">
-                    <div class="settings-theme-preset-copy">
-                      <strong>{preset.label}</strong>
-                      <small>{preset.description}</small>
-                    </div>
-                    <div class="settings-theme-swatch-strip" aria-hidden="true">
-                      {#each THEME_COLOR_SLOTS as slot (slot)}
-                        <span style={`--swatch-color: ${preset.colors[slot]}`}
-                        ></span>
-                      {/each}
-                    </div>
-                  </div>
-                </Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
-        </label>
-        <div class="settings-theme-color-list">
-          {#each THEME_COLOR_SLOTS as slot (slot)}
-            {@const draft = getThemeDraft(slot)}
-            {@const invalid = draft.length > 0 && !isValidThemeHex(draft)}
-            {@const invalidHelpId = `theme-color-${slot}-error`}
-            <label class="settings-theme-color-row" for={`theme-color-${slot}`}>
-              <span
-                class="settings-theme-color-swatch"
-                style={`--swatch-color: ${resolvedThemeColors[slot]}`}
-              ></span>
-              <span class="settings-theme-color-label"
-                >{getSlotLabel(slot)}</span
+              <Select.Trigger
+                id="theme-preset-select"
+                class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
               >
-              <Input
-                id={`theme-color-${slot}`}
-                class="settings-theme-hex-input h-8 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
-                value={draft}
-                aria-invalid={invalid}
-                aria-describedby={invalid ? invalidHelpId : undefined}
-                oninput={(event) =>
-                  handleThemeTextInput(slot, event.currentTarget.value)}
-              />
-              <input
-                class="settings-theme-native-color"
-                type="color"
-                value={resolvedThemeColors[slot]}
-                aria-label={getSlotLabel(slot)}
-                oninput={(event) =>
-                  handleThemeColorInput(slot, event.currentTarget.value)}
-              />
-              {#if invalid}
-                <small id={invalidHelpId} class="settings-theme-invalid"
-                  >{labels.themeHexInvalid}</small
+                {currentThemePresetLabel}
+              </Select.Trigger>
+              <Select.Content class="sheet-select-content">
+                {#each themePresetOptions as preset (preset.id)}
+                  <Select.Item value={preset.id} label={preset.label}>
+                    <div class="settings-theme-preset-option">
+                      <div class="settings-theme-preset-copy">
+                        <strong>{preset.label}</strong>
+                        <small>{preset.description}</small>
+                      </div>
+                      <div
+                        class="settings-theme-swatch-strip"
+                        aria-hidden="true"
+                      >
+                        {#each THEME_COLOR_SLOTS as slot (slot)}
+                          <span style={`--swatch-color: ${preset.colors[slot]}`}
+                          ></span>
+                        {/each}
+                      </div>
+                    </div>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </label>
+          <div class="settings-theme-color-list">
+            {#each THEME_COLOR_SLOTS as slot (slot)}
+              {@const draft = getThemeDraft(slot)}
+              {@const invalid = draft.length > 0 && !isValidThemeHex(draft)}
+              {@const invalidHelpId = `theme-color-${slot}-error`}
+              <label
+                class="settings-theme-color-row"
+                for={`theme-color-${slot}`}
+              >
+                <span
+                  class="settings-theme-color-swatch"
+                  style={`--swatch-color: ${resolvedThemeColors[slot]}`}
+                ></span>
+                <span class="settings-theme-color-label"
+                  >{getSlotLabel(slot)}</span
                 >
-              {/if}
-            </label>
-          {/each}
-        </div>
-      </section>
-      <section class="sheet-section settings-section">
-        <div class="settings-section-heading">
-          <h3>{labels.sectionNotifications}</h3>
-          <Button
-            variant="secondary"
-            disabled={isSendingTestNotification}
-            onclick={() => void handleSendTestNotification()}
-            ><BellIcon data-icon="inline-start" />{isSendingTestNotification
-              ? labels.notificationTestSending
-              : labels.notificationTest}</Button
-          >
-        </div>
-        <div class="settings-toggle-list">
-          <label class="settings-toggle"
-            ><span
-              ><strong>{labels.lyricsTitle}</strong><small
-                >{labels.lyricsDescription}</small
-              ></span
-            ><Switch bind:checked={downloadLyrics} /></label
-          >
-          <label class="settings-toggle"
-            ><span
-              ><strong>{labels.notifyDownloadTitle}</strong><small
-                >{labels.notifyDownloadDescription}</small
-              ></span
-            ><Switch bind:checked={notifyOnDownloadComplete} /></label
-          >
-          <label class="settings-toggle"
-            ><span
-              ><strong>{labels.notifyPlaybackTitle}</strong><small
-                >{labels.notifyPlaybackDescription}</small
-              ></span
-            ><Switch bind:checked={notifyOnPlaybackChange} /></label
-          >
-        </div>
-      </section>
-      <section class="settings-section settings-action-section">
-        <div class="settings-section-heading">
-          <div>
-            <h3>{labels.sectionCache}</h3>
-            <p>{labels.cacheDescription}</p>
-          </div>
-          <Button
-            variant="secondary"
-            disabled={isClearingAudioCache}
-            onclick={() => void handleClearAudioCache()}
-            ><Trash2Icon data-icon="inline-start" />{isClearingAudioCache
-              ? labels.cacheClearing
-              : labels.cacheClear}</Button
-          >
-        </div>
-      </section>
-      <section class="sheet-section settings-section">
-        <div class="settings-section-heading settings-log-heading">
-          <div>
-            <h3>{labels.sectionLogs}</h3>
-            <p>{labels.logsDescription}</p>
-          </div>
-          <div class="settings-segment" aria-label={labels.logSegmentAria}>
-            <button
-              type="button"
-              class:active={logFileKind === 'session'}
-              aria-pressed={logFileKind === 'session'}
-              onclick={() => void refreshLogs('session')}
-              >{labels.logSession}</button
-            >
-            <button
-              type="button"
-              class:active={logFileKind === 'persistent'}
-              aria-pressed={logFileKind === 'persistent'}
-              onclick={() => void refreshLogs('persistent')}
-              >{labels.logPersistent}</button
-            >
-          </div>
-        </div>
-        <p class="settings-log-status">
-          {labels.logSession}: {logFileStatus?.hasSessionLog
-            ? labels.logStatusAvailable
-            : labels.logStatusNone} · {labels.logPersistent}: {logFileStatus?.hasPersistentLog
-            ? labels.logStatusAvailable
-            : labels.logStatusNone}
-        </p>
-        {#if logViewerLoading}
-          <div class="settings-empty-state">{labels.logLoading}</div>
-        {:else if logViewerError}
-          <div class="settings-error-state">{logViewerError}</div>
-        {:else if logRecords.length > 0}
-          <div class="settings-log-list">
-            {#each logRecords as record (record.id)}
-              <article class="settings-log-record">
-                <div class="settings-log-meta">
-                  <span>{record.level}</span><time>{record.ts}</time>
-                </div>
-                <p class="settings-log-message">{record.message}</p>
-                <p class="settings-log-source">
-                  {record.domain} · {record.code}
-                </p>
-                {#if record.details}<p class="settings-log-details">
-                    {record.details}
-                  </p>{/if}
-              </article>
+                <Input
+                  id={`theme-color-${slot}`}
+                  class="settings-theme-hex-input h-8 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
+                  value={draft}
+                  aria-invalid={invalid}
+                  aria-describedby={invalid ? invalidHelpId : undefined}
+                  oninput={(event) =>
+                    handleThemeTextInput(slot, event.currentTarget.value)}
+                />
+                <input
+                  class="settings-theme-native-color"
+                  type="color"
+                  value={resolvedThemeColors[slot]}
+                  aria-label={getSlotLabel(slot)}
+                  oninput={(event) =>
+                    handleThemeColorInput(slot, event.currentTarget.value)}
+                />
+                {#if invalid}
+                  <small id={invalidHelpId} class="settings-theme-invalid"
+                    >{labels.themeHexInvalid}</small
+                  >
+                {/if}
+              </label>
             {/each}
           </div>
-        {:else}
-          <div class="settings-empty-state">{labels.logEmpty}</div>
-        {/if}
-      </section>
-    </div>
+        </section>
+        <section class="sheet-section settings-section">
+          <div class="settings-section-heading">
+            <h3>{labels.sectionNotifications}</h3>
+            <Button
+              variant="secondary"
+              disabled={isSendingTestNotification}
+              onclick={() => void handleSendTestNotification()}
+              ><BellIcon data-icon="inline-start" />{isSendingTestNotification
+                ? labels.notificationTestSending
+                : labels.notificationTest}</Button
+            >
+          </div>
+          <div class="settings-toggle-list">
+            <label class="settings-toggle"
+              ><span
+                ><strong>{labels.lyricsTitle}</strong><small
+                  >{labels.lyricsDescription}</small
+                ></span
+              ><Switch bind:checked={downloadLyrics} /></label
+            >
+            <label class="settings-toggle"
+              ><span
+                ><strong>{labels.notifyDownloadTitle}</strong><small
+                  >{labels.notifyDownloadDescription}</small
+                ></span
+              ><Switch bind:checked={notifyOnDownloadComplete} /></label
+            >
+            <label class="settings-toggle"
+              ><span
+                ><strong>{labels.notifyPlaybackTitle}</strong><small
+                  >{labels.notifyPlaybackDescription}</small
+                ></span
+              ><Switch bind:checked={notifyOnPlaybackChange} /></label
+            >
+          </div>
+        </section>
+        <section class="settings-section settings-action-section">
+          <div class="settings-section-heading">
+            <div>
+              <h3>{labels.sectionCache}</h3>
+              <p>{labels.cacheDescription}</p>
+            </div>
+            <Button
+              variant="secondary"
+              disabled={isClearingAudioCache}
+              onclick={() => void handleClearAudioCache()}
+              ><Trash2Icon data-icon="inline-start" />{isClearingAudioCache
+                ? labels.cacheClearing
+                : labels.cacheClear}</Button
+            >
+          </div>
+        </section>
+        <section class="sheet-section settings-section">
+          <div class="settings-section-heading settings-log-heading">
+            <div>
+              <h3>{labels.sectionLogs}</h3>
+              <p>{labels.logsDescription}</p>
+            </div>
+            <div class="settings-segment" aria-label={labels.logSegmentAria}>
+              <button
+                type="button"
+                class:active={logFileKind === 'session'}
+                aria-pressed={logFileKind === 'session'}
+                onclick={() => void refreshLogs('session')}
+                >{labels.logSession}</button
+              >
+              <button
+                type="button"
+                class:active={logFileKind === 'persistent'}
+                aria-pressed={logFileKind === 'persistent'}
+                onclick={() => void refreshLogs('persistent')}
+                >{labels.logPersistent}</button
+              >
+            </div>
+          </div>
+          <p class="settings-log-status">
+            {labels.logSession}: {logFileStatus?.hasSessionLog
+              ? labels.logStatusAvailable
+              : labels.logStatusNone} · {labels.logPersistent}: {logFileStatus?.hasPersistentLog
+              ? labels.logStatusAvailable
+              : labels.logStatusNone}
+          </p>
+          {#if logViewerLoading}
+            <div class="settings-empty-state">{labels.logLoading}</div>
+          {:else if logViewerError}
+            <div class="settings-error-state">{logViewerError}</div>
+          {:else if logRecords.length > 0}
+            <div class="settings-log-list">
+              {#each logRecords as record (record.id)}
+                <article class="settings-log-record">
+                  <div class="settings-log-meta">
+                    <span>{record.level}</span><time>{record.ts}</time>
+                  </div>
+                  <p class="settings-log-message">{record.message}</p>
+                  <p class="settings-log-source">
+                    {record.domain} · {record.code}
+                  </p>
+                  {#if record.details}<p class="settings-log-details">
+                      {record.details}
+                    </p>{/if}
+                </article>
+              {/each}
+            </div>
+          {:else}
+            <div class="settings-empty-state">{labels.logEmpty}</div>
+          {/if}
+        </section>
+      </div>
+    </Tooltip.Provider>
   </Sheet.Content>
 </Sheet.Root>
 
@@ -694,6 +724,12 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
+  }
+  .settings-section-heading > :first-child {
+    min-width: 0;
+  }
+  .settings-section-heading > :global([data-slot='button']) {
+    flex-shrink: 0;
   }
   .settings-section-heading h3 {
     margin: 0;
@@ -711,6 +747,7 @@
   .settings-field-grid {
     display: grid;
     gap: 10px;
+    min-width: 0;
   }
   .settings-field {
     display: grid;
@@ -724,6 +761,22 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
+    min-width: 0;
+  }
+  :global(.settings-path-input) {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+  }
+  :global(.settings-path-tooltip) {
+    z-index: 220;
+    max-width: min(28rem, calc(100vw - 32px));
+    overflow-wrap: anywhere;
+    line-height: 1.45;
+    text-align: left;
+    white-space: normal;
   }
   .settings-toggle-list {
     display: grid;
@@ -871,15 +924,18 @@
   }
   .settings-segment {
     display: inline-grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     overflow: hidden;
     border: 1px solid var(--sheet-border);
     border-radius: 8px;
     background: var(--sheet-row-bg);
     padding: 2px;
+    flex-shrink: 0;
   }
   .settings-segment button {
     height: 26px;
+    padding-inline: 10px;
     border: 0;
     border-radius: 6px;
     background: transparent;
@@ -887,6 +943,7 @@
     font: inherit;
     font-size: 12px;
     font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
   }
   .settings-segment button.active {

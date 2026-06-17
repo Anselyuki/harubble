@@ -4,10 +4,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+/*
+ * 全局 reset 必须放进 base layer。
+ * Tailwind v4 通过 @import 'tailwindcss' 声明了 theme/base/components/utilities
+ * 四个 layer，未分层（unlayered）的规则在 CSS 层叠中会胜过任何分层规则，
+ * 与选择器优先级无关。若这里的 reset 不分层，`* { padding: 0 }` 会盖掉
+ * Button 等组件的 spacing 工具类（位于 utilities layer），导致按钮失去内边距、
+ * icon 与文字撑出背景框。放进 base layer 后，utilities 仍能正常覆盖它。
+ */
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
 }
 
 :root {
