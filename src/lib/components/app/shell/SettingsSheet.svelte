@@ -1,15 +1,12 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import * as Sheet from '$lib/components/ui/sheet/index.js';
-  import * as Select from '$lib/components/ui/select/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
-  import { Input } from '$lib/components/ui/input/index.js';
-  import { Switch } from '$lib/components/ui/switch/index.js';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
-  import BellIcon from '@lucide/svelte/icons/bell';
-  import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
-  import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
-  import Trash2Icon from '@lucide/svelte/icons/trash-2';
+  import PreferencesSettingsSection from '$lib/components/app/shell/settings/PreferencesSettingsSection.svelte';
+  import ThemeSettingsSection from '$lib/components/app/shell/settings/ThemeSettingsSection.svelte';
+  import NotificationsSettingsSection from '$lib/components/app/shell/settings/NotificationsSettingsSection.svelte';
+  import CacheSettingsSection from '$lib/components/app/shell/settings/CacheSettingsSection.svelte';
+  import LogsSettingsSection from '$lib/components/app/shell/settings/LogsSettingsSection.svelte';
   import {
     clearAudioCache,
     getLogFileStatus,
@@ -393,363 +390,125 @@
     </Sheet.Header>
     <Tooltip.Provider>
       <div class="sheet-body">
-        <section class="sheet-section settings-section">
-          <div class="settings-section-heading">
-            <h3>{labels.sectionPreferences}</h3>
-          </div>
-          <div class="settings-field-grid">
-            <label class="settings-field" for="locale-select">
-              <span>{labels.languageLabel}</span>
-              <Select.Root type="single" bind:value={locale}
-                ><Select.Trigger
-                  id="locale-select"
-                  class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
-                  >{currentLocaleLabel}</Select.Trigger
-                ><Select.Content class="sheet-select-content"
-                  >{#each localeOptions as option (option.value)}<Select.Item
-                      value={option.value}
-                      label={option.label}
-                    />{/each}</Select.Content
-                ></Select.Root
-              >
-            </label>
-            <label class="settings-field" for="format-select">
-              <span>{labels.outputFormat}</span>
-              <Select.Root type="single" bind:value={format}
-                ><Select.Trigger
-                  id="format-select"
-                  class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
-                  >{currentFormatLabel}</Select.Trigger
-                ><Select.Content class="sheet-select-content"
-                  >{#each formatOptions as option (option.value)}<Select.Item
-                      value={option.value}
-                      label={option.label}
-                    />{/each}</Select.Content
-                ></Select.Root
-              >
-            </label>
-            <label class="settings-field" for="log-level-select">
-              <span>{labels.logLevel}</span>
-              <Select.Root type="single" bind:value={logLevel}
-                ><Select.Trigger
-                  id="log-level-select"
-                  class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
-                  >{currentLogLevelLabel}</Select.Trigger
-                ><Select.Content class="sheet-select-content"
-                  >{#each logLevelOptions as option (option.value)}<Select.Item
-                      value={option.value}
-                      label={option.label}
-                    />{/each}</Select.Content
-                ></Select.Root
-              >
-            </label>
-            <div class="settings-field">
-              <label for="output-dir">{labels.outputDir}</label>
-              <div class="settings-path-row">
-                <Tooltip.Root>
-                  <Tooltip.Trigger>
-                    {#snippet child({ props })}
-                      {@const {
-                        type: _type,
-                        id: _triggerId,
-                        ...triggerProps
-                      } = props}
-                      <Input
-                        {...triggerProps}
-                        id="output-dir"
-                        class="settings-path-input h-9 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
-                        readonly
-                        value={outputDir}
-                        title={outputDir}
-                      />
-                    {/snippet}
-                  </Tooltip.Trigger>
-                  <Tooltip.Content
-                    class="settings-path-tooltip"
-                    side="top"
-                    sideOffset={8}
-                  >
-                    {outputDir}
-                  </Tooltip.Content>
-                </Tooltip.Root>
-                <Button
-                  variant="secondary"
-                  class="h-9 shrink-0"
-                  onclick={() => void handleSelectDirectory()}
-                  ><FolderOpenIcon
-                    data-icon="inline-start"
-                  />{labels.outputDirSelect}</Button
-                >
-              </div>
-            </div>
-          </div>
-        </section>
-        <section class="sheet-section settings-section">
-          <div class="settings-section-heading settings-theme-heading">
-            <h3>{labels.sectionTheme}</h3>
-            <Button
-              variant="secondary"
-              class="h-8"
-              title={labels.themeResetTitle}
-              onclick={resetThemeCustomColors}
-            >
-              <RotateCcwIcon data-icon="inline-start" />{labels.themeReset}
-            </Button>
-          </div>
-          <div class="settings-field settings-appearance-field">
-            <span>{labels.appearanceLabel}</span>
-            <div
-              class="settings-segment"
-              aria-label={labels.appearanceSegmentAria}
-            >
-              <button
-                type="button"
-                class:active={colorScheme === 'auto'}
-                aria-pressed={colorScheme === 'auto'}
-                onclick={() => (colorScheme = 'auto')}
-                >{labels.appearanceAuto}</button
-              >
-              <button
-                type="button"
-                class:active={colorScheme === 'light'}
-                aria-pressed={colorScheme === 'light'}
-                onclick={() => (colorScheme = 'light')}
-                >{labels.appearanceLight}</button
-              >
-              <button
-                type="button"
-                class:active={colorScheme === 'dark'}
-                aria-pressed={colorScheme === 'dark'}
-                onclick={() => (colorScheme = 'dark')}
-                >{labels.appearanceDark}</button
-              >
-            </div>
-          </div>
-          <label class="settings-field" for="theme-preset-select">
-            <span>{labels.themePreset}</span>
-            <Select.Root
-              type="single"
-              value={themePresetId}
-              onValueChange={handleThemePresetChange}
-            >
-              <Select.Trigger
-                id="theme-preset-select"
-                class="sheet-select-trigger h-9 w-full border-[var(--sheet-border)]"
-              >
-                {currentThemePresetLabel}
-              </Select.Trigger>
-              <Select.Content class="sheet-select-content">
-                {#each themePresetOptions as preset (preset.id)}
-                  <Select.Item value={preset.id} label={preset.label}>
-                    <div class="settings-theme-preset-option">
-                      <div class="settings-theme-preset-copy">
-                        <strong>{preset.label}</strong>
-                        <small>{preset.description}</small>
-                      </div>
-                      <div
-                        class="settings-theme-swatch-strip"
-                        aria-hidden="true"
-                      >
-                        {#each THEME_COLOR_SLOTS as slot (slot)}
-                          <span style={`--swatch-color: ${preset.colors[slot]}`}
-                          ></span>
-                        {/each}
-                      </div>
-                    </div>
-                  </Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          </label>
-          <div class="settings-theme-color-list">
-            {#each THEME_COLOR_SLOTS as slot (slot)}
-              {@const draft = getThemeDraft(slot)}
-              {@const invalid = draft.length > 0 && !isValidThemeHex(draft)}
-              {@const invalidHelpId = `theme-color-${slot}-error`}
-              <label
-                class="settings-theme-color-row"
-                for={`theme-color-${slot}`}
-              >
-                <span
-                  class="settings-theme-color-swatch"
-                  style={`--swatch-color: ${resolvedThemeColors[slot]}`}
-                ></span>
-                <span class="settings-theme-color-label"
-                  >{getSlotLabel(slot)}</span
-                >
-                <Input
-                  id={`theme-color-${slot}`}
-                  class="settings-theme-hex-input h-8 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
-                  value={draft}
-                  aria-invalid={invalid}
-                  aria-describedby={invalid ? invalidHelpId : undefined}
-                  oninput={(event) =>
-                    handleThemeTextInput(slot, event.currentTarget.value)}
-                />
-                <input
-                  class="settings-theme-native-color"
-                  type="color"
-                  value={resolvedThemeColors[slot]}
-                  aria-label={getSlotLabel(slot)}
-                  oninput={(event) =>
-                    handleThemeColorInput(slot, event.currentTarget.value)}
-                />
-                {#if invalid}
-                  <small id={invalidHelpId} class="settings-theme-invalid"
-                    >{labels.themeHexInvalid}</small
-                  >
-                {/if}
-              </label>
-            {/each}
-          </div>
-        </section>
-        <section class="sheet-section settings-section">
-          <div class="settings-section-heading">
-            <h3>{labels.sectionNotifications}</h3>
-            <Button
-              variant="secondary"
-              disabled={isSendingTestNotification}
-              onclick={() => void handleSendTestNotification()}
-              ><BellIcon data-icon="inline-start" />{isSendingTestNotification
-                ? labels.notificationTestSending
-                : labels.notificationTest}</Button
-            >
-          </div>
-          <div class="settings-toggle-list">
-            <label class="settings-toggle"
-              ><span
-                ><strong>{labels.lyricsTitle}</strong><small
-                  >{labels.lyricsDescription}</small
-                ></span
-              ><Switch bind:checked={downloadLyrics} /></label
-            >
-            <label class="settings-toggle"
-              ><span
-                ><strong>{labels.notifyDownloadTitle}</strong><small
-                  >{labels.notifyDownloadDescription}</small
-                ></span
-              ><Switch bind:checked={notifyOnDownloadComplete} /></label
-            >
-            <label class="settings-toggle"
-              ><span
-                ><strong>{labels.notifyPlaybackTitle}</strong><small
-                  >{labels.notifyPlaybackDescription}</small
-                ></span
-              ><Switch bind:checked={notifyOnPlaybackChange} /></label
-            >
-          </div>
-        </section>
-        <section class="settings-section settings-action-section">
-          <div class="settings-section-heading">
-            <div>
-              <h3>{labels.sectionCache}</h3>
-              <p>{labels.cacheDescription}</p>
-            </div>
-            <Button
-              variant="secondary"
-              disabled={isClearingAudioCache}
-              onclick={() => void handleClearAudioCache()}
-              ><Trash2Icon data-icon="inline-start" />{isClearingAudioCache
-                ? labels.cacheClearing
-                : labels.cacheClear}</Button
-            >
-          </div>
-        </section>
-        <section class="sheet-section settings-section">
-          <div class="settings-section-heading settings-log-heading">
-            <div>
-              <h3>{labels.sectionLogs}</h3>
-              <p>{labels.logsDescription}</p>
-            </div>
-            <div class="settings-segment" aria-label={labels.logSegmentAria}>
-              <button
-                type="button"
-                class:active={logFileKind === 'session'}
-                aria-pressed={logFileKind === 'session'}
-                onclick={() => void refreshLogs('session')}
-                >{labels.logSession}</button
-              >
-              <button
-                type="button"
-                class:active={logFileKind === 'persistent'}
-                aria-pressed={logFileKind === 'persistent'}
-                onclick={() => void refreshLogs('persistent')}
-                >{labels.logPersistent}</button
-              >
-            </div>
-          </div>
-          <p class="settings-log-status">
-            {labels.logSession}: {logFileStatus?.hasSessionLog
-              ? labels.logStatusAvailable
-              : labels.logStatusNone} · {labels.logPersistent}: {logFileStatus?.hasPersistentLog
-              ? labels.logStatusAvailable
-              : labels.logStatusNone}
-          </p>
-          {#if logViewerLoading}
-            <div class="settings-empty-state">{labels.logLoading}</div>
-          {:else if logViewerError}
-            <div class="settings-error-state">{logViewerError}</div>
-          {:else if logRecords.length > 0}
-            <div class="settings-log-list">
-              {#each logRecords as record (record.id)}
-                <article class="settings-log-record">
-                  <div class="settings-log-meta">
-                    <span>{record.level}</span><time>{record.ts}</time>
-                  </div>
-                  <p class="settings-log-message">{record.message}</p>
-                  <p class="settings-log-source">
-                    {record.domain} · {record.code}
-                  </p>
-                  {#if record.details}<p class="settings-log-details">
-                      {record.details}
-                    </p>{/if}
-                </article>
-              {/each}
-            </div>
-          {:else}
-            <div class="settings-empty-state">{labels.logEmpty}</div>
-          {/if}
-        </section>
+        <PreferencesSettingsSection
+          bind:locale
+          bind:format
+          bind:logLevel
+          {outputDir}
+          {localeOptions}
+          {formatOptions}
+          {logLevelOptions}
+          {currentLocaleLabel}
+          {currentFormatLabel}
+          {currentLogLevelLabel}
+          sectionTitle={labels.sectionPreferences}
+          languageLabel={labels.languageLabel}
+          outputFormatLabel={labels.outputFormat}
+          logLevelLabel={labels.logLevel}
+          outputDirLabel={labels.outputDir}
+          outputDirSelectLabel={labels.outputDirSelect}
+          onSelectDirectory={() => void handleSelectDirectory()}
+        />
+        <ThemeSettingsSection
+          bind:colorScheme
+          {themePresetId}
+          {resolvedThemeColors}
+          {themePresetOptions}
+          {currentThemePresetLabel}
+          {getThemeDraft}
+          {getSlotLabel}
+          {isValidThemeHex}
+          sectionTitle={labels.sectionTheme}
+          themePresetLabel={labels.themePreset}
+          themeResetLabel={labels.themeReset}
+          themeResetTitle={labels.themeResetTitle}
+          themeHexInvalidLabel={labels.themeHexInvalid}
+          appearanceLabel={labels.appearanceLabel}
+          appearanceAutoLabel={labels.appearanceAuto}
+          appearanceLightLabel={labels.appearanceLight}
+          appearanceDarkLabel={labels.appearanceDark}
+          appearanceSegmentAria={labels.appearanceSegmentAria}
+          onThemePresetChange={handleThemePresetChange}
+          onThemeTextInput={handleThemeTextInput}
+          onThemeColorInput={handleThemeColorInput}
+          onResetThemeCustomColors={resetThemeCustomColors}
+        />
+        <NotificationsSettingsSection
+          bind:downloadLyrics
+          bind:notifyOnDownloadComplete
+          bind:notifyOnPlaybackChange
+          {isSendingTestNotification}
+          sectionTitle={labels.sectionNotifications}
+          notificationTestLabel={labels.notificationTest}
+          notificationTestSendingLabel={labels.notificationTestSending}
+          lyricsTitle={labels.lyricsTitle}
+          lyricsDescription={labels.lyricsDescription}
+          notifyDownloadTitle={labels.notifyDownloadTitle}
+          notifyDownloadDescription={labels.notifyDownloadDescription}
+          notifyPlaybackTitle={labels.notifyPlaybackTitle}
+          notifyPlaybackDescription={labels.notifyPlaybackDescription}
+          onSendTestNotification={() => void handleSendTestNotification()}
+        />
+        <CacheSettingsSection
+          {isClearingAudioCache}
+          sectionTitle={labels.sectionCache}
+          cacheDescription={labels.cacheDescription}
+          cacheClearLabel={labels.cacheClear}
+          cacheClearingLabel={labels.cacheClearing}
+          onClearAudioCache={() => void handleClearAudioCache()}
+        />
+        <LogsSettingsSection
+          {logFileKind}
+          {logRecords}
+          {logFileStatus}
+          {logViewerLoading}
+          {logViewerError}
+          sectionTitle={labels.sectionLogs}
+          logsDescription={labels.logsDescription}
+          logSegmentAria={labels.logSegmentAria}
+          logSessionLabel={labels.logSession}
+          logPersistentLabel={labels.logPersistent}
+          logStatusAvailableLabel={labels.logStatusAvailable}
+          logStatusNoneLabel={labels.logStatusNone}
+          logLoadingLabel={labels.logLoading}
+          logEmptyLabel={labels.logEmpty}
+          onRefreshLogs={(kind) => void refreshLogs(kind)}
+        />
       </div>
     </Tooltip.Provider>
   </Sheet.Content>
 </Sheet.Root>
 
 <style>
-  .settings-section {
+  :global(.settings-section) {
     gap: 12px;
   }
-  .settings-section-heading {
+  :global(.settings-section-heading) {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
   }
-  .settings-section-heading > :first-child {
+  :global(.settings-section-heading > :first-child) {
     min-width: 0;
   }
-  .settings-section-heading > :global([data-slot='button']) {
+  :global(.settings-section-heading > [data-slot='button']) {
     flex-shrink: 0;
   }
-  .settings-section-heading h3 {
+  :global(.settings-section-heading h3) {
     margin: 0;
     color: var(--text-primary);
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0;
   }
-  .settings-section-heading p {
+  :global(.settings-section-heading p) {
     margin: 3px 0 0;
     color: var(--text-secondary);
     font-size: 12px;
     line-height: 1.45;
   }
-  .settings-field-grid {
-    display: grid;
-    gap: 10px;
-    min-width: 0;
-  }
-  .settings-field {
+  :global(.settings-field) {
     display: grid;
     gap: 6px;
     min-width: 0;
@@ -757,172 +516,7 @@
     font-size: 12px;
     font-weight: 600;
   }
-  .settings-path-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
-    min-width: 0;
-  }
-  :global(.settings-path-input) {
-    width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    direction: rtl;
-    text-align: left;
-  }
-  :global(.settings-path-tooltip) {
-    z-index: 220;
-    max-width: min(28rem, calc(100vw - 32px));
-    overflow-wrap: anywhere;
-    line-height: 1.45;
-    text-align: left;
-    white-space: normal;
-  }
-  .settings-toggle-list {
-    display: grid;
-    overflow: hidden;
-    border: 1px solid var(--sheet-border);
-    border-radius: 8px;
-  }
-  .settings-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    min-height: 58px;
-    padding: 10px 12px;
-    background: var(--sheet-row-bg);
-    cursor: pointer;
-  }
-  .settings-toggle + .settings-toggle {
-    border-top: 1px solid var(--sheet-border);
-  }
-  .settings-toggle:hover {
-    background: var(--sheet-row-hover-bg);
-  }
-  .settings-toggle span {
-    display: grid;
-    gap: 3px;
-    min-width: 0;
-  }
-  .settings-toggle strong {
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .settings-toggle small {
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1.35;
-  }
-  .settings-action-section {
-    padding-block: 13px;
-  }
-  .settings-log-heading {
-    align-items: center;
-  }
-  .settings-theme-heading {
-    align-items: center;
-  }
-  .settings-theme-preset-option {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-  }
-  .settings-theme-preset-copy {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-  }
-  .settings-theme-preset-copy strong {
-    overflow: hidden;
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1.25;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .settings-theme-preset-copy small {
-    overflow: hidden;
-    color: var(--text-secondary);
-    font-size: 11px;
-    line-height: 1.3;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .settings-theme-swatch-strip {
-    display: grid;
-    grid-template-columns: repeat(6, 10px);
-    overflow: hidden;
-    border: 1px solid var(--sheet-border);
-    border-radius: 999px;
-  }
-  .settings-theme-swatch-strip span,
-  .settings-theme-color-swatch {
-    background: var(--swatch-color);
-  }
-  .settings-theme-swatch-strip span {
-    width: 10px;
-    height: 18px;
-  }
-  .settings-theme-color-list {
-    display: grid;
-    gap: 7px;
-  }
-  .settings-theme-color-row {
-    display: grid;
-    grid-template-columns: 18px minmax(5.5rem, 1fr) minmax(6.5rem, 8rem) 34px;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-  .settings-theme-color-swatch {
-    width: 18px;
-    height: 18px;
-    border: 1px solid var(--sheet-border);
-    border-radius: 999px;
-    box-shadow: inset 0 1px 0 color-mix(in srgb, white 36%, transparent);
-  }
-  .settings-theme-color-label {
-    min-width: 0;
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.3;
-  }
-  :global(.settings-theme-hex-input) {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    text-transform: uppercase;
-  }
-  :global(.settings-theme-hex-input[aria-invalid='true']) {
-    border-color: color-mix(
-      in srgb,
-      var(--destructive) 55%,
-      var(--sheet-border)
-    );
-    color: var(--destructive);
-  }
-  .settings-theme-native-color {
-    width: 34px;
-    height: 32px;
-    border: 1px solid var(--sheet-border);
-    border-radius: 7px;
-    background: var(--sheet-control-bg);
-    padding: 3px;
-  }
-  .settings-theme-invalid {
-    grid-column: 3 / 5;
-    margin-top: -3px;
-    color: var(--destructive);
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 1.35;
-  }
-  .settings-segment {
+  :global(.settings-segment) {
     display: inline-grid;
     grid-auto-flow: column;
     grid-auto-columns: minmax(0, 1fr);
@@ -933,7 +527,7 @@
     padding: 2px;
     flex-shrink: 0;
   }
-  .settings-segment button {
+  :global(.settings-segment button) {
     height: 26px;
     padding-inline: 10px;
     border: 0;
@@ -946,99 +540,14 @@
     white-space: nowrap;
     cursor: pointer;
   }
-  .settings-segment button.active {
+  :global(.settings-segment button.active) {
     background: var(--accent);
     color: white;
   }
-  .settings-log-status {
-    margin: -4px 0 0;
-    color: var(--text-secondary);
-    font-size: 11px;
-    line-height: 1.4;
-  }
-  .settings-log-list {
-    display: grid;
-    gap: 8px;
-    max-height: 240px;
-    overflow-y: auto;
-    border: 1px solid var(--sheet-border);
-    border-radius: 8px;
-    background: var(--sheet-row-bg);
-    padding: 8px;
-  }
-  .settings-log-record {
-    display: grid;
-    gap: 4px;
-    border: 1px solid var(--sheet-border);
-    border-radius: 7px;
-    background: color-mix(in srgb, var(--bg-primary) 52%, transparent);
-    padding: 8px 10px;
-  }
-  .settings-log-meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    color: var(--text-secondary);
-    font-size: 11px;
-    line-height: 1.35;
-  }
-  .settings-log-meta span {
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-  .settings-log-message {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.45;
-  }
-  .settings-log-source,
-  .settings-log-details {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 11px;
-    line-height: 1.4;
-  }
-  .settings-log-details {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .settings-empty-state,
-  .settings-error-state {
-    border: 1px solid var(--sheet-border);
-    border-radius: 8px;
-    background: var(--sheet-row-bg);
-    padding: 14px 12px;
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  .settings-error-state {
-    border-color: color-mix(in srgb, var(--destructive) 40%, transparent);
-    background: color-mix(in srgb, var(--destructive) 10%, transparent);
-    color: var(--destructive);
-  }
   @media (max-width: 420px) {
-    .settings-theme-color-row {
-      grid-template-columns: 18px minmax(0, 1fr) 34px;
-    }
-    :global(.settings-theme-hex-input) {
-      grid-column: 2 / 4;
-    }
-    .settings-theme-invalid {
-      grid-column: 2 / 4;
-    }
-    .settings-path-row,
-    .settings-section-heading {
-      grid-template-columns: 1fr;
-    }
-    .settings-section-heading {
+    :global(.settings-section-heading) {
       display: grid;
-    }
-    .settings-log-heading {
-      align-items: stretch;
+      grid-template-columns: 1fr;
     }
   }
 </style>
