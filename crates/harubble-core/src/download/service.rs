@@ -110,6 +110,24 @@ pub struct TaskStateUpdate {
     pub should_persist: bool,
 }
 
+/// 已完成异步准备但尚未注册到队列中的下载批次。
+///
+/// 该结构体由 [`DownloadService::prepare_job`] 返回，封装了经过请求验证、ID 生成
+/// 与上游 API 查询后的批次元数据与子任务列表，可稳定交由
+/// [`DownloadService::register_prepared_job`] 在短临界区内完成入队。
+pub struct PreparedJob {
+    /// 已生成的批次唯一 ID。
+    pub id: String,
+    /// 批次类型。
+    pub kind: DownloadJobKind,
+    /// 下载选项（输出目录、格式等）。
+    pub options: crate::download::model::DownloadOptions,
+    /// 补齐后的批次标题。
+    pub title: String,
+    /// 已构建的子任务列表。
+    pub tasks: Vec<InternalDownloadTask>,
+}
+
 /// 下载批次管理服务。
 ///
 /// 负责创建批次、维护任务队列、处理取消/重试与生成前端可消费的管理器快照；
@@ -144,6 +162,15 @@ impl DownloadService {
         }
     }
 
+    /// 返回当前服务使用的 ID 生成器引用。
+    ///
+    /// 由于 [`IdGenerator`] 内部使用原子计数器，多线程/多任务调用是安全的。
+    /// 适用于调用方需要在不持有下载服务独占锁的前提下，将 ID 生成器传给
+    /// [`prepare_job`] 进行无锁异步准备。
+    pub fn id_generator(&self) -> &IdGenerator {
+        &self.id_generator
+    }
+
     /// 获取当前下载管理器快照。
     ///
     /// 适用于前端全量同步、持久化落盘或测试断言；返回值为当前内存状态的只读拷贝。
@@ -171,169 +198,30 @@ impl DownloadService {
         api: &ApiClient,
         request: CreateDownloadJobRequest,
     ) -> Result<DownloadJobSnapshot, DownloadServiceError> {
-        validate_request(&request)?;
+        let prepared = prepare_job(&self.id_generator, api, request).await?;
+        Ok(self.register_prepared_job(prepared))
+    }
 
-        let job_id = self.id_generator.next_job_id();
-        let (title, tasks) = self.build_job_tasks(api, &job_id, &request).await?;
-
-        // Acquire the lock only for writing the job — brief, no await inside.
+    /// 将已准备好的批次注册到下载队列中。
+    ///
+    /// 该方法为纯同步的内存操作（仅 `push` 到 `Vec`），适合在短临界区内调用。
+    pub fn register_prepared_job(&mut self, prepared: PreparedJob) -> DownloadJobSnapshot {
         let job = DownloadJob {
-            id: job_id,
-            kind: request.kind,
+            id: prepared.id,
+            kind: prepared.kind,
             status: DownloadJobStatus::Queued,
             created_at: iso_timestamp_now(),
             started_at: None,
             finished_at: None,
-            options: request.options,
-            title,
-            tasks,
+            options: prepared.options,
+            title: prepared.title,
+            tasks: prepared.tasks,
             error: None,
         };
 
         let snapshot = job.to_snapshot();
         self.state.jobs.push(job);
-        Ok(snapshot)
-    }
-
-    async fn build_job_tasks(
-        &self,
-        api: &ApiClient,
-        job_id: &str,
-        request: &CreateDownloadJobRequest,
-    ) -> Result<(String, Vec<InternalDownloadTask>), DownloadServiceError> {
-        match request.kind {
-            DownloadJobKind::Song => self.build_song_job_tasks(api, job_id, request).await,
-            DownloadJobKind::Album => self.build_album_job_tasks(api, job_id, request).await,
-            DownloadJobKind::Selection => {
-                self.build_selection_job_tasks(api, job_id, request).await
-            }
-        }
-    }
-
-    async fn build_song_job_tasks(
-        &self,
-        api: &ApiClient,
-        job_id: &str,
-        request: &CreateDownloadJobRequest,
-    ) -> Result<(String, Vec<InternalDownloadTask>), DownloadServiceError> {
-        let song_cid = request.song_cids.first().ok_or_else(|| {
-            DownloadServiceError::new("invalidRequest", "song job requires one song cid")
-        })?;
-        let song = api.get_song_detail(song_cid).await.map_err(api_error)?;
-        let album = api
-            .get_album_detail(&song.album_cid)
-            .await
-            .map_err(api_error)?;
-        let tasks = vec![make_task(
-            &self.id_generator,
-            job_id,
-            &song.cid,
-            &song.name,
-            &song.artists,
-            &song.album_cid,
-            &album.name,
-            0,
-            1,
-            request.options.format,
-            request.options.download_lyrics,
-        )];
-
-        Ok((song.name, tasks))
-    }
-
-    async fn build_album_job_tasks(
-        &self,
-        api: &ApiClient,
-        job_id: &str,
-        request: &CreateDownloadJobRequest,
-    ) -> Result<(String, Vec<InternalDownloadTask>), DownloadServiceError> {
-        let album_cid = request.album_cid.as_ref().ok_or_else(|| {
-            DownloadServiceError::new("invalidRequest", "album job requires albumCid")
-        })?;
-        let album = api.get_album_detail(album_cid).await.map_err(api_error)?;
-        let song_count = album.songs.len();
-        let tasks = album
-            .songs
-            .iter()
-            .enumerate()
-            .map(|(index, song)| {
-                make_task(
-                    &self.id_generator,
-                    job_id,
-                    &song.cid,
-                    &song.name,
-                    &song.artists,
-                    album_cid,
-                    &album.name,
-                    index,
-                    song_count,
-                    request.options.format,
-                    request.options.download_lyrics,
-                )
-            })
-            .collect();
-
-        Ok((album.name, tasks))
-    }
-
-    async fn build_selection_job_tasks(
-        &self,
-        api: &ApiClient,
-        job_id: &str,
-        request: &CreateDownloadJobRequest,
-    ) -> Result<(String, Vec<InternalDownloadTask>), DownloadServiceError> {
-        let mut album_names = HashMap::<String, String>::new();
-        let mut resolved = Vec::with_capacity(request.song_cids.len());
-
-        for song_cid in &request.song_cids {
-            let song = api.get_song_detail(song_cid).await.map_err(api_error)?;
-            let album_name = if let Some(name) = album_names.get(&song.album_cid) {
-                name.clone()
-            } else {
-                let album = api
-                    .get_album_detail(&song.album_cid)
-                    .await
-                    .map_err(api_error)?;
-                let name = album.name.clone();
-                album_names.insert(song.album_cid.clone(), name.clone());
-                name
-            };
-            resolved.push((song, album_name));
-        }
-
-        let song_count = resolved.len();
-        let album_count = resolved
-            .iter()
-            .map(|(song, _)| song.album_cid.as_str())
-            .collect::<HashSet<_>>()
-            .len();
-        let title = selection_job_title(
-            song_count,
-            album_count,
-            resolved.first().map(|(song, _)| song.name.as_str()),
-            resolved.first().map(|(_, album_name)| album_name.as_str()),
-        );
-        let tasks = resolved
-            .into_iter()
-            .enumerate()
-            .map(|(index, (song, album_name))| {
-                make_task(
-                    &self.id_generator,
-                    job_id,
-                    &song.cid,
-                    &song.name,
-                    &song.artists,
-                    &song.album_cid,
-                    &album_name,
-                    index,
-                    song_count,
-                    request.options.format,
-                    request.options.download_lyrics,
-                )
-            })
-            .collect();
-
-        Ok((title, tasks))
+        snapshot
     }
 
     /// 取消整个下载批次。
@@ -604,6 +492,172 @@ impl DownloadService {
         let job = self.state.jobs.iter().find(|job| job.id == job_id)?;
         Some(job.options.output_dir.clone())
     }
+}
+
+/// 执行下载批次的异步准备阶段（验证请求、生成 ID、查询上游 API）。
+///
+/// 该函数仅需要一个 `&IdGenerator` 引用（内部基于原子计数器，`Send + Sync`），不
+/// 读写下载服务状态，因此调用方**无需**持有下载服务锁。适用于需要把网络 I/O 移出
+/// 异步锁临界区的场景：先无锁调用此函数获得 [`PreparedJob`]，再短暂持锁调用
+/// [`DownloadService::register_prepared_job`] 完成入队。
+pub async fn prepare_job(
+    id_generator: &IdGenerator,
+    api: &ApiClient,
+    request: CreateDownloadJobRequest,
+) -> Result<PreparedJob, DownloadServiceError> {
+    validate_request(&request)?;
+
+    let job_id = id_generator.next_job_id();
+    let (title, tasks) = build_job_tasks(id_generator, api, &job_id, &request).await?;
+
+    Ok(PreparedJob {
+        id: job_id,
+        kind: request.kind,
+        options: request.options,
+        title,
+        tasks,
+    })
+}
+
+async fn build_job_tasks(
+    id_generator: &IdGenerator,
+    api: &ApiClient,
+    job_id: &str,
+    request: &CreateDownloadJobRequest,
+) -> Result<(String, Vec<InternalDownloadTask>), DownloadServiceError> {
+    match request.kind {
+        DownloadJobKind::Song => build_song_job_tasks(id_generator, api, job_id, request).await,
+        DownloadJobKind::Album => build_album_job_tasks(id_generator, api, job_id, request).await,
+        DownloadJobKind::Selection => {
+            build_selection_job_tasks(id_generator, api, job_id, request).await
+        }
+    }
+}
+
+async fn build_song_job_tasks(
+    id_generator: &IdGenerator,
+    api: &ApiClient,
+    job_id: &str,
+    request: &CreateDownloadJobRequest,
+) -> Result<(String, Vec<InternalDownloadTask>), DownloadServiceError> {
+    let song_cid = request.song_cids.first().ok_or_else(|| {
+        DownloadServiceError::new("invalidRequest", "song job requires one song cid")
+    })?;
+    let song = api.get_song_detail(song_cid).await.map_err(api_error)?;
+    let album = api
+        .get_album_detail(&song.album_cid)
+        .await
+        .map_err(api_error)?;
+    let tasks = vec![make_task(
+        id_generator,
+        job_id,
+        &song.cid,
+        &song.name,
+        &song.artists,
+        &song.album_cid,
+        &album.name,
+        0,
+        1,
+        request.options.format,
+        request.options.download_lyrics,
+    )];
+
+    Ok((song.name, tasks))
+}
+
+async fn build_album_job_tasks(
+    id_generator: &IdGenerator,
+    api: &ApiClient,
+    job_id: &str,
+    request: &CreateDownloadJobRequest,
+) -> Result<(String, Vec<InternalDownloadTask>), DownloadServiceError> {
+    let album_cid = request.album_cid.as_ref().ok_or_else(|| {
+        DownloadServiceError::new("invalidRequest", "album job requires albumCid")
+    })?;
+    let album = api.get_album_detail(album_cid).await.map_err(api_error)?;
+    let song_count = album.songs.len();
+    let tasks = album
+        .songs
+        .iter()
+        .enumerate()
+        .map(|(index, song)| {
+            make_task(
+                id_generator,
+                job_id,
+                &song.cid,
+                &song.name,
+                &song.artists,
+                album_cid,
+                &album.name,
+                index,
+                song_count,
+                request.options.format,
+                request.options.download_lyrics,
+            )
+        })
+        .collect();
+
+    Ok((album.name, tasks))
+}
+
+async fn build_selection_job_tasks(
+    id_generator: &IdGenerator,
+    api: &ApiClient,
+    job_id: &str,
+    request: &CreateDownloadJobRequest,
+) -> Result<(String, Vec<InternalDownloadTask>), DownloadServiceError> {
+    let mut album_names = HashMap::<String, String>::new();
+    let mut resolved = Vec::with_capacity(request.song_cids.len());
+
+    for song_cid in &request.song_cids {
+        let song = api.get_song_detail(song_cid).await.map_err(api_error)?;
+        let album_name = if let Some(name) = album_names.get(&song.album_cid) {
+            name.clone()
+        } else {
+            let album = api
+                .get_album_detail(&song.album_cid)
+                .await
+                .map_err(api_error)?;
+            let name = album.name.clone();
+            album_names.insert(song.album_cid.clone(), name.clone());
+            name
+        };
+        resolved.push((song, album_name));
+    }
+
+    let song_count = resolved.len();
+    let album_count = resolved
+        .iter()
+        .map(|(song, _)| song.album_cid.as_str())
+        .collect::<HashSet<_>>()
+        .len();
+    let title = selection_job_title(
+        song_count,
+        album_count,
+        resolved.first().map(|(song, _)| song.name.as_str()),
+        resolved.first().map(|(_, album_name)| album_name.as_str()),
+    );
+    let tasks = resolved
+        .into_iter()
+        .enumerate()
+        .map(|(index, (song, album_name))| {
+            make_task(
+                id_generator,
+                job_id,
+                &song.cid,
+                &song.name,
+                &song.artists,
+                &song.album_cid,
+                &album_name,
+                index,
+                song_count,
+                request.options.format,
+                request.options.download_lyrics,
+            )
+        })
+        .collect();
+
+    Ok((title, tasks))
 }
 
 fn validate_request(request: &CreateDownloadJobRequest) -> Result<(), DownloadServiceError> {

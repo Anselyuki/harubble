@@ -1,52 +1,25 @@
 use crate::preferences::Locale;
+use crate::search::schema::{build_schema, load_fields, register_tokenizers, LibrarySearchFields};
+use crate::search::scoring::{
+    collect_matched_fields, compact_ascii_query, compare_scored_items, escape_query_text,
+    normalize_query, rank_search_document, ScoredSearchItem,
+};
 use crate::search::snapshot::{inventory_index_dir, LibrarySearchSnapshot};
 use anyhow::{Context, Result};
 use harubble_core::{
-    LibrarySearchHitField, LibrarySearchScope, SearchLibraryRequest, SearchLibraryResultItem,
-    SearchLibraryResultKind,
+    LibrarySearchScope, SearchLibraryRequest, SearchLibraryResultItem, SearchLibraryResultKind,
 };
-use std::cmp::Ordering;
 use std::path::Path;
 use tantivy::collector::{Count, TopDocs};
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
-use tantivy::schema::{
-    Field, IndexRecordOption, Schema, TantivyDocument, TextFieldIndexing, TextOptions, Value,
-    STORED, STRING,
-};
-use tantivy::tokenizer::{LowerCaser, NgramTokenizer, TextAnalyzer};
+use tantivy::schema::{Field, IndexRecordOption, TantivyDocument, Value};
 use tantivy::{doc, Index, IndexReader, ReloadPolicy, Term};
-
-const SEARCH_TOKENIZER_NAME: &str = "siren_ngram";
 
 #[derive(Clone)]
 pub(crate) struct LibrarySearchIndex {
     index: Index,
     reader: IndexReader,
     fields: LibrarySearchFields,
-}
-
-#[derive(Clone, Copy)]
-struct LibrarySearchFields {
-    kind: Field,
-    album_cid: Field,
-    song_cid: Field,
-    album_title: Field,
-    album_title_display: Field,
-    song_title: Field,
-    artist_line: Field,
-    intro: Field,
-    belong: Field,
-    album_title_pinyin_full: Field,
-    album_title_pinyin_initials: Field,
-    song_title_pinyin_full: Field,
-    song_title_pinyin_initials: Field,
-    artist_line_pinyin_full: Field,
-    artist_line_pinyin_initials: Field,
-    belong_pinyin_full: Field,
-    belong_pinyin_initials: Field,
-    tag_values: Field,
-    tag_values_pinyin_full: Field,
-    tag_values_pinyin_initials: Field,
 }
 
 #[derive(Clone)]
@@ -58,32 +31,26 @@ pub(crate) struct SanitizedSearchRequest {
 }
 
 #[derive(Debug, Clone)]
-struct LibrarySearchDocument {
-    kind: SearchLibraryResultKind,
-    album_cid: String,
-    song_cid: Option<String>,
-    album_title: String,
-    song_title: Option<String>,
-    artist_line: Option<String>,
-    intro: Option<String>,
-    belong: Option<String>,
-    album_title_pinyin_full: Option<String>,
-    album_title_pinyin_initials: Option<String>,
-    song_title_pinyin_full: Option<String>,
-    song_title_pinyin_initials: Option<String>,
-    artist_line_pinyin_full: Option<String>,
-    artist_line_pinyin_initials: Option<String>,
-    belong_pinyin_full: Option<String>,
-    belong_pinyin_initials: Option<String>,
-    tag_values: Option<String>,
-    tag_values_pinyin_full: Option<String>,
-    tag_values_pinyin_initials: Option<String>,
-}
-
-#[derive(Debug)]
-struct ScoredSearchItem {
-    rank_score: i64,
-    item: SearchLibraryResultItem,
+pub(super) struct LibrarySearchDocument {
+    pub kind: SearchLibraryResultKind,
+    pub album_cid: String,
+    pub song_cid: Option<String>,
+    pub album_title: String,
+    pub song_title: Option<String>,
+    pub artist_line: Option<String>,
+    pub intro: Option<String>,
+    pub belong: Option<String>,
+    pub album_title_pinyin_full: Option<String>,
+    pub album_title_pinyin_initials: Option<String>,
+    pub song_title_pinyin_full: Option<String>,
+    pub song_title_pinyin_initials: Option<String>,
+    pub artist_line_pinyin_full: Option<String>,
+    pub artist_line_pinyin_initials: Option<String>,
+    pub belong_pinyin_full: Option<String>,
+    pub belong_pinyin_initials: Option<String>,
+    pub tag_values: Option<String>,
+    pub tag_values_pinyin_full: Option<String>,
+    pub tag_values_pinyin_initials: Option<String>,
 }
 
 impl LibrarySearchIndex {
@@ -166,6 +133,8 @@ impl LibrarySearchIndex {
         })
     }
 
+    /// PLACEHOLDER_IMPL_CONTINUED
+
     pub(crate) fn open(base_dir: &Path, inventory_version: &str) -> Result<Self> {
         let index_dir = inventory_index_dir(base_dir, inventory_version);
         let index = Index::open_in_dir(&index_dir)
@@ -198,7 +167,7 @@ impl LibrarySearchIndex {
             searcher.search(query.as_ref(), &TopDocs::with_limit(fetch_limit))?
         };
 
-        let normalized_query = normalize_query_text(&request.query);
+        let normalized_query = normalize_query(&request.query);
         let compact_query = compact_ascii_query(&request.query);
         let mut items = top_docs
             .into_iter()
@@ -271,6 +240,8 @@ impl LibrarySearchIndex {
 
         Ok(recall_query)
     }
+
+    /// PLACEHOLDER_QUERY_BUILDERS
 
     fn build_text_query(&self, request: &SanitizedSearchRequest) -> Result<Box<dyn Query>> {
         let mut text_parser = QueryParser::for_index(
@@ -392,7 +363,6 @@ pub(crate) fn sanitize_search_request(
     if query.chars().count() > harubble_core::SEARCH_LIBRARY_QUERY_MAX_LENGTH {
         anyhow::bail!(crate::i18n::tr(locale, "search-query-too-long"));
     }
-
     Ok(SanitizedSearchRequest {
         query,
         scope: request.scope,
@@ -405,126 +375,6 @@ pub(crate) fn sanitize_search_request(
             .unwrap_or(harubble_core::SEARCH_LIBRARY_DEFAULT_OFFSET)
             .min(max_offset),
     })
-}
-
-fn build_schema() -> (Schema, LibrarySearchFields) {
-    let mut builder = Schema::builder();
-    let text_options = TextOptions::default()
-        .set_indexing_options(
-            TextFieldIndexing::default()
-                .set_tokenizer(SEARCH_TOKENIZER_NAME)
-                .set_index_option(IndexRecordOption::WithFreqsAndPositions),
-        )
-        .set_stored();
-
-    let fields = LibrarySearchFields {
-        kind: builder.add_text_field("kind", STRING | STORED),
-        album_cid: builder.add_text_field("album_cid", STRING | STORED),
-        song_cid: builder.add_text_field("song_cid", STRING | STORED),
-        album_title: builder.add_text_field("album_title", text_options.clone()),
-        album_title_display: builder.add_text_field("album_title_display", STORED),
-        song_title: builder.add_text_field("song_title", text_options.clone()),
-        artist_line: builder.add_text_field("artist_line", text_options.clone()),
-        intro: builder.add_text_field("intro", text_options.clone()),
-        belong: builder.add_text_field("belong", text_options.clone()),
-        album_title_pinyin_full: builder
-            .add_text_field("album_title_pinyin_full", text_options.clone()),
-        album_title_pinyin_initials: builder
-            .add_text_field("album_title_pinyin_initials", text_options.clone()),
-        song_title_pinyin_full: builder
-            .add_text_field("song_title_pinyin_full", text_options.clone()),
-        song_title_pinyin_initials: builder
-            .add_text_field("song_title_pinyin_initials", text_options.clone()),
-        artist_line_pinyin_full: builder
-            .add_text_field("artist_line_pinyin_full", text_options.clone()),
-        artist_line_pinyin_initials: builder
-            .add_text_field("artist_line_pinyin_initials", text_options.clone()),
-        belong_pinyin_full: builder.add_text_field("belong_pinyin_full", text_options.clone()),
-        belong_pinyin_initials: builder
-            .add_text_field("belong_pinyin_initials", text_options.clone()),
-        tag_values: builder.add_text_field("tag_values", text_options.clone()),
-        tag_values_pinyin_full: builder
-            .add_text_field("tag_values_pinyin_full", text_options.clone()),
-        tag_values_pinyin_initials: builder
-            .add_text_field("tag_values_pinyin_initials", text_options),
-    };
-
-    (builder.build(), fields)
-}
-
-fn load_fields(schema: Schema) -> Result<LibrarySearchFields> {
-    Ok(LibrarySearchFields {
-        kind: schema
-            .get_field("kind")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        album_cid: schema
-            .get_field("album_cid")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        song_cid: schema
-            .get_field("song_cid")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        album_title: schema
-            .get_field("album_title")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        album_title_display: schema
-            .get_field("album_title_display")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        song_title: schema
-            .get_field("song_title")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        artist_line: schema
-            .get_field("artist_line")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        intro: schema
-            .get_field("intro")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        belong: schema
-            .get_field("belong")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        album_title_pinyin_full: schema
-            .get_field("album_title_pinyin_full")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        album_title_pinyin_initials: schema
-            .get_field("album_title_pinyin_initials")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        song_title_pinyin_full: schema
-            .get_field("song_title_pinyin_full")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        song_title_pinyin_initials: schema
-            .get_field("song_title_pinyin_initials")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        artist_line_pinyin_full: schema
-            .get_field("artist_line_pinyin_full")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        artist_line_pinyin_initials: schema
-            .get_field("artist_line_pinyin_initials")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        belong_pinyin_full: schema
-            .get_field("belong_pinyin_full")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        belong_pinyin_initials: schema
-            .get_field("belong_pinyin_initials")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        tag_values: schema
-            .get_field("tag_values")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        tag_values_pinyin_full: schema
-            .get_field("tag_values_pinyin_full")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        tag_values_pinyin_initials: schema
-            .get_field("tag_values_pinyin_initials")
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-    })
-}
-
-fn register_tokenizers(index: &Index) -> Result<()> {
-    let tokenizer = TextAnalyzer::builder(NgramTokenizer::new(1, 3, false)?)
-        .filter(LowerCaser)
-        .build();
-    index
-        .tokenizers()
-        .register(SEARCH_TOKENIZER_NAME, tokenizer);
-    Ok(())
 }
 
 fn field_text(document: &TantivyDocument, field: Field) -> String {
@@ -544,340 +394,6 @@ fn empty_to_none(value: String) -> Option<String> {
     }
 }
 
-fn normalize_query_text(value: &str) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
-fn compact_query_text(value: &str) -> String {
-    normalize_query_text(value).replace(' ', "")
-}
-
-fn compact_ascii_query(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .flat_map(|character| character.to_lowercase())
-        .collect()
-}
-
-fn escape_query_text(value: &str) -> String {
-    const RESERVED: [char; 16] = [
-        '\\', '+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', ':',
-    ];
-
-    value
-        .chars()
-        .flat_map(|character| {
-            if RESERVED.contains(&character) {
-                vec!['\\', character]
-            } else {
-                vec![character]
-            }
-        })
-        .collect()
-}
-
-fn exact_normalized_match(field_value: &str, normalized_query: &str) -> bool {
-    !normalized_query.is_empty()
-        && compact_query_text(field_value) == compact_query_text(normalized_query)
-}
-
-fn prefix_normalized_match(field_value: &str, normalized_query: &str) -> bool {
-    !normalized_query.is_empty()
-        && compact_query_text(field_value).starts_with(&compact_query_text(normalized_query))
-}
-
-fn contains_normalized_match(field_value: &str, normalized_query: &str) -> bool {
-    !normalized_query.is_empty()
-        && compact_query_text(field_value).contains(&compact_query_text(normalized_query))
-}
-
-fn exact_compact_match(field_value: Option<&str>, compact_query: &str) -> bool {
-    matches!(field_value, Some(value) if !compact_query.is_empty() && compact_query_text(value) == compact_query)
-}
-
-fn prefix_compact_match(field_value: Option<&str>, compact_query: &str) -> bool {
-    matches!(field_value, Some(value) if !compact_query.is_empty() && compact_query_text(value).starts_with(compact_query))
-}
-
-fn contains_compact_match(field_value: Option<&str>, compact_query: &str) -> bool {
-    matches!(field_value, Some(value) if !compact_query.is_empty() && compact_query_text(value).contains(compact_query))
-}
-
-fn score_text_match(
-    field_value: Option<&str>,
-    normalized_query: &str,
-    exact: i64,
-    prefix: i64,
-    contains: i64,
-) -> i64 {
-    match field_value {
-        Some(value) if exact_normalized_match(value, normalized_query) => exact,
-        Some(value) if prefix_normalized_match(value, normalized_query) => prefix,
-        Some(value) if contains_normalized_match(value, normalized_query) => contains,
-        _ => 0,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn score_compact_match(
-    full_value: Option<&str>,
-    initials_value: Option<&str>,
-    compact_query: &str,
-    full_exact: i64,
-    full_prefix: i64,
-    full_contains: i64,
-    initials_exact: i64,
-    initials_prefix: i64,
-    initials_contains: i64,
-) -> i64 {
-    if exact_compact_match(full_value, compact_query) {
-        return full_exact;
-    }
-    if prefix_compact_match(full_value, compact_query) {
-        return full_prefix;
-    }
-    if contains_compact_match(full_value, compact_query) {
-        return full_contains;
-    }
-    if exact_compact_match(initials_value, compact_query) {
-        return initials_exact;
-    }
-    if prefix_compact_match(initials_value, compact_query) {
-        return initials_prefix;
-    }
-    if contains_compact_match(initials_value, compact_query) {
-        return initials_contains;
-    }
-    0
-}
-
-fn rank_search_document(
-    document: &LibrarySearchDocument,
-    normalized_query: &str,
-    compact_query: &str,
-) -> i64 {
-    let (title_text_score, title_pinyin_score) = match document.kind {
-        SearchLibraryResultKind::Song => (
-            score_text_match(
-                document.song_title.as_deref(),
-                normalized_query,
-                4_200,
-                3_800,
-                3_400,
-            ),
-            score_compact_match(
-                document.song_title_pinyin_full.as_deref(),
-                document.song_title_pinyin_initials.as_deref(),
-                compact_query,
-                2_500,
-                2_300,
-                2_100,
-                1_950,
-                1_750,
-                1_550,
-            ),
-        ),
-        SearchLibraryResultKind::Album => (
-            score_text_match(
-                Some(&document.album_title),
-                normalized_query,
-                4_000,
-                3_600,
-                3_200,
-            ),
-            score_compact_match(
-                document.album_title_pinyin_full.as_deref(),
-                document.album_title_pinyin_initials.as_deref(),
-                compact_query,
-                2_400,
-                2_200,
-                2_000,
-                1_900,
-                1_700,
-                1_500,
-            ),
-        ),
-    };
-
-    let artist_text_score = score_text_match(
-        document.artist_line.as_deref(),
-        normalized_query,
-        1_600,
-        1_450,
-        1_300,
-    );
-    let artist_pinyin_score = score_compact_match(
-        document.artist_line_pinyin_full.as_deref(),
-        document.artist_line_pinyin_initials.as_deref(),
-        compact_query,
-        1_250,
-        1_150,
-        1_050,
-        980,
-        920,
-        860,
-    );
-    let belong_text_score =
-        score_text_match(document.belong.as_deref(), normalized_query, 820, 760, 700);
-    let belong_pinyin_score = score_compact_match(
-        document.belong_pinyin_full.as_deref(),
-        document.belong_pinyin_initials.as_deref(),
-        compact_query,
-        720,
-        660,
-        620,
-        560,
-        520,
-        480,
-    );
-    let intro_text_score =
-        score_text_match(document.intro.as_deref(), normalized_query, 420, 360, 320);
-    let tag_text_score = score_text_match(
-        document.tag_values.as_deref(),
-        normalized_query,
-        620,
-        560,
-        500,
-    );
-    let tag_pinyin_score = score_compact_match(
-        document.tag_values_pinyin_full.as_deref(),
-        document.tag_values_pinyin_initials.as_deref(),
-        compact_query,
-        520,
-        480,
-        440,
-        400,
-        360,
-        320,
-    );
-    let kind_bias = match document.kind {
-        SearchLibraryResultKind::Song => 40,
-        SearchLibraryResultKind::Album => 0,
-    };
-
-    title_text_score
-        + title_pinyin_score
-        + artist_text_score
-        + artist_pinyin_score
-        + belong_text_score
-        + belong_pinyin_score
-        + intro_text_score
-        + tag_text_score
-        + tag_pinyin_score
-        + kind_bias
-}
-
-fn collect_matched_fields(
-    document: &LibrarySearchDocument,
-    normalized_query: &str,
-    compact_query: &str,
-) -> Vec<LibrarySearchHitField> {
-    let mut matched_fields = Vec::new();
-
-    let title_text_matched = match document.kind {
-        SearchLibraryResultKind::Album => {
-            contains_normalized_match(&document.album_title, normalized_query)
-        }
-        SearchLibraryResultKind::Song => document
-            .song_title
-            .as_deref()
-            .is_some_and(|value| contains_normalized_match(value, normalized_query)),
-    };
-    let title_pinyin_matched = match document.kind {
-        SearchLibraryResultKind::Album => {
-            contains_compact_match(document.album_title_pinyin_full.as_deref(), compact_query)
-                || contains_compact_match(
-                    document.album_title_pinyin_initials.as_deref(),
-                    compact_query,
-                )
-        }
-        SearchLibraryResultKind::Song => {
-            contains_compact_match(document.song_title_pinyin_full.as_deref(), compact_query)
-                || contains_compact_match(
-                    document.song_title_pinyin_initials.as_deref(),
-                    compact_query,
-                )
-        }
-    };
-    if title_text_matched || title_pinyin_matched {
-        matched_fields.push(LibrarySearchHitField::Title);
-    }
-
-    let artist_text_matched = document
-        .artist_line
-        .as_deref()
-        .is_some_and(|value| contains_normalized_match(value, normalized_query));
-    let artist_pinyin_matched =
-        contains_compact_match(document.artist_line_pinyin_full.as_deref(), compact_query)
-            || contains_compact_match(
-                document.artist_line_pinyin_initials.as_deref(),
-                compact_query,
-            );
-    if artist_text_matched || artist_pinyin_matched {
-        matched_fields.push(LibrarySearchHitField::Artist);
-    }
-
-    if document
-        .intro
-        .as_deref()
-        .is_some_and(|value| contains_normalized_match(value, normalized_query))
-    {
-        matched_fields.push(LibrarySearchHitField::Intro);
-    }
-
-    let belong_text_matched = document
-        .belong
-        .as_deref()
-        .is_some_and(|value| contains_normalized_match(value, normalized_query));
-    let belong_pinyin_matched =
-        contains_compact_match(document.belong_pinyin_full.as_deref(), compact_query)
-            || contains_compact_match(document.belong_pinyin_initials.as_deref(), compact_query);
-    if belong_text_matched || belong_pinyin_matched {
-        matched_fields.push(LibrarySearchHitField::Belong);
-    }
-
-    let tag_text_matched = document
-        .tag_values
-        .as_deref()
-        .is_some_and(|value| contains_normalized_match(value, normalized_query));
-    let tag_pinyin_matched =
-        contains_compact_match(document.tag_values_pinyin_full.as_deref(), compact_query)
-            || contains_compact_match(
-                document.tag_values_pinyin_initials.as_deref(),
-                compact_query,
-            );
-    if tag_text_matched || tag_pinyin_matched {
-        matched_fields.push(LibrarySearchHitField::TagValues);
-    }
-
-    matched_fields
-}
-
-fn compare_scored_items(left: &ScoredSearchItem, right: &ScoredSearchItem) -> Ordering {
-    right
-        .rank_score
-        .cmp(&left.rank_score)
-        .then_with(|| compare_result_items(&left.item, &right.item))
-}
-
-fn compare_result_items(
-    left: &SearchLibraryResultItem,
-    right: &SearchLibraryResultItem,
-) -> Ordering {
-    let left_title = left.song_title.as_ref().unwrap_or(&left.album_title);
-    let right_title = right.song_title.as_ref().unwrap_or(&right.album_title);
-    left_title
-        .cmp(right_title)
-        .then_with(|| left.album_title.cmp(&right.album_title))
-        .then_with(|| left.album_cid.cmp(&right.album_cid))
-        .then_with(|| left.song_cid.cmp(&right.song_cid))
-}
-
 fn scope_kind_value(scope: LibrarySearchScope) -> Option<&'static str> {
     match scope {
         LibrarySearchScope::All => None,
@@ -885,6 +401,8 @@ fn scope_kind_value(scope: LibrarySearchScope) -> Option<&'static str> {
         LibrarySearchScope::Songs => Some("song"),
     }
 }
+
+/// PLACEHOLDER_TESTS
 
 #[cfg(test)]
 mod tests {
@@ -964,6 +482,7 @@ mod tests {
                     tag_values_pinyin_full: None,
                     tag_values_pinyin_initials: None,
                 },
+                // PLACEHOLDER_TESTS_CONTINUED
                 LibrarySearchSongRecord {
                     album_cid: "album-b".to_string(),
                     song_cid: "song-b1".to_string(),
@@ -1061,6 +580,8 @@ mod tests {
         assert_eq!(items[0].kind, harubble_core::SearchLibraryResultKind::Song);
         assert_eq!(items[0].song_title.as_deref(), Some("Beacon"));
     }
+
+    /// PLACEHOLDER_TESTS_FINAL
 
     #[test]
     fn recalls_auxiliary_album_fields() {

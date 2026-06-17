@@ -50,7 +50,7 @@ src/lib/paraglide/          # Paraglide 生成目录，不手写
 src/lib/i18n/
 ├── index.ts                # 对外入口
 ├── locale.svelte.ts        # Svelte 5 响应式语言状态
-├── formatters.ts           # number / byte / speed / date / duration
+├── formatters.ts           # byte / speed / duration
 └── types.ts                # Locale 类型定义
 ```
 

@@ -1,20 +1,68 @@
 <script lang="ts">
   import { AlertDialog as AlertDialogPrimitive } from 'bits-ui';
   import { cn } from '$lib/utils.js';
+  import { getContext } from 'svelte';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
 
   let {
     ref = $bindable(null),
     class: className,
     ...restProps
   }: AlertDialogPrimitive.OverlayProps = $props();
+
+  const openCtx = getContext<{ value: boolean } | undefined>(
+    'alert-dialog-open'
+  );
+  const open = $derived(openCtx?.value ?? true);
+
+  let mounted = $state(true);
+
+  $effect(() => {
+    if (open) mounted = true;
+  });
+
+  $effect(() => {
+    if (!ref || !open) return;
+    killTweens(ref);
+    gsap.fromTo(
+      ref,
+      { opacity: 0 },
+      {
+        opacity: 1,
+        duration: getMotionDuration(MOTION.OVERLAY_IN),
+        ease: 'ios-out',
+      }
+    );
+  });
+
+  $effect(() => {
+    if (open || !mounted || !ref) return;
+    killTweens(ref);
+    gsap.to(ref, {
+      opacity: 0,
+      duration: getMotionDuration(MOTION.BASE_OUT),
+      ease: 'ios-in',
+      onComplete: () => {
+        mounted = false;
+      },
+    });
+  });
 </script>
 
-<AlertDialogPrimitive.Overlay
-  bind:ref
-  data-slot="alert-dialog-overlay"
-  class={cn(
-    'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 bg-black/20 duration-100 supports-[backdrop-filter]:backdrop-blur-sm fixed inset-0 z-50',
-    className
-  )}
-  {...restProps}
-/>
+{#if mounted}
+  <AlertDialogPrimitive.Overlay
+    bind:ref
+    forceMount
+    data-slot="alert-dialog-overlay"
+    class={cn(
+      'bg-black/20 supports-[backdrop-filter]:backdrop-blur-sm fixed inset-0 z-50',
+      className
+    )}
+    {...restProps}
+  />
+{/if}

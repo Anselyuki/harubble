@@ -16,6 +16,7 @@ interface PlayerControllerDeps {
   pausePlayback: () => Promise<void>;
   resumePlayback: () => Promise<void>;
   seekCurrentPlayback: (positionSecs: number) => Promise<void>;
+  setPlaybackVolume: (volume: number) => Promise<number>;
   getSongLyrics: (songCid: string) => Promise<string | null>;
   notifyError: (message: string) => void;
 }
@@ -58,6 +59,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let lyricsLines = $state<LyricLine[]>([]);
   let lyricsSongCid = $state<string | null>(null);
   let playingCid = $state<string | null>(null);
+  let volume = $state(1.0);
+  let muted = $state(false);
+  let volumeBeforeMute = 1.0;
   let playbackEndRequestSeq = 0;
   let lastPlaybackSnapshot = {
     cid: null as string | null,
@@ -109,6 +113,8 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     if (hasNext !== state.hasNext) hasNext = state.hasNext;
     if (progress !== state.progress) progress = state.progress;
     if (duration !== state.duration) duration = state.duration;
+    if (Math.abs(volume - state.volume) > 0.001) volume = state.volume;
+    if (state.volume > 0 && muted) muted = false;
   }
 
   function buildSinglePlaybackEntry(song: PlayerSong): PlaybackQueueEntry {
@@ -477,6 +483,29 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     );
   }
 
+  async function setVolume(gain: number) {
+    const clamped = Math.max(0, Math.min(1, gain));
+    volume = clamped;
+    if (clamped > 0) muted = false;
+    try {
+      await deps.setPlaybackVolume(clamped);
+    } catch (error) {
+      deps.notifyError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function toggleMute() {
+    if (muted) {
+      const restored = volumeBeforeMute > 0.05 ? volumeBeforeMute : 0.5;
+      void setVolume(restored);
+      muted = false;
+    } else {
+      volumeBeforeMute = volume;
+      void setVolume(0);
+      muted = true;
+    }
+  }
+
   function dispose() {
     initialized = false;
     currentSong = null;
@@ -500,6 +529,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     lyricsLines = [];
     lyricsSongCid = null;
     playingCid = null;
+    volume = 1.0;
+    muted = false;
+    volumeBeforeMute = 1.0;
     lastPlaybackSnapshot = { cid: null, active: false };
     lyricRequestSeq += 1;
     playbackEndRequestSeq += 1;
@@ -569,6 +601,12 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     get playingCid() {
       return playingCid;
     },
+    get volume() {
+      return volume;
+    },
+    get muted() {
+      return muted;
+    },
     get hasLyrics() {
       return !lyricsLoading && lyricsLines.length > 0;
     },
@@ -601,6 +639,8 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     seek,
     playNext,
     playPrevious,
+    setVolume,
+    toggleMute,
     applyPlaybackQueue,
     buildSinglePlaybackEntry,
   };

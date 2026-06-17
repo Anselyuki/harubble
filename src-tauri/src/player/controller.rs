@@ -4,7 +4,7 @@
 //! 上下曲切换与系统媒体控制绑定等核心编排能力。
 
 use crate::player::backend::{create_backend, PlaybackBackend};
-use crate::player::events::{emit_progress, emit_state};
+use crate::player::events::{emit_progress, emit_progress_snapshot, emit_state};
 use crate::player::media::MediaSession;
 use crate::player::state::PlayerState;
 use crate::player::stream::{AudioFormat, SampleBuffer};
@@ -13,7 +13,16 @@ use serde::{Deserialize, Serialize};
 use souvlaki::MediaControlEvent;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
+
+/// 播放进度事件向前端广播的最小间隔。
+///
+/// 底层音频输出回调按驱动缓冲帧率（约 80–160 次/秒）推进进度，但前端进度条无需
+/// 如此高频更新。播放进度事件统一由独立的发射线程按该间隔节流广播，避免高频
+/// 全量状态序列化灌满 WebView 事件通道导致界面逐渐卡死。
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
 
 /// 前后端共享的播放队列条目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,9 +223,10 @@ impl AudioPlayer {
         let initial_progress = initial_progress.max(0.0);
         let initial_duration = initial_duration.unwrap_or(0.0).max(initial_progress);
 
+        let (has_previous, has_next) = self.queue_navigation_flags();
+        let volume = *self.volume.lock().unwrap();
         {
             let mut state = self.state.lock().unwrap();
-            let volume = *self.volume.lock().unwrap();
             state.song_cid = Some(song_cid);
             state.song_name = Some(song_name);
             state.artists = artists;
@@ -227,7 +237,8 @@ impl AudioPlayer {
             state.progress = initial_progress;
             state.duration = initial_duration;
             state.volume = volume;
-            apply_queue_flags(&self.queue.lock().unwrap(), &mut state);
+            state.has_previous = has_previous;
+            state.has_next = has_next;
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
 
@@ -316,6 +327,7 @@ impl AudioPlayer {
             }
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
+        self.spawn_progress_emitter(session_id);
 
         Ok(self.state.lock().unwrap().duration)
     }
@@ -326,31 +338,74 @@ impl AudioPlayer {
         initial_progress: f64,
     ) -> Arc<dyn Fn(f64, f64) + Send + Sync> {
         let state_for_progress = Arc::clone(&self.state);
-        let app_for_progress = self.app.clone();
-        let media_for_progress = Arc::clone(&self.media_session);
         let active_session = Arc::clone(&self.active_session_id);
         let stop_flag = Arc::clone(&self.stop_flag);
 
+        // 该回调运行在音频实时输出线程上，按驱动缓冲帧率高频触发，因此只做最廉价的
+        // 状态写入：更新进度与时长。事件广播与系统媒体会话同步交由独立的节流发射
+        // 线程处理（见 `spawn_progress_emitter`），避免在实时音频线程上执行 IPC /
+        // 平台调用或高频全量序列化。
         Arc::new(move |progress, duration| {
             if active_session.load(Ordering::SeqCst) != session_id
                 || stop_flag.load(Ordering::SeqCst)
             {
                 return;
             }
-            {
-                let mut state = state_for_progress.lock().unwrap();
-                let absolute_progress = if duration > 0.0 {
-                    (initial_progress + progress).min(duration)
-                } else {
-                    initial_progress + progress
-                };
-                state.progress = absolute_progress;
-                if duration > 0.0 {
-                    state.duration = duration.max(initial_progress);
-                }
+            let mut state = state_for_progress.lock().unwrap();
+            let absolute_progress = if duration > 0.0 {
+                (initial_progress + progress).min(duration)
+            } else {
+                initial_progress + progress
+            };
+            state.progress = absolute_progress;
+            if duration > 0.0 {
+                state.duration = duration.max(initial_progress);
             }
-            emit_progress_and_sync(&app_for_progress, &state_for_progress, &media_for_progress);
         })
+    }
+
+    /// 启动当前会话的进度发射线程。
+    ///
+    /// 该线程按 [`PROGRESS_EMIT_INTERVAL`] 节流读取播放器状态快照，仅在仍处于播放
+    /// 中时广播进度事件并同步系统媒体会话。当活跃会话 ID 不再匹配或收到停止信号时
+    /// 线程自动结束，因此每个播放会话至多对应一个发射线程，不会随时间累积。
+    fn spawn_progress_emitter(&self, session_id: u64) {
+        let state = Arc::clone(&self.state);
+        let app = self.app.clone();
+        let media_session = Arc::clone(&self.media_session);
+        let active_session = Arc::clone(&self.active_session_id);
+        let stop_flag = Arc::clone(&self.stop_flag);
+
+        let spawn_result = thread::Builder::new()
+            .name("player-progress-emitter".into())
+            .spawn(move || loop {
+                thread::sleep(PROGRESS_EMIT_INTERVAL);
+                if active_session.load(Ordering::SeqCst) != session_id
+                    || stop_flag.load(Ordering::SeqCst)
+                {
+                    break;
+                }
+                let snapshot = state.lock().unwrap().clone();
+                if !snapshot.is_playing {
+                    continue;
+                }
+                emit_progress_snapshot(&app, &snapshot);
+                sync_media_session_snapshot(&media_session, &snapshot, true);
+            });
+
+        if let Err(error) = spawn_result {
+            if let Some(state) = self.app.try_state::<crate::app_state::AppState>() {
+                state.log_center.record(
+                    crate::logging::LogPayload::new(
+                        crate::logging::LogLevel::Warn,
+                        "player",
+                        "player.progress_emitter_spawn_failed",
+                        "Failed to spawn progress emitter thread",
+                    )
+                    .details(error.to_string()),
+                );
+            }
+        }
     }
 
     fn build_finish_callback(&self, session_id: u64) -> Arc<dyn Fn() + Send + Sync> {
@@ -563,23 +618,37 @@ impl AudioPlayer {
         safe_volume
     }
 
+    /// 静默设置播放器音量，不触发事件广播。
+    ///
+    /// 仅用于应用启动阶段从偏好恢复音量，此时 Tauri 状态尚未注册，无法发送事件。
+    pub fn set_volume_silent(&self, volume: f64) {
+        let safe_volume = volume.clamp(0.0, 1.0);
+        *self.volume.lock().unwrap() = safe_volume;
+        self.state.lock().unwrap().volume = safe_volume;
+    }
+
     fn sync_media_controls(&self, progress_only: bool) {
         sync_media_session(&self.media_session, &self.state, progress_only);
     }
 
+    /// 读取当前队列导航标志快照（是否有上一首/下一首）。
+    ///
+    /// 该方法仅短暂持有 `queue` 锁并立即释放，便于调用方在不与 `state` 锁嵌套的前提下
+    /// 获取导航标志，从而避免 `state` 与 `queue` 两把锁因获取顺序相反而产生死锁。
+    fn queue_navigation_flags(&self) -> (bool, bool) {
+        let queue = self.queue.lock().unwrap();
+        (queue.has_previous(), queue.has_next())
+    }
+
     fn sync_navigation_flags(&self) {
+        let (has_previous, has_next) = self.queue_navigation_flags();
         {
-            let queue = self.queue.lock().unwrap();
             let mut state = self.state.lock().unwrap();
-            apply_queue_flags(&queue, &mut state);
+            state.has_previous = has_previous;
+            state.has_next = has_next;
         }
         self.sync_media_controls(false);
     }
-}
-
-fn apply_queue_flags(queue: &PlaybackQueueState, state: &mut PlayerState) {
-    state.has_previous = queue.has_previous();
-    state.has_next = queue.has_next();
 }
 
 fn emit_state_and_sync(
@@ -608,7 +677,15 @@ fn sync_media_session(
     progress_only: bool,
 ) {
     let snapshot = state.lock().unwrap().clone();
+    sync_media_session_snapshot(media_session, &snapshot, progress_only);
+}
+
+fn sync_media_session_snapshot(
+    media_session: &Arc<Mutex<Option<MediaSession>>>,
+    snapshot: &PlayerState,
+    progress_only: bool,
+) {
     if let Some(session) = media_session.lock().unwrap().as_ref() {
-        session.sync_state(&snapshot, progress_only);
+        session.sync_state(snapshot, progress_only);
     }
 }

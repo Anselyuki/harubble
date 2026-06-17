@@ -40,6 +40,16 @@ pub fn clear_response_cache(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// 重建 HTTP 客户端以适应网络环境变化。
+///
+/// 当系统代理设置变更、网络接口切换或网络恢复后，已有的 HTTP 客户端可能持有过期的
+/// 连接池与代理配置，导致后续请求失败。调用此接口会以当前系统环境重新构建客户端。
+/// 成功时返回空值；若重建失败则保留原有客户端不变并返回错误。
+#[tauri::command]
+pub fn reset_http_client(state: State<'_, AppState>) -> Result<(), String> {
+    state.api.reset_http_client().map_err(|e| e.to_string())
+}
+
 /// 创建新的下载批次，并按当前偏好覆盖输出目录。
 ///
 /// 适用于用户从专辑页或多选歌曲列表发起新的下载请求。

@@ -1,6 +1,11 @@
 <script lang="ts">
-  import { slide } from 'svelte/transition';
-  import SidebarItemButton from '$lib/components/app/SidebarItemButton.svelte';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
+  import SidebarItemButton from '$lib/components/app/sidebar/SidebarItemButton.svelte';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import type { LucideProps } from '@lucide/svelte';
   import type { Snippet, Component } from 'svelte';
@@ -25,6 +30,44 @@
 
   // svelte-ignore state_referenced_locally
   let expanded = $state(defaultExpanded);
+  let contentEl = $state<HTMLElement | undefined>();
+  // svelte-ignore state_referenced_locally
+  let contentMounted = $state(defaultExpanded && !empty);
+
+  const shouldShow = $derived(expanded && !empty);
+
+  $effect(() => {
+    if (shouldShow) contentMounted = true;
+  });
+
+  $effect(() => {
+    if (!contentEl || !shouldShow) return;
+    killTweens(contentEl);
+    gsap.fromTo(
+      contentEl,
+      { height: 0, overflow: 'hidden' },
+      {
+        height: 'auto',
+        overflow: 'visible',
+        duration: getMotionDuration(MOTION.OVERLAY_IN),
+        ease: 'ios-out',
+      }
+    );
+  });
+
+  $effect(() => {
+    if (shouldShow || !contentMounted || !contentEl) return;
+    killTweens(contentEl);
+    gsap.to(contentEl, {
+      height: 0,
+      overflow: 'hidden',
+      duration: getMotionDuration(MOTION.BASE_OUT),
+      ease: 'ios-in',
+      onComplete: () => {
+        contentMounted = false;
+      },
+    });
+  });
 
   function toggle() {
     if (empty) return;
@@ -54,6 +97,8 @@
       {#if actions}
         <span
           class="collapsible-group-actions"
+          role="toolbar"
+          tabindex={-1}
           onclick={handleActionsClick}
           onkeydown={handleActionsKeydown}
         >
@@ -80,8 +125,8 @@
     </button>
   {/if}
 
-  {#if expanded && !empty}
-    <div class="collapsible-group-content" transition:slide={{ duration: 200 }}>
+  {#if contentMounted}
+    <div class="collapsible-group-content" bind:this={contentEl}>
       {@render children()}
     </div>
   {/if}
@@ -105,7 +150,6 @@
     padding: 0 0.75rem;
     border-radius: 8px;
     cursor: pointer;
-    transition: background var(--motion-fast, 0.15s) ease;
   }
 
   .collapsible-group-fallback-header:hover {
@@ -129,7 +173,6 @@
     align-items: center;
     gap: 2px;
     opacity: 0;
-    transition: opacity 0.15s ease;
   }
 
   :global(.sidebar-item-button:hover) .collapsible-group-actions {
@@ -147,7 +190,6 @@
     background: var(--surface-state, rgba(255, 255, 255, 0.06));
     color: var(--text-tertiary);
     flex-shrink: 0;
-    transition: transform 0.2s ease;
   }
 
   .collapsible-group-chevron.is-disabled {

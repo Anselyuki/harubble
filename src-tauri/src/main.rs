@@ -13,7 +13,7 @@
 //! - 播放控制：[`commands::play_song`]、[`commands::pause_playback`]、
 //!   [`commands::resume_playback`]、[`commands::seek_current_playback`]、
 //!   [`commands::play_next`]、[`commands::play_previous`]、
-//!   [`commands::stop_playback`]、[`commands::get_player_state`]、
+//!   [`commands::get_player_state`]、
 //!   [`commands::set_playback_volume`]
 //! - 下载和工具：[`commands::get_default_output_dir`]、
 //!   [`commands::clear_audio_cache`]、[`commands::extract_image_theme`]
@@ -43,7 +43,7 @@
 use anyhow::Context;
 use harubble::{
     commands, initialize_download_bridge, spawn_belong_warmup, spawn_inventory_scan,
-    spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
+    spawn_network_monitor, spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
 };
 use tauri::{LogicalSize, Manager, RunEvent, WebviewWindow};
 
@@ -134,6 +134,7 @@ fn main() {
             );
             spawn_belong_warmup(app.handle().clone(), &state);
             spawn_tag_registry_sync(&state);
+            spawn_network_monitor(&state);
             app.manage(state);
 
             #[cfg(debug_assertions)]
@@ -162,7 +163,6 @@ fn main() {
             commands::library::get_default_output_dir,
             commands::search::search_library,
             commands::playback::play_song,
-            commands::playback::stop_playback,
             commands::playback::pause_playback,
             commands::playback::resume_playback,
             commands::playback::seek_current_playback,
@@ -184,6 +184,7 @@ fn main() {
             commands::logging::get_log_file_status,
             commands::downloads::clear_audio_cache,
             commands::downloads::clear_response_cache,
+            commands::downloads::reset_http_client,
             commands::downloads::create_download_job,
             commands::downloads::list_download_jobs,
             commands::downloads::get_download_job,
@@ -207,6 +208,8 @@ fn main() {
             commands::tag_editor::remove_tag_editor_dimension,
             commands::tag_editor::apply_tag_editor_remote_update,
             commands::tag_editor::resolve_tag_editor_conflict,
+            commands::tag_editor::export_tag_editor_registry,
+            commands::tag_editor::import_tag_editor_registry,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

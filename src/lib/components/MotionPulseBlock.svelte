@@ -16,23 +16,13 @@
   }: Props = $props();
 </script>
 
+<!-- motion-pulse 是 app.css 中的全局 @keyframes：内联 style 无法命中
+     Svelte 作用域化后的组件内 keyframes，必须依赖全局名 -->
 <div
   class={className}
   {style}
   style:animation={reducedMotion
     ? 'none'
-    : `motion-pulse ${duration}s ease-in-out ${delay}s infinite`}
+    : `motion-pulse ${duration}s var(--ease-ios, ease-in-out) ${delay}s infinite`}
   style:opacity={reducedMotion ? 1 : undefined}
 ></div>
-
-<style>
-  @keyframes motion-pulse {
-    0%,
-    100% {
-      opacity: 0.46;
-    }
-    50% {
-      opacity: 0.92;
-    }
-  }
-</style>

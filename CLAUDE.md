@@ -39,8 +39,17 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - `src/lib/api.ts`：主 Tauri command bridge
 - `src/lib/settingsApi.ts`：设置面板专用 IPC bridge
 - `src/lib/types.ts`：前后端共享数据结构
-- `src/lib/features/`：按 `env / library / player / download / home / shell / collection / tagEditor` 划分的领域目录
-- `src/lib/components/app/`：前端壳层组件目录
+- `src/lib/features/`：按 `env / library / player / download / home / search / shell / collection / tagEditor` 划分的领域目录
+- `src/lib/components/app/`：前端壳层组件目录，按业务域划分子目录：
+  - `sidebar/`：侧栏框架（AppSidebar、SidebarNav、BrandLogo 等）
+  - `player/`：播放控制（PlayerFlyoutStack、FullscreenPlayer、VolumeCapsule、LyricsBubble 等）
+  - `home/`：首页视图（HomeView 及各 Home\* 子组件）
+  - `library/`：库存主视图（LibraryView）
+  - `search/`：全局搜索视图（SearchView、SearchBar、SearchRecentQueries、SearchRecentlyPlayed 等）
+  - `album/`：专辑与库存（AlbumOverview、AlbumWorkspace、AlbumDetailPanel 等）
+  - `collection/`：合集（CollectionDetailPanel、CollectionFormDialog、AddToCollectionMenu 等）
+  - `tag-editor/`：标签编辑器（TagEditorView、TagEditorPanel、TagEditorConflict\* 等）
+  - `shell/`：应用壳层（TopToolbar、AppSideSheets、SettingsSheet、DownloadTasksSheet）
 
 ## 真相来源
 
@@ -65,7 +74,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - UI 展示组件不要直接调用 `invoke` / `listen`；统一走 bridge、controller 或具备明确边界的 shell 层
 - 组件的 `font-family` 统一通过 `--font-body` / `--font-display` / `--font-mono` CSS 变量引用，不直接硬编码字体名；字体方案详见 `docs/reference/frontend-guide.md` 的「字体方案」小节
 - 如果改了歌词、下载设置或播放器交互，同时检查 `src/App.svelte` 和 `src/lib/components/AudioPlayer.svelte` 的状态同步
-- **动画编排**：复杂动画编排（stagger 序列、layout animation、FLIP）使用 GSAP，适配层位于 `src/lib/design/gsap.ts`；简单的状态过渡仍可使用 CSS transitions 或 Svelte 内置 transition
+- **动画编排**：所有前端动画统一使用 GSAP 控制，适配层位于 `src/lib/design/gsap.ts`；不要新增或使用 CSS transitions / animations、Svelte transition / animate、Web Animations API 或其他动画方案。仅有两个受控例外：① 无限循环 loading / 装饰动画可用 CSS keyframes，须复用 Motion\* 原语或 `app.css` 全局 keyframes（`motion-spin` / `motion-progress-slide`）并做 reduced-motion 降级；② hover / active 纯状态颜色反馈统一使用 `transition: var(--motion-hover)`。详见 `docs/reference/frontend-guide.md` 的「动效规则」小节
 - **动画曲线**：所有 GSAP 动画统一使用 iOS 风格的缓动曲线（已在 `src/lib/design/gsap.ts` 中注册为 CustomEase）：
   - `ios`：标准 ease-in-out（`0.25, 0.1, 0.25, 1.0`）
   - `ios-in`：ease-in（`0.42, 0, 1, 1`）

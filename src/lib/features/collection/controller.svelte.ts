@@ -20,7 +20,6 @@ interface CollectionControllerDeps {
   reorderCollectionSongs: (id: string, songIds: string[]) => Promise<void>;
   exportCollection: (id: string) => Promise<string>;
   importCollection: (json: string) => Promise<Collection>;
-  navigateToCollection: () => void;
   notifyInfo: (message: string) => void;
   notifyError: (message: string) => void;
 }
@@ -48,23 +47,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
 
   async function selectCollection(id: string): Promise<void> {
     if (id === selectedCollectionId && selectedCollection) {
-      deps.navigateToCollection();
       return;
     }
-
-    selectedCollectionId = id;
-    isDetailLoading = true;
-    deps.navigateToCollection();
-
-    try {
-      selectedCollection = await deps.getCollection(id);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`加载合集详情失败: ${message}`);
-      selectedCollection = null;
-    } finally {
-      isDetailLoading = false;
-    }
+    await loadAndSelect(id);
   }
 
   function deselectCollection(): void {
@@ -236,6 +221,29 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     formDialogOpen = false;
   }
 
+  function clearSelection(): void {
+    selectedCollectionId = null;
+    selectedCollection = null;
+  }
+
+  async function loadAndSelect(id: string): Promise<void> {
+    selectedCollectionId = id;
+    isDetailLoading = true;
+    try {
+      selectedCollection = await deps.getCollection(id);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      deps.notifyError(`加载合集详情失败: ${message}`);
+      selectedCollection = null;
+    } finally {
+      isDetailLoading = false;
+    }
+  }
+
+  async function restoreSelection(id: string): Promise<void> {
+    await loadAndSelect(id);
+  }
+
   function dispose(): void {
     collections = [];
     selectedCollectionId = null;
@@ -273,6 +281,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     loadCollections,
     selectCollection,
     deselectCollection,
+    clearSelection,
+    loadAndSelect,
+    restoreSelection,
     handleCreate,
     handleUpdate,
     handleDelete,

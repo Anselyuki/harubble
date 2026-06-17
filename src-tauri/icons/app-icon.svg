@@ -1,15 +1,84 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1024" height="1024" rx="224" fill="#0F172A"/>
-  <rect x="104" y="104" width="816" height="816" rx="184" fill="url(#bg)"/>
-  <path d="M280 620C316 620 344 592 344 556V468C344 432 316 404 280 404C244 404 216 432 216 468V556C216 592 244 620 280 620Z" fill="#F8FAFC"/>
-  <path d="M448 736C484 736 512 708 512 672V352C512 316 484 288 448 288C412 288 384 316 384 352V672C384 708 412 736 448 736Z" fill="#F8FAFC"/>
-  <path d="M616 672C652 672 680 644 680 608V416C680 380 652 352 616 352C580 352 552 380 552 416V608C552 644 580 672 616 672Z" fill="#F8FAFC"/>
-  <path d="M744 560C780 560 808 532 808 496V420C808 384 780 356 744 356C708 356 680 384 680 420V496C680 532 708 560 744 560Z" fill="#F8FAFC"/>
-  <rect x="216" y="768" width="592" height="40" rx="20" fill="#38BDF8"/>
+  <!-- Foundation -->
+  <rect width="1024" height="1024" rx="224" fill="#78A4A5"/>
+
+  <!-- Ribbon bow icon -->
+  <g filter="url(#soft-shadow)">
+    <!-- Hanging tails -->
+    <path d="M421 552C404 654 370 771 270 857C318 851 354 866 381 904C437 820 471 680 477 560Z" fill="url(#red-main)"/>
+    <path d="M603 552C620 654 654 771 754 857C706 851 670 866 643 904C587 820 553 680 547 560Z" fill="url(#red-main)"/>
+    <path d="M445 575C427 684 388 796 324 867" stroke="#FFE39A" stroke-width="17" stroke-linecap="round"/>
+    <path d="M579 575C597 684 636 796 700 867" stroke="#FFE39A" stroke-width="17" stroke-linecap="round"/>
+    <path d="M474 554C462 696 441 809 385 899" stroke="#8A1428" stroke-width="16" stroke-linecap="round" opacity="0.42"/>
+    <path d="M550 554C562 696 583 809 639 899" stroke="#8A1428" stroke-width="16" stroke-linecap="round" opacity="0.42"/>
+
+    <!-- Back folds -->
+    <path d="M367 342C420 344 473 402 493 489C417 438 324 416 248 426C265 366 305 338 367 342Z" fill="#F05A72" opacity="0.72"/>
+    <path d="M657 342C604 344 551 402 531 489C607 438 700 416 776 426C759 366 719 338 657 342Z" fill="#F05A72" opacity="0.72"/>
+
+    <!-- Large ribbon loops -->
+    <path d="M472 477C333 563 141 548 56 434C126 356 124 184 219 133C320 78 432 164 492 395Z" fill="url(#left-loop)"/>
+    <path d="M552 477C691 563 883 548 968 434C898 356 900 184 805 133C704 78 592 164 532 395Z" fill="url(#right-loop)"/>
+    <path d="M470 477C335 546 179 523 79 422" stroke="#FFE39A" stroke-width="18" stroke-linecap="round"/>
+    <path d="M554 477C689 546 845 523 945 422" stroke="#FFE39A" stroke-width="18" stroke-linecap="round"/>
+    <path d="M247 140C211 205 216 293 255 360C306 449 393 469 482 408" stroke="#FFE39A" stroke-width="19" stroke-linecap="round" opacity="0.95"/>
+    <path d="M777 140C813 205 808 293 769 360C718 449 631 469 542 408" stroke="#FFE39A" stroke-width="19" stroke-linecap="round" opacity="0.95"/>
+
+    <!-- Dark loop openings -->
+    <path d="M274 162C365 154 438 238 481 382C397 302 319 276 244 286C219 226 224 176 274 162Z" fill="#7C1124" opacity="0.92"/>
+    <path d="M750 162C659 154 586 238 543 382C627 302 705 276 780 286C805 226 800 176 750 162Z" fill="#7C1124" opacity="0.92"/>
+    <path d="M281 162C220 244 272 392 455 434" stroke="#F9B8A8" stroke-width="16" stroke-linecap="round" opacity="0.34"/>
+    <path d="M743 162C804 244 752 392 569 434" stroke="#F9B8A8" stroke-width="16" stroke-linecap="round" opacity="0.34"/>
+
+    <!-- Front small loops -->
+    <path d="M493 494C399 451 279 459 227 519C274 582 399 585 493 527Z" fill="url(#front-left)"/>
+    <path d="M531 494C625 451 745 459 797 519C750 582 625 585 531 527Z" fill="url(#front-right)"/>
+    <path d="M239 517C304 489 390 493 482 523" stroke="#FFE39A" stroke-width="14" stroke-linecap="round"/>
+    <path d="M785 517C720 489 634 493 542 523" stroke="#FFE39A" stroke-width="14" stroke-linecap="round"/>
+    <path d="M246 552C315 576 403 565 493 527" stroke="#7C1124" stroke-width="12" stroke-linecap="round" opacity="0.35"/>
+    <path d="M778 552C709 576 621 565 531 527" stroke="#7C1124" stroke-width="12" stroke-linecap="round" opacity="0.35"/>
+
+    <!-- Center knot -->
+    <rect x="442" y="428" width="140" height="150" rx="17" fill="url(#knot)"/>
+    <path d="M453 432V574" stroke="#FFE39A" stroke-width="13" stroke-linecap="round"/>
+    <path d="M571 432V574" stroke="#FFE39A" stroke-width="13" stroke-linecap="round"/>
+    <path d="M466 451C501 434 542 436 566 454" stroke="#F65C63" stroke-width="17" stroke-linecap="round" opacity="0.55"/>
+  </g>
+
   <defs>
-    <linearGradient id="bg" x1="176" y1="160" x2="864" y2="880" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#1E293B"/>
-      <stop offset="1" stop-color="#0F766E"/>
+    <linearGradient id="red-main" x1="512" y1="548" x2="512" y2="906" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B90F29"/>
+      <stop offset="0.45" stop-color="#F23848"/>
+      <stop offset="1" stop-color="#C51631"/>
     </linearGradient>
+    <linearGradient id="left-loop" x1="61" y1="290" x2="495" y2="462" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F43A55"/>
+      <stop offset="0.52" stop-color="#D81734"/>
+      <stop offset="1" stop-color="#F25A54"/>
+    </linearGradient>
+    <linearGradient id="right-loop" x1="963" y1="290" x2="529" y2="462" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F43A55"/>
+      <stop offset="0.52" stop-color="#D81734"/>
+      <stop offset="1" stop-color="#F25A54"/>
+    </linearGradient>
+    <linearGradient id="front-left" x1="226" y1="519" x2="493" y2="518" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A71229"/>
+      <stop offset="0.5" stop-color="#D81734"/>
+      <stop offset="1" stop-color="#F85B59"/>
+    </linearGradient>
+    <linearGradient id="front-right" x1="798" y1="519" x2="531" y2="518" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A71229"/>
+      <stop offset="0.5" stop-color="#D81734"/>
+      <stop offset="1" stop-color="#F85B59"/>
+    </linearGradient>
+    <linearGradient id="knot" x1="512" y1="428" x2="512" y2="578" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E83C4A"/>
+      <stop offset="0.52" stop-color="#C91832"/>
+      <stop offset="1" stop-color="#A80F27"/>
+    </linearGradient>
+    <filter id="soft-shadow" x="12" y="86" width="1000" height="870" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="18" flood-color="#24494B" flood-opacity="0.32"/>
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#201212" flood-opacity="0.22"/>
+    </filter>
   </defs>
 </svg>

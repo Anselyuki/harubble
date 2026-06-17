@@ -2,8 +2,15 @@
   import { getImageDataUrl } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import LyricsBubble from '$lib/components/app/LyricsBubble.svelte';
+  import LyricsBubble from '$lib/components/app/player/LyricsBubble.svelte';
+  import VolumeCapsule from '$lib/components/app/player/VolumeCapsule.svelte';
   import type { LyricLine } from '$lib/features/player/lyrics';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
   type RepeatMode = 'all' | 'one';
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
   interface Song {
@@ -33,6 +40,10 @@
     playlistActive?: boolean;
     downloadState?: SongDownloadState;
     downloadDisabled?: boolean;
+    volume?: number;
+    muted?: boolean;
+    onVolumeChange?: (gain: number) => void | Promise<void>;
+    onToggleMute?: () => void;
     onPrevious?: () => void;
     onTogglePlay?: () => void;
     onSeek?: (positionSecs: number) => void | Promise<void>;
@@ -65,6 +76,10 @@
     playlistActive = false,
     downloadState = 'idle',
     downloadDisabled = false,
+    volume = 1,
+    muted = false,
+    onVolumeChange,
+    onToggleMute,
     onPrevious,
     onTogglePlay,
     onSeek,
@@ -195,6 +210,8 @@
       downloadState === 'idle' &&
       !downloadDisabled
   );
+  let capsuleOpen = $state(false);
+  let rightControlsRef = $state<HTMLElement | null>(null);
   const remainingLabel = $derived.by(() =>
     duration > 0 ? `-${formatTime(remainingProgress)}` : '0:00'
   );
@@ -282,6 +299,118 @@
       return;
     }
   }
+
+  let playIconPlayRef = $state<SVGElement | null>(null);
+  let playIconPauseRef = $state<SVGElement | null>(null);
+  let coverExpandHintRef = $state<HTMLElement | null>(null);
+  let coverExpandTriggerRef = $state<HTMLElement | null>(null);
+
+  function gsapStatefulIcon(node: SVGElement) {
+    const badge = node.querySelector<SVGElement>('.toggle-badge');
+    const mark = node.querySelector<SVGElement>('.toggle-mark');
+    if (!badge || !mark) return {};
+
+    const button = node.closest('button');
+    if (!button) return {};
+
+    const applyState = (pressed: boolean, animate: boolean) => {
+      const dur = animate ? getMotionDuration(MOTION.BASE) : 0;
+      if (pressed) {
+        killTweens(badge);
+        killTweens(mark);
+        gsap.to(badge, { scale: 1, opacity: 1, duration: dur, ease: 'ios' });
+        gsap.to(mark, { scale: 1, opacity: 1, duration: dur, ease: 'ios' });
+      } else {
+        killTweens(badge);
+        killTweens(mark);
+        gsap.to(badge, { scale: 0.72, opacity: 0, duration: dur, ease: 'ios' });
+        gsap.to(mark, { scale: 0.72, opacity: 0, duration: dur, ease: 'ios' });
+      }
+    };
+
+    const isPressed = () => button.getAttribute('aria-pressed') === 'true';
+    applyState(isPressed(), false);
+
+    const observer = new MutationObserver(() => applyState(isPressed(), true));
+    observer.observe(button, {
+      attributes: true,
+      attributeFilter: ['aria-pressed'],
+    });
+
+    return {
+      destroy() {
+        observer.disconnect();
+        killTweens(badge);
+        killTweens(mark);
+      },
+    };
+  }
+
+  $effect(() => {
+    const playEl = playIconPlayRef;
+    const pauseEl = playIconPauseRef;
+    if (!playEl || !pauseEl) return;
+    killTweens(playEl);
+    killTweens(pauseEl);
+    if (isPlaying) {
+      gsap.to(playEl, {
+        x: 0.5,
+        scale: 0.82,
+        opacity: 0,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios',
+      });
+      gsap.to(pauseEl, {
+        scale: 1,
+        opacity: 1,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios',
+      });
+    } else {
+      gsap.to(playEl, {
+        x: 0.5,
+        scale: 1,
+        opacity: 1,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios',
+      });
+      gsap.to(pauseEl, {
+        scale: 0.82,
+        opacity: 0,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios',
+      });
+    }
+  });
+
+  $effect(() => {
+    const hint = coverExpandHintRef;
+    const trigger = coverExpandTriggerRef;
+    if (!hint || !trigger) return;
+    const handleEnter = () => {
+      killTweens(hint);
+      gsap.to(hint, {
+        opacity: 1,
+        duration: getMotionDuration(MOTION.FAST),
+        ease: 'ios',
+      });
+    };
+    const handleLeave = () => {
+      killTweens(hint);
+      gsap.to(hint, {
+        opacity: 0,
+        duration: getMotionDuration(MOTION.FAST),
+        ease: 'ios',
+      });
+    };
+    trigger.addEventListener('mouseenter', handleEnter);
+    trigger.addEventListener('mouseleave', handleLeave);
+    return () => {
+      trigger.removeEventListener('mouseenter', handleEnter);
+      trigger.removeEventListener('mouseleave', handleLeave);
+      killTweens(hint);
+    };
+  });
 </script>
 
 {#if song}
@@ -364,6 +493,7 @@
             <svg
               class="control-icon play-icon play-icon-pause"
               viewBox="0 0 24 24"
+              bind:this={playIconPauseRef}
             >
               <rect x="7.15" y="5.95" width="3.4" height="12.1" rx="1.25"
               ></rect>
@@ -373,6 +503,7 @@
             <svg
               class="control-icon play-icon play-icon-play"
               viewBox="0 0 24 24"
+              bind:this={playIconPlayRef}
             >
               <path d="M8.2 6.3v11.4L17.35 12z"></path>
             </svg>
@@ -429,6 +560,7 @@
             aria-label={m.player_fullscreen_open()}
             disabled={!onToggleFullscreen}
             onclick={() => onToggleFullscreen?.()}
+            bind:this={coverExpandTriggerRef}
           >
             {#if resolvedCoverUrl}
               <img
@@ -443,7 +575,11 @@
                 >
               </div>
             {/if}
-            <div class="cover-expand-hint" aria-hidden="true">
+            <div
+              class="cover-expand-hint"
+              aria-hidden="true"
+              bind:this={coverExpandHintRef}
+            >
               <svg viewBox="0 0 24 24">
                 <path d="M15 3h6v6"></path>
                 <path d="M9 21H3v-6"></path>
@@ -461,7 +597,12 @@
       </div>
     </div>
 
-    <div class="right-controls" role="group" aria-label={labels.ariaExtras}>
+    <div
+      class="right-controls"
+      role="group"
+      aria-label={labels.ariaExtras}
+      bind:this={rightControlsRef}
+    >
       <div
         class="time-readout"
         aria-label={m.player_aria_progress({
@@ -490,6 +631,7 @@
             class="control-icon stateful-icon"
             viewBox="0 0 24 24"
             aria-hidden="true"
+            use:gsapStatefulIcon
           >
             <path d="M5.5 7.25h13"></path>
             <path d="M5.5 11h13"></path>
@@ -531,6 +673,7 @@
           class="control-icon stateful-icon"
           viewBox="0 0 24 24"
           aria-hidden="true"
+          use:gsapStatefulIcon
         >
           <path d="M5.25 7h9.5"></path>
           <path d="M5.25 11.5h9.5"></path>
@@ -570,6 +713,22 @@
           </svg>
         {/if}
       </button>
+
+      <div
+        class="volume-group"
+        role="group"
+        aria-label={m.player_aria_volume()}
+      >
+        <VolumeCapsule
+          {volume}
+          {muted}
+          open={capsuleOpen}
+          onopen={() => (capsuleOpen = true)}
+          onclose={() => (capsuleOpen = false)}
+          {onVolumeChange}
+          {onToggleMute}
+        />
+      </div>
     </div>
   </section>
 {/if}
@@ -582,7 +741,7 @@
     --text-main: var(--player-title);
     --text-subtle: var(--player-subtitle);
     --icon-default: var(--player-control-color);
-    --icon-active: var(--accent);
+    --icon-active: var(--album-accent);
     --track-bg: var(--player-track-bg);
     --track-fill-end: var(--player-track-fill-end);
     --thumb-border: var(--player-thumb-border);
@@ -610,22 +769,18 @@
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     box-shadow: none;
-    isolation: isolate;
     display: grid;
     grid-template-columns: var(--transport-width) minmax(0, 1fr) auto;
     gap: 2px;
     align-items: center;
     padding: 11px 10px 8px 8px;
-    transition:
-      box-shadow var(--motion-duration) var(--ease-standard),
-      transform var(--motion-duration) var(--ease-standard);
   }
 
   .am-player[data-panel='lyrics'],
   .am-player[data-panel='playlist'] {
     box-shadow:
       0 18px 36px rgba(15, 23, 42, 0.14),
-      0 8px 20px rgba(var(--accent-rgb), 0.1),
+      0 8px 20px rgba(var(--album-accent-rgb), 0.1),
       inset 0 1px 0
         color-mix(in srgb, var(--surface-highlight) 90%, transparent);
   }
@@ -650,7 +805,6 @@
 
   .right-controls {
     position: relative;
-    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -706,7 +860,6 @@
     place-items: center;
     background: rgba(0, 0, 0, 0.4);
     opacity: 0;
-    transition: opacity var(--motion-duration) var(--ease-standard);
     border-radius: inherit;
   }
 
@@ -720,10 +873,6 @@
     stroke-linejoin: round;
   }
 
-  .cover-expand-trigger:hover:not(:disabled) .cover-expand-hint {
-    opacity: 1;
-  }
-
   .cover {
     width: 46px;
     height: 46px;
@@ -733,15 +882,12 @@
     box-shadow:
       0 12px 24px rgba(16, 18, 28, 0.18),
       0 0 0 1px rgba(255, 255, 255, 0.18);
-    transition:
-      transform var(--motion-duration) var(--ease-standard),
-      box-shadow var(--motion-duration) var(--ease-standard);
   }
 
   .am-player[data-state='playing'] .cover {
     box-shadow:
       0 14px 28px rgba(16, 18, 28, 0.22),
-      0 0 0 1px rgba(var(--accent-rgb), 0.12);
+      0 0 0 1px rgba(var(--album-accent-rgb), 0.12);
   }
 
   .fallback {
@@ -820,7 +966,6 @@
     color: color-mix(in srgb, var(--text-main) 68%, var(--text-subtle));
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    transition: color var(--motion-duration) var(--ease-standard);
   }
 
   .time-remaining {
@@ -866,15 +1011,12 @@
     border-radius: 0;
     background: linear-gradient(
       90deg,
-      var(--accent) 0,
-      var(--accent-hover) var(--player-progress-percent),
+      var(--album-accent) 0,
+      var(--album-accent-hover) var(--player-progress-percent),
       rgba(120, 120, 128, 0.28) var(--player-progress-percent),
       rgba(120, 120, 128, 0.28) 100%
     );
     overflow: hidden;
-    transition:
-      background-color var(--motion-duration) var(--ease-standard),
-      height var(--motion-duration) var(--ease-standard);
   }
 
   .seek-slider {
@@ -944,12 +1086,6 @@
     cursor: pointer;
     color: var(--icon-default);
     background: transparent;
-    transition:
-      background-color var(--motion-duration) var(--ease-standard),
-      border-color var(--motion-duration) var(--ease-standard),
-      box-shadow var(--motion-duration) var(--ease-standard),
-      color var(--motion-duration) var(--ease-standard),
-      transform var(--motion-duration) var(--ease-standard);
   }
 
   .icon-button::before {
@@ -959,7 +1095,6 @@
     border-radius: inherit;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent);
     opacity: 0;
-    transition: opacity var(--motion-duration) var(--ease-standard);
     pointer-events: none;
   }
 
@@ -972,9 +1107,6 @@
     stroke-linecap: round;
     stroke-linejoin: round;
     flex-shrink: 0;
-    transition:
-      transform var(--motion-duration) var(--ease-standard),
-      opacity var(--motion-duration) var(--ease-standard);
   }
 
   .control-icon.solid-icon {
@@ -990,14 +1122,11 @@
   .stateful-icon .toggle-badge,
   .stateful-icon .toggle-mark {
     transform-origin: 18px 6px;
-    transition:
-      transform var(--motion-duration) var(--ease-standard),
-      opacity var(--motion-duration) var(--ease-standard);
   }
 
   .stateful-icon .toggle-badge {
-    fill: rgba(var(--accent-rgb), 0.12);
-    stroke: rgba(var(--accent-rgb), 0.24);
+    fill: rgba(var(--album-accent-rgb), 0.12);
+    stroke: rgba(var(--album-accent-rgb), 0.24);
     opacity: 0;
     transform: scale(0.72);
   }
@@ -1010,9 +1139,9 @@
 
   .icon-button:hover:not(:disabled),
   .icon-button[aria-pressed='true'] {
-    background: rgba(var(--accent-rgb), 0.08);
+    background: rgba(var(--album-accent-rgb), 0.08);
     color: var(--icon-active);
-    border-color: rgba(var(--accent-rgb), 0.08);
+    border-color: rgba(var(--album-accent-rgb), 0.08);
     box-shadow: none;
   }
 
@@ -1021,16 +1150,10 @@
     opacity: 1;
   }
 
-  .icon-button[aria-pressed='true'] .stateful-icon .toggle-badge,
-  .icon-button[aria-pressed='true'] .stateful-icon .toggle-mark {
-    opacity: 1;
-    transform: scale(1);
-  }
-
   .panel-toggle.panel-active {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.2),
-      0 8px 18px rgba(var(--accent-rgb), 0.12);
+      0 8px 18px rgba(var(--album-accent-rgb), 0.12);
   }
 
   .lyrics-toggle-anchor {
@@ -1050,7 +1173,7 @@
   .icon-button.download-active {
     background: var(--player-control-hover-bg);
     color: var(--icon-active);
-    border-color: rgba(var(--accent-rgb), 0.14);
+    border-color: rgba(var(--album-accent-rgb), 0.14);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
   }
 
@@ -1059,7 +1182,7 @@
   }
 
   .spin-icon {
-    animation: player-download-spin 0.9s linear infinite;
+    animation: motion-spin var(--motion-spinner) linear infinite;
   }
 
   .icon-button:active:not(:disabled) {
@@ -1101,22 +1224,12 @@
     opacity: 0;
   }
 
-  .play-button.playing .play-icon-play {
-    transform: translateX(0.5px) scale(0.82);
-    opacity: 0;
-  }
-
-  .play-button.playing .play-icon-pause {
-    transform: scale(1);
-    opacity: 1;
-  }
-
   .icon-button:focus-visible,
   .seek-slider:focus-visible {
     outline: none;
     box-shadow:
       0 0 0 2px color-mix(in srgb, var(--surface-highlight) 86%, white 14%),
-      0 0 0 4px rgba(var(--accent-rgb), 0.28);
+      0 0 0 4px rgba(var(--album-accent-rgb), 0.28);
     border-radius: 999px;
   }
 
@@ -1128,16 +1241,6 @@
   .icon-button:disabled {
     cursor: not-allowed;
     box-shadow: none;
-  }
-
-  @keyframes player-download-spin {
-    from {
-      transform: rotate(0deg);
-    }
-
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   @media (max-width: 900px) {
@@ -1220,5 +1323,15 @@
       width: 100%;
       gap: 1px;
     }
+  }
+
+  .volume-group {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: var(--control-button-size, 34px);
+    height: var(--control-button-size, 34px);
+    flex-shrink: 0;
+    margin-right: 2px;
   }
 </style>

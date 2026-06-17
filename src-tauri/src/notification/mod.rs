@@ -1,10 +1,7 @@
 //! 下载完成与播放状态切换的系统通知集成。
 
 mod cover;
-#[cfg(not(target_os = "macos"))]
 mod desktop;
-#[cfg(target_os = "macos")]
-mod macos;
 
 use crate::app_state::AppState;
 use crate::i18n::{fluent_args, tr, tr_args};
@@ -86,21 +83,7 @@ pub fn notify_download_completed(app: &AppHandle, job: &DownloadJobSnapshot) {
         }
     };
 
-    #[cfg(target_os = "macos")]
-    if let Err(error) = macos::show_download(app, &title, &body) {
-        state.log_center.record(
-            LogPayload::new(
-                LogLevel::Warn,
-                "notification",
-                "notification.download_delivery_failed",
-                "Failed to show download notification",
-            )
-            .details(error.clone()),
-        );
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    if let Err(error) = desktop::show_download(app, title, body) {
+    if let Err(error) = desktop::show_download(app, &title, &body) {
         state.log_center.record(
             LogPayload::new(
                 LogLevel::Warn,
@@ -166,22 +149,9 @@ pub fn notify_playback_changed(app: &AppHandle, player_state: &PlayerState) {
             return;
         }
 
-        #[cfg(target_os = "macos")]
-        if let Err(error) = macos::show_playback(&app_for_task, &title, &body, cover_path.as_ref())
+        if let Err(error) =
+            desktop::show_playback(&app_for_task, &title, &body, cover_path.as_ref())
         {
-            state.log_center.record(
-                LogPayload::new(
-                    LogLevel::Warn,
-                    "notification",
-                    "notification.playback_delivery_failed",
-                    "Failed to show playback notification",
-                )
-                .details(error.clone()),
-            );
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        if let Err(error) = desktop::show_playback(&app_for_task, title, body, cover_path) {
             state.log_center.record(
                 LogPayload::new(
                     LogLevel::Warn,
@@ -208,41 +178,19 @@ pub fn notify_test(app: AppHandle) -> Result<(), String> {
     let title = tr(locale, "notification-test-title");
     let body = tr(locale, "notification-test-body");
 
-    #[cfg(target_os = "macos")]
-    {
-        let result = macos::show_test(&app, &title, &body);
-        if let Err(error) = &result {
-            if let Some(state) = app.try_state::<AppState>() {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "notification",
-                        "notification.test_delivery_failed",
-                        "Failed to show test notification",
-                    )
-                    .details(error.clone()),
-                );
-            }
+    let result = desktop::show_test(&app, &title, &body);
+    if let Err(error) = &result {
+        if let Some(state) = app.try_state::<AppState>() {
+            state.log_center.record(
+                LogPayload::new(
+                    LogLevel::Warn,
+                    "notification",
+                    "notification.test_delivery_failed",
+                    "Failed to show test notification",
+                )
+                .details(error.clone()),
+            );
         }
-        result
     }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let result = desktop::show_test(&app, &title, &body);
-        if let Err(error) = &result {
-            if let Some(state) = app.try_state::<AppState>() {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "notification",
-                        "notification.test_delivery_failed",
-                        "Failed to show test notification",
-                    )
-                    .details(error.clone()),
-                );
-            }
-        }
-        result
-    }
+    result
 }

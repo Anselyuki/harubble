@@ -62,7 +62,7 @@ pub use download::model::{
     DownloadTaskProgressEvent, DownloadTaskSnapshot, DownloadTaskStatus,
 };
 /// 下载服务高层入口。
-pub use download::service::DownloadService;
+pub use download::service::{prepare_job, DownloadService, PreparedJob};
 /// 高层下载编排、写盘与进度上报相关公共接口。
 pub use downloader::{
     album_cover_exists, album_output_dir, download_album_cover, download_song,

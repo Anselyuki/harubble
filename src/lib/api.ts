@@ -16,10 +16,8 @@ import type {
   CreateDownloadJobRequest,
   DownloadJobSnapshot,
   DownloadManagerSnapshot,
-  NotificationPermissionState,
   AppPreferences,
   LocalInventorySnapshot,
-  VerificationMode,
   LogViewerPage,
   LogViewerQuery,
   LogFileStatus,
@@ -121,10 +119,6 @@ export async function playSong(
   });
 }
 
-export async function stopPlayback(): Promise<void> {
-  return invoke('stop_playback');
-}
-
 export async function pausePlayback(): Promise<void> {
   return invoke('pause_playback');
 }
@@ -176,6 +170,10 @@ export async function clearResponseCache(): Promise<void> {
   return invoke('clear_response_cache');
 }
 
+export async function resetHttpClient(): Promise<void> {
+  return invoke('reset_http_client');
+}
+
 export async function extractImageTheme(
   imageUrl: string
 ): Promise<ThemePalette> {
@@ -212,12 +210,6 @@ export async function listDownloadJobs(): Promise<DownloadManagerSnapshot> {
   return invoke('list_download_jobs');
 }
 
-export async function getDownloadJob(
-  jobId: string
-): Promise<DownloadJobSnapshot | null> {
-  return invoke('get_download_job', { jobId });
-}
-
 export async function cancelDownloadJob(
   jobId: string
 ): Promise<DownloadJobSnapshot | null> {
@@ -248,28 +240,12 @@ export async function clearDownloadHistory(): Promise<number> {
   return invoke('clear_download_history');
 }
 
-export async function getNotificationPermissionState(): Promise<NotificationPermissionState> {
-  return invoke('get_notification_permission_state');
-}
-
 export async function sendTestNotification(): Promise<void> {
   return invoke('send_test_notification');
 }
 
 export async function getLocalInventorySnapshot(): Promise<LocalInventorySnapshot> {
   return invoke<LocalInventorySnapshot>('get_local_inventory_snapshot');
-}
-
-export async function rescanLocalInventory(
-  verificationMode?: VerificationMode
-): Promise<LocalInventorySnapshot> {
-  return invoke<LocalInventorySnapshot>('rescan_local_inventory', {
-    verificationMode: verificationMode ?? null,
-  });
-}
-
-export async function cancelLocalInventoryScan(): Promise<LocalInventorySnapshot> {
-  return invoke<LocalInventorySnapshot>('cancel_local_inventory_scan');
 }
 
 export async function getAudioMetadata(
@@ -290,18 +266,6 @@ export async function setPreferences(
   preferences: AppPreferences
 ): Promise<AppPreferences> {
   return invoke<AppPreferences>('set_preferences', { preferences });
-}
-
-export async function exportPreferences(
-  outputPath: string
-): Promise<AppPreferences> {
-  return invoke<AppPreferences>('export_preferences', { outputPath });
-}
-
-export async function importPreferences(
-  inputPath: string
-): Promise<AppPreferences> {
-  return invoke<AppPreferences>('import_preferences', { inputPath });
 }
 
 export async function listLogRecords(
@@ -412,4 +376,14 @@ export async function resolveTagEditorConflict(
     dimensionKey,
     keep,
   });
+}
+
+export async function exportTagEditorRegistry(path: string): Promise<void> {
+  return invoke('export_tag_editor_registry', { path });
+}
+
+export async function importTagEditorRegistry(
+  path: string
+): Promise<TagEditorMergeResult> {
+  return invoke<TagEditorMergeResult>('import_tag_editor_registry', { path });
 }

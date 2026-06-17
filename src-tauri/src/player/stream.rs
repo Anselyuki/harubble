@@ -80,7 +80,7 @@ impl PlaybackInput {
     ///
     /// 返回值包含通道数、采样率和可推断出的总时长。
     pub fn inspect_format(&self) -> Result<AudioFormat> {
-        inspect_audio_reader(self.open_reader()?, self.build_hint())
+        inspect_audio_reader(self.open_reader(None)?, self.build_hint())
     }
 
     /// 启动后台解码线程，将输入流转换为目标采样缓冲。
@@ -98,7 +98,7 @@ impl PlaybackInput {
         start_position_secs: f64,
         error_handler: PlaybackErrorHandler,
     ) -> Result<JoinHandle<()>> {
-        let reader = self.open_reader()?;
+        let reader = self.open_reader(Some(Arc::clone(&stop_flag)))?;
         let hint = self.build_hint();
         Ok(spawn_decode_worker(
             reader,
@@ -113,7 +113,7 @@ impl PlaybackInput {
         ))
     }
 
-    fn open_reader(&self) -> Result<BoxedAudioReader> {
+    fn open_reader(&self, stop_flag: Option<Arc<AtomicBool>>) -> Result<BoxedAudioReader> {
         match self {
             Self::CachedFile(path) => {
                 let file = File::open(path).with_context(|| {
@@ -121,7 +121,7 @@ impl PlaybackInput {
                 })?;
                 Ok(Box::new(file))
             }
-            Self::GrowingFile(handle) => Ok(Box::new(handle.open_reader()?)),
+            Self::GrowingFile(handle) => Ok(Box::new(handle.open_reader(stop_flag)?)),
         }
     }
 
@@ -181,7 +181,10 @@ impl GrowingFileHandle {
     }
 
     /// 以读取端模式打开当前增长文件。
-    pub fn open_reader(&self) -> Result<GrowingFileReader> {
+    ///
+    /// 可选的 `stop_flag` 使读取端能在外部播放会话终止时中断阻塞等待；若传入
+    /// `None`，则读取端仅依赖写入端的 `mark_complete` / `mark_error` 唤醒。
+    pub fn open_reader(&self, stop_flag: Option<Arc<AtomicBool>>) -> Result<GrowingFileReader> {
         let file = OpenOptions::new()
             .read(true)
             .open(&self.path)
@@ -195,6 +198,7 @@ impl GrowingFileHandle {
             file,
             position: 0,
             state: Arc::clone(&self.state),
+            stop_flag,
         })
     }
 
@@ -253,11 +257,20 @@ impl GrowingFileHandle {
 /// 增长文件的读取端。
 ///
 /// 读取操作会在可读长度不足时阻塞等待，直到写入端追加数据或标记完成/失败。
+/// 可选的 `stop_flag` 允许外部播放会话终止时中断阻塞的 condvar 等待，避免网络
+/// 挂起场景下解码线程无限驻留。
 pub struct GrowingFileReader {
     file: File,
     position: u64,
     state: Arc<(Mutex<GrowingFileState>, Condvar)>,
+    stop_flag: Option<Arc<AtomicBool>>,
 }
+
+/// condvar 等待超时时间。
+///
+/// 即使写入端既未追加数据也未标记完成/失败，读取端也会每隔该间隔醒来检查
+/// `stop_flag`，从而保证在播放会话已终止时能及时释放解码线程。
+const GROWING_FILE_WAIT_TIMEOUT: Duration = Duration::from_millis(200);
 
 impl Read for GrowingFileReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -269,11 +282,29 @@ impl Read for GrowingFileReader {
         let mut state = lock.lock().unwrap();
 
         while self.position >= state.available_len && !state.complete && state.error.is_none() {
-            state = condvar.wait(state).unwrap();
+            if self
+                .stop_flag
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::SeqCst))
+            {
+                return Err(io::Error::other("Playback stopped"));
+            }
+            let (next_state, _) = condvar
+                .wait_timeout(state, GROWING_FILE_WAIT_TIMEOUT)
+                .unwrap();
+            state = next_state;
         }
 
         if let Some(error) = &state.error {
             return Err(io::Error::other(error.clone()));
+        }
+
+        if self
+            .stop_flag
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        {
+            return Err(io::Error::other("Playback stopped"));
         }
 
         if self.position >= state.available_len {

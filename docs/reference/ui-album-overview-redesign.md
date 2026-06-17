@@ -1,7 +1,20 @@
 # UI 改版方案：Album Overview 页与 Sidebar 精简
 
 > 参考画布：Penpot「Harubble App Beta」帧（1280×800）  
-> 状态：设计草案，待前端实现
+> 状态：已实现（本文保留为设计背景记录，as-built 真相以 `frontend-guide.md` 为准）
+
+---
+
+## 〇、实现状态（as-built）
+
+本方案的核心已落地，但实现过程相对草案有以下偏差，阅读下文设计细节时以此处为准：
+
+- **`AlbumSidebarSection` 已彻底移除**：组件文件已删除，不再保留挂载或闲置文件（草案第七节曾计划保留文件）。
+- **`overview` 视图已落地**：`AppView` 实际为 `'home' | 'search' | 'overview' | 'library' | 'tagEditor' | 'collection'`（见 `src/lib/features/shell/store.svelte.ts`），其中 `overview` = 全量专辑总览，`library` = 专辑曲目详情。
+- **搜索改为独立 `search` 视图与导航项**：草案设想「搜索栏聚焦切换到 overview 内展示结果」，实际实现为侧栏新增独立的 **Search** 导航项与独立的 `search` AppView（`SearchView`），不再走 overview 承载搜索结果。
+- **导航项顺序为 Home → Search → Library（→`overview`） → Tags**，而非草案设想的「Library → Home → Tags」。`Library` 导航项路由到 `overview`。
+- **`AlbumCard` 已支持 `layout?: 'list' | 'grid'`**，grid 模式封面居上、文字居下（见 `src/lib/components/AlbumCard.svelte`）。
+- 组件目录已按业务域拆分，相关组件现位于 `src/lib/components/app/{album,sidebar,collection,search}/` 下，文中旧路径（如 `src/lib/components/app/AppSidebar.svelte`）仅作历史参考。
 
 ---
 

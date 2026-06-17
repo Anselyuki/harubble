@@ -1,4 +1,4 @@
-export interface ImageMeta {
+interface ImageMeta {
   aspectRatio: number;
 }
 
@@ -6,7 +6,7 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export function getImageMeta(image: HTMLImageElement): ImageMeta | null {
+function getImageMeta(image: HTMLImageElement): ImageMeta | null {
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
 

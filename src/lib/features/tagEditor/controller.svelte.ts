@@ -9,6 +9,7 @@ import type {
   TagEditorMergeResult,
   TagEditorRegistry,
 } from '$lib/types';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { tagEditorStore } from './store.svelte';
 
 interface TagEditorControllerDeps {
@@ -40,7 +41,10 @@ interface TagEditorControllerDeps {
     dimensionKey: string,
     keep: ConflictResolution
   ) => Promise<void>;
+  exportTagEditorRegistry: (path: string) => Promise<void>;
+  importTagEditorRegistry: (path: string) => Promise<TagEditorMergeResult>;
   getAlbumDetail: (albumCid: string) => Promise<AlbumDetail>;
+  getAlbums: () => Album[];
   notifyError: (message: string) => void;
 }
 
@@ -182,6 +186,81 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     }
   }
 
+  async function selectAlbumForEditAsync(
+    album: Album,
+    shouldDispose?: () => boolean
+  ): Promise<boolean> {
+    const seq = ++loadSeq;
+    try {
+      const detail = await deps.getAlbumDetail(album.cid);
+      if (seq !== loadSeq || shouldDispose?.()) return false;
+      tagEditorStore.editingAlbum = album;
+      tagEditorStore.editingSong = null;
+      tagEditorStore.selectedEntityType = 'album';
+      tagEditorStore.selectedCid = album.cid;
+      tagEditorStore.editingAlbumSongs = detail.songs;
+      tagEditorStore.loadingSongs = false;
+      return true;
+    } catch (e: unknown) {
+      if (seq === loadSeq) {
+        tagEditorStore.loadingSongs = false;
+      }
+      deps.notifyError(
+        `加载专辑歌曲失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return false;
+    }
+  }
+
+  async function restoreEditingState(
+    albumCid: string | null,
+    songCid: string | null,
+    shouldDispose?: () => boolean
+  ): Promise<boolean> {
+    tagEditorStore.reset();
+
+    if (!albumCid) return true;
+
+    const album = deps.getAlbums().find((a) => a.cid === albumCid);
+    if (!album) return false;
+
+    const seq = ++loadSeq;
+    tagEditorStore.loadingSongs = true;
+
+    try {
+      const detail = await deps.getAlbumDetail(albumCid);
+      if (seq !== loadSeq || shouldDispose?.()) return false;
+
+      tagEditorStore.editingAlbum = album;
+      tagEditorStore.editingAlbumSongs = detail.songs;
+      tagEditorStore.loadingSongs = false;
+
+      if (songCid) {
+        const song = detail.songs.find((s) => s.cid === songCid);
+        if (song) {
+          tagEditorStore.editingSong = song;
+          tagEditorStore.selectedEntityType = 'song';
+          tagEditorStore.selectedCid = songCid;
+        } else {
+          tagEditorStore.selectedEntityType = 'album';
+          tagEditorStore.selectedCid = albumCid;
+        }
+      } else {
+        tagEditorStore.selectedEntityType = 'album';
+        tagEditorStore.selectedCid = albumCid;
+      }
+      return true;
+    } catch (e: unknown) {
+      if (seq === loadSeq) {
+        tagEditorStore.reset();
+      }
+      deps.notifyError(
+        `恢复 Tag 编辑器状态失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return false;
+    }
+  }
+
   function selectSongForEdit(song: SongEntry) {
     tagEditorStore.editingSong = song;
     tagEditorStore.selectedEntityType = 'song';
@@ -195,6 +274,56 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       tagEditorStore.selectedCid = tagEditorStore.editingAlbum.cid;
     }
   }
+
+  function setAlbumSearchQuery(query: string) {
+    tagEditorStore.albumSearchQuery = query;
+  }
+
+  async function exportRegistry() {
+    const path = await save({
+      defaultPath: 'tag_registry.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (!path) return;
+
+    try {
+      await deps.exportTagEditorRegistry(path);
+    } catch (e: unknown) {
+      deps.notifyError(
+        `导出失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  async function importRegistry() {
+    const path = await open({
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (!path) return;
+
+    try {
+      const result = await deps.importTagEditorRegistry(path);
+      if (result.conflicts.length > 0) {
+        tagEditorStore.conflicts = result.conflicts;
+      }
+      await loadData();
+    } catch (e: unknown) {
+      deps.notifyError(
+        `导入失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  const filteredAlbums = $derived.by(() => {
+    const query = tagEditorStore.albumSearchQuery.trim().toLowerCase();
+    const allAlbums = deps.getAlbums();
+    if (!query) return allAlbums;
+    return allAlbums.filter(
+      (album) =>
+        album.name.toLowerCase().includes(query) ||
+        album.artists.some((a) => a.toLowerCase().includes(query))
+    );
+  });
 
   function dispose() {
     loadSeq += 1;
@@ -235,9 +364,17 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     get loadingSongs() {
       return tagEditorStore.loadingSongs;
     },
+    get albumSearchQuery() {
+      return tagEditorStore.albumSearchQuery;
+    },
+    get filteredAlbums() {
+      return filteredAlbums;
+    },
+    setAlbumSearchQuery,
     loadData,
     selectEntity,
     selectAlbumForEdit,
+    selectAlbumForEditAsync,
     selectSongForEdit,
     backToAlbum,
     setTag,
@@ -245,6 +382,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     addDimension,
     removeDimension,
     resolveConflict,
+    exportRegistry,
+    importRegistry,
+    restoreEditingState,
     dispose,
   };
 }

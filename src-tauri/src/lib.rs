@@ -42,14 +42,17 @@ mod i18n;
 mod listening_history;
 mod local_inventory;
 mod local_inventory_provenance;
+mod local_inventory_scan;
 mod logging;
 mod migration;
+mod network_monitor;
 mod notification;
 mod player;
 mod preferences;
 mod search;
 mod tag_editor;
 mod tag_registry;
+mod tag_registry_index;
 mod theme;
 
 /// 启动 belong 预热后台任务。
@@ -77,3 +80,7 @@ pub use local_inventory::spawn_inventory_scan;
 ///
 /// 适用于构造结构化日志并通过公共后端入口统一记录。
 pub use logging::{LogLevel, LogPayload};
+/// 启动网络配置变更监听后台任务。
+///
+/// 在 macOS 上监听系统代理与网络路由变化，自动重建 HTTP 客户端。
+pub use network_monitor::spawn_network_monitor;

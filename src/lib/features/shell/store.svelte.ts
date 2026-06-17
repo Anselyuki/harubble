@@ -1,6 +1,6 @@
 import * as m from '$lib/paraglide/messages.js';
-import type SettingsSheet from '$lib/components/app/SettingsSheet.svelte';
-import type DownloadTasksSheet from '$lib/components/app/DownloadTasksSheet.svelte';
+import type SettingsSheet from '$lib/components/app/shell/SettingsSheet.svelte';
+import type DownloadTasksSheet from '$lib/components/app/shell/DownloadTasksSheet.svelte';
 
 interface OpenSideSheetOptions {
   notifyError: (message: string) => void;
@@ -12,6 +12,7 @@ type DownloadTasksSheetComponent = typeof DownloadTasksSheet;
 
 export type AppView =
   | 'home'
+  | 'search'
   | 'overview'
   | 'library'
   | 'tagEditor'
@@ -27,10 +28,30 @@ let downloadTasksSheetLoader =
 let currentView = $state<AppView>('home');
 
 const SIDEBAR_COLLAPSED_KEY = 'harubble:sidebar-collapsed';
+const SIDEBAR_WIDTH_KEY = 'harubble:sidebar-width';
+const DEFAULT_SIDEBAR_WIDTH = 248;
 
 let sidebarCollapsed = $state(
   typeof window !== 'undefined' &&
     localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
+);
+
+/**
+ * 标记本次侧栏折叠/展开是否走「压缩同步」编排。
+ *
+ * 仅由 {@link setSidebarCollapsedTransient}（视图驱动的强制收缩/展开，如进入
+ * Tag Editor）置 `true`，此时折叠动画压成单一时间线、与页面转场同时收尾，避免
+ * logo FLIP 长尾抖动；用户手动点折叠按钮（{@link toggleSidebar}）或拖曳 resize
+ * （`set sidebarCollapsed`）会置 `false`，保留完整保真特效。
+ */
+let sidebarTransientCompact = $state(false);
+
+let sidebarWidth = $state(
+  typeof window !== 'undefined'
+    ? Number.parseFloat(
+        localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? String(DEFAULT_SIDEBAR_WIDTH)
+      ) || DEFAULT_SIDEBAR_WIDTH
+    : DEFAULT_SIDEBAR_WIDTH
 );
 
 let sideSheetRequestSeq = 0;
@@ -46,6 +67,8 @@ function dispose() {
   downloadPanelOpen = false;
   currentView = 'home';
   sidebarCollapsed = false;
+  sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+  sidebarTransientCompact = false;
   sideSheetRequestSeq = 0;
   initialized = false;
 }
@@ -58,14 +81,15 @@ async function ensureSettingsSheetLoaded(
   }
 
   if (!settingsSheetLoader) {
-    settingsSheetLoader = import('$lib/components/app/SettingsSheet.svelte')
-      .then((module) => {
-        SettingsSheetView = module.default;
-        return module.default;
-      })
-      .finally(() => {
-        settingsSheetLoader = null;
-      });
+    settingsSheetLoader =
+      import('$lib/components/app/shell/SettingsSheet.svelte')
+        .then((module) => {
+          SettingsSheetView = module.default;
+          return module.default;
+        })
+        .finally(() => {
+          settingsSheetLoader = null;
+        });
   }
 
   try {
@@ -90,7 +114,7 @@ async function ensureDownloadTasksSheetLoaded(
 
   if (!downloadTasksSheetLoader) {
     downloadTasksSheetLoader =
-      import('$lib/components/app/DownloadTasksSheet.svelte')
+      import('$lib/components/app/shell/DownloadTasksSheet.svelte')
         .then((module) => {
           DownloadTasksSheetView = module.default;
           return module.default;
@@ -193,18 +217,48 @@ export const shellStore = {
   },
   set sidebarCollapsed(value: boolean) {
     sidebarCollapsed = value;
+    // 手动 / 拖曳路径：恢复完整保真编排
+    sidebarTransientCompact = false;
     if (typeof window !== 'undefined') {
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(value));
     }
   },
+  /**
+   * 视图驱动的强制收缩/展开是否走压缩同步编排。
+   *
+   * App.svelte 的共享 `$effect` 据此决定侧栏宽度与 logo 动画是否压成单一时间线
+   * 与页面转场同时收尾。仅 {@link setSidebarCollapsedTransient} 会置 `true`。
+   */
+  get sidebarTransientCompact() {
+    return sidebarTransientCompact;
+  },
+  setSidebarCollapsedTransient(value: boolean) {
+    sidebarCollapsed = value;
+    // 视图驱动（如进入 Tag Editor）：走压缩同步编排，与页面转场齐步收尾
+    sidebarTransientCompact = true;
+  },
   toggleSidebar() {
     sidebarCollapsed = !sidebarCollapsed;
+    // 手动按钮：恢复完整保真编排
+    sidebarTransientCompact = false;
     if (typeof window !== 'undefined') {
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
     }
   },
+  get sidebarWidth() {
+    return sidebarWidth;
+  },
+  set sidebarWidth(value: number) {
+    sidebarWidth = value;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(value));
+    }
+  },
   navigateToHome() {
     currentView = 'home';
+  },
+  navigateToSearch() {
+    currentView = 'search';
   },
   navigateToOverview() {
     currentView = 'overview';

@@ -7,19 +7,6 @@ import type {
   TagGroup,
 } from '$lib/types';
 
-export interface HomeState {
-  latestAlbums: Album[];
-  seriesGroups: SeriesGroup[];
-  recentHistory: HistoryEntry[];
-  status: HomepageStatus | null;
-  loading: boolean;
-  belongReady: boolean;
-  tagDimensions: TagDimension[];
-  tagGroups: TagGroup[];
-  selectedDimensionKey: string | null;
-  lastLoadedAt: number | null;
-}
-
 let latestAlbums = $state<Album[]>([]);
 let seriesGroups = $state<SeriesGroup[]>([]);
 let recentHistory = $state<HistoryEntry[]>([]);

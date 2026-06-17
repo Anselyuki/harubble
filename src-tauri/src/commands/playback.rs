@@ -1,6 +1,6 @@
 //! 播放控制与播放器状态读取相关的 Tauri command。
 //!
-//! 当前暴露的接口覆盖点播、暂停、恢复、停止、跳转、上下曲切换与状态查询，
+//! 当前暴露的接口覆盖点播、暂停、恢复、跳转、上下曲切换与状态查询，
 //! 主要服务于前端播放器、系统媒体控制和播放进度交互。
 
 use crate::app_state::AppState;
@@ -22,16 +22,6 @@ pub async fn play_song(
     state
         .play_song_internal(song_cid, cover_url, playback_context)
         .await
-}
-
-/// 停止当前播放并清空播放态。
-///
-/// 适用于用户主动停止播放、清理播放器状态或在需要彻底终止当前会话时调用。
-/// 入参 `state` 为共享后端状态；返回值在成功时为空。
-/// 该接口会使当前播放会话失效，并清空当前歌曲、进度和播放状态；若只是暂时中断，优先使用暂停而不是停止。
-#[tauri::command]
-pub fn stop_playback(state: State<'_, AppState>) -> Result<(), String> {
-    state.player.stop().map_err(|e| e.to_string())
 }
 
 /// 暂停当前播放。
@@ -102,7 +92,17 @@ pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerState, Strin
 /// 适用于音量滑杆提交、恢复用户偏好音量，或外部媒体控制同步音量场景。
 /// 入参 `volume` 预期为 `0.0..=1.0` 范围内的浮点值；返回值为经过裁剪后的实际音量。
 /// 该接口具备幂等性：传入相同有效音量时结果稳定；若传入越界值会被自动裁剪，调用方不应假设返回值一定等于原始输入。
+/// 音量变化会自动持久化到偏好文件，下次启动时恢复。
 #[tauri::command]
 pub fn set_playback_volume(state: State<'_, AppState>, volume: f64) -> Result<f64, String> {
-    Ok(state.player.set_volume(volume))
+    let actual = state.player.set_volume(volume);
+    let mut prefs = state.preferences();
+    if (prefs.volume - actual).abs() > 0.001 {
+        prefs.volume = actual;
+        let locale = prefs.locale;
+        let store = state.preferences_store();
+        let _ = store.save(&prefs, locale);
+        state.set_preferences(prefs);
+    }
+    Ok(actual)
 }

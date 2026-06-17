@@ -10,7 +10,7 @@ use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 const DEFAULT_BASE_URL: &str = "https://monster-siren.hypergryph.com/api";
@@ -18,6 +18,7 @@ const DEFAULT_CACHE_CAPACITY: usize = 100;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_JSON_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
 const MAX_AUDIO_RESPONSE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -162,7 +163,7 @@ struct ApiResponse<T> {
 /// 上层播放器、下载服务或 Tauri command 的共享数据入口。
 #[derive(Clone)]
 pub struct ApiClient {
-    client: Client,
+    client: Arc<RwLock<Client>>,
     base_url: String,
     response_cache: Arc<Mutex<LruCache<String, Vec<u8>>>>,
 }
@@ -177,17 +178,41 @@ impl ApiClient {
     }
 
     fn new_with_config(base_url: String, capacity: usize) -> Result<Self> {
-        let client = Client::builder()
-            .user_agent("Mozilla/5.0 (compatible; harubble)")
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .build()?;
+        let client = Self::build_client()?;
         let capacity = NonZeroUsize::new(capacity).expect("cache capacity must be non-zero");
         Ok(Self {
-            client,
+            client: Arc::new(RwLock::new(client)),
             base_url: base_url.trim_end_matches('/').to_string(),
             response_cache: Arc::new(Mutex::new(LruCache::new(capacity))),
         })
+    }
+
+    fn build_client() -> Result<Client> {
+        Ok(Client::builder()
+            .user_agent("Mozilla/5.0 (compatible; harubble)")
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+            .build()?)
+    }
+
+    fn http_client(&self) -> Client {
+        self.client
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// 重建内部 HTTP 客户端以适应网络环境变化。
+    ///
+    /// 当系统代理设置变更或网络接口切换后，已有的 HTTP 客户端可能持有过期的连接池
+    /// 与代理配置。调用此方法会丢弃旧客户端并以当前系统环境重新构建，使后续请求
+    /// 能够正确路由。若重建失败则保留原有客户端不变。
+    pub fn reset_http_client(&self) -> Result<()> {
+        let new_client = Self::build_client()?;
+        *self.client.write().unwrap_or_else(|e| e.into_inner()) = new_client;
+        self.clear_response_cache();
+        Ok(())
     }
 
     fn api_url(&self, path: &str) -> String {
@@ -212,58 +237,138 @@ impl ApiClient {
     }
 
     async fn fetch_response_bytes(&self, url: &str, accept_json: bool) -> Result<Vec<u8>> {
-        let mut request = self.client.get(url);
-        if accept_json {
-            request = request.header("Accept", "application/json");
+        self.fetch_response_bytes_with_retry(url, accept_json, 1)
+            .await
+    }
+
+    async fn fetch_response_bytes_with_retry(
+        &self,
+        url: &str,
+        accept_json: bool,
+        max_retries: usize,
+    ) -> Result<Vec<u8>> {
+        let mut last_error = None;
+
+        for attempt in 0..=max_retries {
+            let mut request = self.http_client().get(url);
+            if accept_json {
+                request = request.header("Accept", "application/json");
+            }
+
+            match request.send().await {
+                Ok(response) => match response.error_for_status() {
+                    Ok(response) => {
+                        if let Some(len) = response.content_length() {
+                            anyhow::ensure!(
+                                len <= MAX_JSON_RESPONSE_SIZE,
+                                "response too large: {len} bytes exceeds limit of {MAX_JSON_RESPONSE_SIZE}"
+                            );
+                        }
+                        let bytes = response.bytes().await?;
+                        anyhow::ensure!(
+                            (bytes.len() as u64) <= MAX_JSON_RESPONSE_SIZE,
+                            "response too large: {} bytes exceeds limit of {MAX_JSON_RESPONSE_SIZE}",
+                            bytes.len()
+                        );
+                        return Ok(bytes.to_vec());
+                    }
+                    Err(e) => {
+                        last_error = Some(e.into());
+                    }
+                },
+                Err(e) => {
+                    // 检测是否为网络连接错误
+                    let is_connection_error = e.is_connect() || e.is_timeout();
+                    last_error = Some(e.into());
+
+                    // 如果是连接错误且还有重试机会，尝试重建客户端
+                    if is_connection_error && attempt < max_retries {
+                        let _ = self.reset_http_client();
+                        // 短暂延迟，让系统有时间完成网络配置变更
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        continue;
+                    }
+                }
+            }
+
+            // 非连接错误或已用尽重试次数，直接返回错误
+            if let Some(err) = last_error {
+                return Err(err);
+            }
         }
 
-        let response = request.send().await?.error_for_status()?;
-        if let Some(len) = response.content_length() {
-            anyhow::ensure!(
-                len <= MAX_JSON_RESPONSE_SIZE,
-                "response too large: {len} bytes exceeds limit of {MAX_JSON_RESPONSE_SIZE}"
-            );
-        }
-        let bytes = response.bytes().await?;
-        anyhow::ensure!(
-            (bytes.len() as u64) <= MAX_JSON_RESPONSE_SIZE,
-            "response too large: {} bytes exceeds limit of {MAX_JSON_RESPONSE_SIZE}",
-            bytes.len()
-        );
-        Ok(bytes.to_vec())
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Request failed after retries")))
     }
 
     async fn fetch_streamed_bytes(
         &self,
         url: &str,
+        on_progress: impl FnMut(u64, Option<u64>),
+    ) -> Result<Vec<u8>> {
+        self.fetch_streamed_bytes_with_retry(url, on_progress, 1)
+            .await
+    }
+
+    async fn fetch_streamed_bytes_with_retry(
+        &self,
+        url: &str,
         mut on_progress: impl FnMut(u64, Option<u64>),
+        max_retries: usize,
     ) -> Result<Vec<u8>> {
         use futures::StreamExt;
 
-        let response = self.client.get(url).send().await?.error_for_status()?;
-        let total = response.content_length();
-        if let Some(len) = total {
-            anyhow::ensure!(
-                len <= MAX_AUDIO_RESPONSE_SIZE,
-                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
-            );
-        }
-        let mut stream = response.bytes_stream();
-        let mut bytes = Vec::new();
-        let mut downloaded = 0_u64;
+        let mut last_error = None;
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            downloaded += chunk.len() as u64;
-            anyhow::ensure!(
-                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
-                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
-            );
-            bytes.extend_from_slice(&chunk);
-            on_progress(downloaded, total);
+        for attempt in 0..=max_retries {
+            match self.http_client().get(url).send().await {
+                Ok(response) => match response.error_for_status() {
+                    Ok(response) => {
+                        let total = response.content_length();
+                        if let Some(len) = total {
+                            anyhow::ensure!(
+                                len <= MAX_AUDIO_RESPONSE_SIZE,
+                                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
+                            );
+                        }
+                        let mut stream = response.bytes_stream();
+                        let mut bytes = Vec::new();
+                        let mut downloaded = 0_u64;
+
+                        while let Some(chunk) = stream.next().await {
+                            let chunk = chunk?;
+                            downloaded += chunk.len() as u64;
+                            anyhow::ensure!(
+                                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
+                                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
+                            );
+                            bytes.extend_from_slice(&chunk);
+                            on_progress(downloaded, total);
+                        }
+
+                        return Ok(bytes);
+                    }
+                    Err(e) => {
+                        last_error = Some(e.into());
+                    }
+                },
+                Err(e) => {
+                    let is_connection_error = e.is_connect() || e.is_timeout();
+                    last_error = Some(e.into());
+
+                    if is_connection_error && attempt < max_retries {
+                        let _ = self.reset_http_client();
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(err) = last_error {
+                return Err(err);
+            }
         }
 
-        Ok(bytes)
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Request failed after retries")))
     }
 
     fn decode_api_response<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
@@ -325,6 +430,9 @@ impl ApiClient {
     ///
     /// 适用于边下载边处理的场景，例如实时写盘、播放器边缓冲边解码，或需要自行控制
     /// 取消时机的流水线下载。
+    ///
+    /// 该方法在遇到连接错误时会自动重试一次，并在重试前重建 HTTP 客户端以适应可能的
+    /// 网络环境变化（如代理开关、VPN 切换）。
     pub async fn download_stream(
         &self,
         url: &str,
@@ -334,30 +442,59 @@ impl ApiClient {
 
         crate::url_validator::validate_download_url(url)?;
 
-        let resp = self.client.get(url).send().await?.error_for_status()?;
-        let total = resp.content_length();
-        if let Some(len) = total {
-            anyhow::ensure!(
-                len <= MAX_AUDIO_RESPONSE_SIZE,
-                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
-            );
-        }
-        let mut stream = resp.bytes_stream();
-        let mut downloaded = 0_u64;
+        let mut last_error = None;
+        let max_retries = 1;
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            downloaded += chunk.len() as u64;
-            anyhow::ensure!(
-                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
-                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
-            );
-            if !on_chunk(&chunk, downloaded, total)? {
-                break;
+        for attempt in 0..=max_retries {
+            match self.http_client().get(url).send().await {
+                Ok(resp) => match resp.error_for_status() {
+                    Ok(resp) => {
+                        let total = resp.content_length();
+                        if let Some(len) = total {
+                            anyhow::ensure!(
+                                len <= MAX_AUDIO_RESPONSE_SIZE,
+                                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
+                            );
+                        }
+                        let mut stream = resp.bytes_stream();
+                        let mut downloaded = 0_u64;
+
+                        while let Some(chunk) = stream.next().await {
+                            let chunk = chunk?;
+                            downloaded += chunk.len() as u64;
+                            anyhow::ensure!(
+                                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
+                                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
+                            );
+                            if !on_chunk(&chunk, downloaded, total)? {
+                                break;
+                            }
+                        }
+
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        last_error = Some(e.into());
+                    }
+                },
+                Err(e) => {
+                    let is_connection_error = e.is_connect() || e.is_timeout();
+                    last_error = Some(e.into());
+
+                    if is_connection_error && attempt < max_retries {
+                        let _ = self.reset_http_client();
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(err) = last_error {
+                return Err(err);
             }
         }
 
-        Ok(())
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Request failed after retries")))
     }
 
     /// 下载完整字节内容，并在可命中时复用内部缓存。

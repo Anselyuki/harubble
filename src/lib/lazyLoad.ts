@@ -1,3 +1,4 @@
+import { animateIn, animateOut } from '$lib/design/gsap';
 import { getImageDataUrl } from './api';
 
 export function lazyLoad(
@@ -7,13 +8,13 @@ export function lazyLoad(
     reducedMotion = false,
   }: { rootMargin?: string; reducedMotion?: boolean } = {}
 ) {
-  let imageAnimation: Animation | null = null;
-  let placeholderAnimation: Animation | null = null;
+  let imageAnimation: gsap.core.Tween | null = null;
+  let placeholderAnimation: gsap.core.Tween | null = null;
   let loadSeq = 0;
 
   const stopAnimations = () => {
-    imageAnimation?.cancel();
-    placeholderAnimation?.cancel();
+    imageAnimation?.kill();
+    placeholderAnimation?.kill();
   };
 
   const observer = new IntersectionObserver(
@@ -45,30 +46,21 @@ export function lazyLoad(
             const resolvedSrc = await getImageDataUrl(src);
             if (seq !== loadSeq) return;
 
-            img.style.opacity = '0';
-            img.style.transform = reducedMotion ? 'scale(1)' : 'scale(1.04)';
             img.onload = () => {
               stopAnimations();
-              const duration = reducedMotion ? 0 : 180;
               if (placeholder) {
-                placeholderAnimation = placeholder.animate(
-                  [
-                    { opacity: getComputedStyle(placeholder).opacity },
-                    { opacity: '0' },
-                  ],
-                  { duration, easing: 'ease-out', fill: 'forwards' }
+                placeholderAnimation = animateOut(
+                  placeholder,
+                  { opacity: 0 },
+                  reducedMotion ? 0 : 180
                 );
               }
-              imageAnimation = img.animate(
-                [
-                  { opacity: '0', transform: img.style.transform },
-                  { opacity: '1', transform: 'scale(1)' },
-                ],
-                {
-                  duration: reducedMotion ? 0 : 200,
-                  easing: 'ease-out',
-                  fill: 'forwards',
-                }
+              imageAnimation = animateIn(
+                img,
+                { opacity: 0, scale: reducedMotion ? 1 : 1.04 },
+                { opacity: 1, scale: 1 },
+                reducedMotion ? 0 : 200,
+                'ios-out'
               );
             };
             img.onerror = () => {

@@ -5,6 +5,12 @@
     getDownloadBadgeLabel,
     shouldShowAlbumListDownloadBadge,
   } from '$lib/downloadBadge';
+  import {
+    gsap,
+    getMotionDuration,
+    killTweens,
+    MOTION,
+  } from '$lib/design/gsap';
 
   interface Props {
     album: Album;
@@ -32,11 +38,92 @@
   function handleActivate() {
     onclick?.();
   }
+
+  function gsapCardHover(node: HTMLElement) {
+    const isGrid = node.classList.contains('album-card--grid');
+
+    const handleEnter = () => {
+      if (
+        node.classList.contains('selected') ||
+        node.classList.contains('is-reduced-motion')
+      )
+        return;
+      killTweens(node);
+      gsap.to(node, {
+        y: isGrid ? -2 : -1,
+        boxShadow: isGrid
+          ? '0 6px 16px rgba(15, 23, 42, 0.1)'
+          : '0 2px 8px rgba(15, 23, 42, 0.05)',
+        duration: getMotionDuration(MOTION.FAST),
+        ease: 'ios-spring',
+      });
+    };
+
+    const handleLeave = () => {
+      if (
+        node.classList.contains('selected') ||
+        node.classList.contains('is-reduced-motion')
+      )
+        return;
+      killTweens(node);
+      gsap.to(node, {
+        y: 0,
+        boxShadow: 'none',
+        duration: getMotionDuration(MOTION.FAST),
+        ease: 'ios',
+      });
+    };
+
+    const handleDown = () => {
+      if (
+        node.classList.contains('selected') ||
+        node.classList.contains('is-reduced-motion')
+      )
+        return;
+      killTweens(node);
+      gsap.to(node, {
+        y: 0,
+        scale: 0.99,
+        duration: getMotionDuration(MOTION.MICRO),
+        ease: 'ios-in',
+      });
+    };
+
+    const handleUp = () => {
+      if (
+        node.classList.contains('selected') ||
+        node.classList.contains('is-reduced-motion')
+      )
+        return;
+      killTweens(node);
+      gsap.to(node, {
+        scale: 1,
+        duration: getMotionDuration(MOTION.FAST),
+        ease: 'ios-spring',
+      });
+    };
+
+    node.addEventListener('mouseenter', handleEnter);
+    node.addEventListener('mouseleave', handleLeave);
+    node.addEventListener('mousedown', handleDown);
+    node.addEventListener('mouseup', handleUp);
+
+    return {
+      destroy() {
+        node.removeEventListener('mouseenter', handleEnter);
+        node.removeEventListener('mouseleave', handleLeave);
+        node.removeEventListener('mousedown', handleDown);
+        node.removeEventListener('mouseup', handleUp);
+        killTweens(node);
+      },
+    };
+  }
 </script>
 
 <button
   type="button"
   class={`album-card album-card--${layout}${selected ? ' selected' : ''}${reducedMotion ? ' is-reduced-motion' : ''}`}
+  use:gsapCardHover
   onclick={handleActivate}
 >
   <div
@@ -74,42 +161,21 @@
     color: inherit;
     box-shadow: inset 0 0 0 1px transparent;
     transform: translateY(0) scale(1);
-    transition: transform 0.16s ease;
-  }
-
-  :global(.album-card:not(.selected)) {
-    transition:
-      background-color 0.16s ease,
-      box-shadow 0.16s ease,
-      transform 0.16s ease;
   }
 
   :global(.album-card:hover:not(.selected)),
   :global(.album-card:focus-visible:not(.selected)) {
     background: var(--hover-bg-elevated);
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
-  }
-
-  :global(.album-card:hover:not(.selected):not(.is-reduced-motion)),
-  :global(.album-card:focus-visible:not(.selected):not(.is-reduced-motion)) {
-    transform: translateY(-1px);
-  }
-
-  :global(.album-card:active:not(.selected):not(.is-reduced-motion)) {
-    transform: translateY(0) scale(0.99);
   }
 
   :global(.album-card.selected) {
     background: rgba(var(--accent-rgb), 0.1);
     box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.12);
     transform: translateY(0) scale(1);
-    transition: none;
   }
 
-  @media (prefers-color-scheme: dark) {
-    :global(.album-card.selected) {
-      background: rgba(var(--accent-rgb), 0.18);
-    }
+  :global(.dark .album-card.selected) {
+    background: rgba(var(--accent-rgb), 0.18);
   }
 
   :global(.album-card:focus-visible:not(.selected)) {
@@ -142,7 +208,6 @@
     position: relative;
     overflow: hidden;
     box-shadow: 0 0 0 rgba(var(--accent-rgb), 0);
-    transition: box-shadow 0.16s ease;
   }
 
   :global(.album-card:hover:not(.selected)) .album-cover-wrapper,
@@ -152,11 +217,6 @@
 
   :global(.album-card.selected) .album-cover-wrapper {
     box-shadow: 0 0 0 rgba(var(--accent-rgb), 0);
-    transition: none;
-  }
-
-  :global(.album-card.is-reduced-motion) .album-cover-wrapper {
-    transition: none;
   }
 
   .album-cover-placeholder {
@@ -255,12 +315,5 @@
 
   :global(.album-card.album-card--grid) .album-download-badge {
     margin-top: 4px;
-  }
-
-  :global(
-    .album-card.album-card--grid:hover:not(.selected):not(.is-reduced-motion)
-  ) {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
   }
 </style>

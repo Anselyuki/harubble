@@ -15,6 +15,7 @@
 use crate::preferences::Locale;
 use anyhow::{Context, Result};
 use harubble_core::api::TagEntry;
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
@@ -78,9 +79,10 @@ pub struct TagRegistry {
 pub struct AlbumEntry {
     /// 专辑 CID（唯一标识）。
     pub(crate) cid: String,
-    /// 专辑类型 key，引用 `TagRegistry.type_definitions` 中的定义。
-    #[serde(default, rename = "type")]
-    pub(crate) album_type: Option<String>,
+    /// 专辑类型 key 列表，引用 `TagRegistry.type_definitions` 中的定义。
+    /// 支持多选；兼容旧格式单字符串与新格式数组。
+    #[serde(default, rename = "type", deserialize_with = "deserialize_type_field")]
+    pub(crate) album_type: Vec<String>,
     /// 专辑名称。
     #[serde(default)]
     pub(crate) name: Option<String>,
@@ -93,6 +95,34 @@ pub struct AlbumEntry {
     /// 关联角色，多语种。
     #[serde(default)]
     pub(crate) character: Option<LocalizedValue>,
+    /// 额外维度（未在结构体中显式定义的 tag 维度）。
+    #[serde(flatten, default)]
+    pub(crate) extra: HashMap<String, Vec<LocalizedValue>>,
+}
+
+/// 兼容旧格式（单字符串）和新格式（数组）的 `type` 字段反序列化。
+fn deserialize_type_field<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        Single(String),
+        Multiple(Vec<String>),
+    }
+
+    match Option::<StringOrVec>::deserialize(deserializer)? {
+        None => Ok(Vec::new()),
+        Some(StringOrVec::Single(s)) => {
+            if s.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![s])
+            }
+        }
+        Some(StringOrVec::Multiple(v)) => Ok(v),
+    }
 }
 
 /// 单首歌曲的扁平化 tag 条目（对应 JSON 中 songs 数组的元素）。
@@ -190,16 +220,6 @@ pub struct TagDimensionResolved {
 }
 
 // ─── 服务结构 ─────────────────────────────────────────────────────────────────
-
-/// 运行时使用的专辑 tag 查询索引，从 `Vec<AlbumEntry>` 派生。
-///
-/// 将扁平化的 `AlbumEntry` 转换为 `cid → TagSet` 的 HashMap，供查询方法使用。
-type AlbumTagIndex = HashMap<String, TagSet>;
-
-/// 运行时使用的单曲 tag 查询索引，从 `Vec<SongRegistryEntry>` 派生。
-///
-/// 将扁平化的 `SongRegistryEntry` 转换为 `cid → TagSet` 的 HashMap，供查询方法使用。
-type SongTagIndex = HashMap<String, TagSet>;
 
 /// Tag 注册表服务。
 ///
@@ -429,337 +449,14 @@ impl TagRegistryService {
 
 // ─── 私有辅助函数 ─────────────────────────────────────────────────────────────
 
-/// 从 `AlbumEntry` 列表构建 cid → TagSet 的查询索引。
-///
-/// 将扁平字段转换为 `LocalizedValue` 格式，跳过 `None` 字段。
-fn build_album_index(
-    albums: &[AlbumEntry],
-    type_defs: &HashMap<String, LocalizedValue>,
-) -> AlbumTagIndex {
-    albums
-        .iter()
-        .filter_map(|entry| {
-            let tag_set = album_entry_to_tag_set(entry, type_defs);
-            if tag_set.tags.is_empty() {
-                None
-            } else {
-                Some((entry.cid.clone(), tag_set))
-            }
-        })
-        .collect()
-}
-
-/// 将单个 `AlbumEntry` 的扁平字段转换为 `TagSet`。
-fn album_entry_to_tag_set(
-    entry: &AlbumEntry,
-    type_defs: &HashMap<String, LocalizedValue>,
-) -> TagSet {
-    let mut tags: HashMap<String, Vec<LocalizedValue>> = HashMap::new();
-
-    if let Some(ref key) = entry.album_type {
-        if let Some(lv) = type_defs.get(key) {
-            tags.insert("type".to_string(), vec![lv.clone()]);
-        } else {
-            let fallback = LocalizedValue(HashMap::from([
-                ("zh-CN".to_string(), key.clone()),
-                ("en-US".to_string(), key.clone()),
-            ]));
-            tags.insert("type".to_string(), vec![fallback]);
-        }
-    }
-    if let Some(ref v) = entry.faction {
-        tags.insert("faction".to_string(), vec![v.clone()]);
-    }
-    if let Some(ref v) = entry.character {
-        tags.insert("character".to_string(), vec![v.clone()]);
-    }
-
-    TagSet { tags }
-}
-
-/// 从 `SongRegistryEntry` 列表构建 cid → TagSet 的查询索引。
-///
-/// 将扁平字段转换为 `LocalizedValue` 格式，跳过全空条目。
-fn build_song_index(songs: &[SongRegistryEntry]) -> SongTagIndex {
-    songs
-        .iter()
-        .filter_map(|entry| {
-            let tag_set = song_entry_to_tag_set(entry);
-            if tag_set.tags.is_empty() {
-                None
-            } else {
-                Some((entry.cid.clone(), tag_set))
-            }
-        })
-        .collect()
-}
-
-/// 将单个 `SongRegistryEntry` 的扁平字段转换为 `TagSet`。
-fn song_entry_to_tag_set(entry: &SongRegistryEntry) -> TagSet {
-    let mut tags: HashMap<String, Vec<LocalizedValue>> = HashMap::new();
-
-    if let Some(ref v) = entry.faction {
-        tags.insert("faction".to_string(), vec![v.clone()]);
-    }
-    if let Some(ref v) = entry.character {
-        tags.insert("character".to_string(), vec![v.clone()]);
-    }
-    for (key, values) in &entry.extra {
-        if !values.is_empty() {
-            tags.insert(key.clone(), values.clone());
-        }
-    }
-
-    TagSet { tags }
-}
-
-/// 将 `Vec<AlbumEntry>` 转换为 `HashMap<String, TagSet>`（供 tag editor 使用）。
-pub(crate) fn albums_to_tag_map(
-    albums: &[AlbumEntry],
-    type_defs: &HashMap<String, LocalizedValue>,
-) -> HashMap<String, TagSet> {
-    build_album_index(albums, type_defs)
-}
-
-/// 将 `HashMap<String, TagSet>` 转换回 `Vec<AlbumEntry>`（供 tag editor 持久化使用）。
-pub(crate) fn tag_map_to_albums(
-    map: &HashMap<String, TagSet>,
-    type_defs: &HashMap<String, LocalizedValue>,
-) -> Vec<AlbumEntry> {
-    map.iter()
-        .map(|(cid, tag_set)| tag_set_to_album_entry(cid, tag_set, type_defs))
-        .collect()
-}
-
-/// 将 `Vec<SongRegistryEntry>` 转换为 `HashMap<String, TagSet>`（供 tag editor 使用）。
-///
-/// 与 [`build_song_index`] 不同，此函数保留所有条目（包括空 tag 的），
-/// 以确保 editor 的 CRUD 操作不会丢失仅有 cid 的占位条目。
-pub(crate) fn songs_to_tag_map(songs: &[SongRegistryEntry]) -> HashMap<String, TagSet> {
-    songs
-        .iter()
-        .map(|entry| (entry.cid.clone(), song_entry_to_tag_set(entry)))
-        .collect()
-}
-
-/// 将 `HashMap<String, TagSet>` 转换回 `Vec<SongRegistryEntry>`（供 tag editor 持久化使用）。
-pub(crate) fn tag_map_to_songs(map: &HashMap<String, TagSet>) -> Vec<SongRegistryEntry> {
-    map.iter()
-        .map(|(cid, tag_set)| tag_set_to_song_entry(cid, tag_set))
-        .collect()
-}
-
-/// 将单个 `TagSet` 转换回 `SongRegistryEntry`。
-fn tag_set_to_song_entry(cid: &str, tag_set: &TagSet) -> SongRegistryEntry {
-    let get_first_lv = |key: &str| -> Option<LocalizedValue> {
-        tag_set.tags.get(key).and_then(|vals| vals.first().cloned())
-    };
-
-    let extra: HashMap<String, Vec<LocalizedValue>> = tag_set
-        .tags
-        .iter()
-        .filter(|(k, _)| k.as_str() != "faction" && k.as_str() != "character")
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-
-    SongRegistryEntry {
-        cid: cid.to_string(),
-        faction: get_first_lv("faction"),
-        character: get_first_lv("character"),
-        extra,
-    }
-}
-
-/// 将单个 `TagSet` 转换回 `AlbumEntry`。
-fn tag_set_to_album_entry(
-    cid: &str,
-    tag_set: &TagSet,
-    type_defs: &HashMap<String, LocalizedValue>,
-) -> AlbumEntry {
-    let get_first_lv = |key: &str| -> Option<LocalizedValue> {
-        tag_set.tags.get(key).and_then(|vals| vals.first().cloned())
-    };
-
-    let get_first_str = |key: &str| -> Option<String> {
-        tag_set.tags.get(key).and_then(|vals| {
-            vals.first().map(|lv| {
-                lv.0.get("zh-CN")
-                    .or_else(|| lv.0.get("en-US"))
-                    .or_else(|| lv.0.values().next())
-                    .cloned()
-                    .unwrap_or_default()
-            })
-        })
-    };
-
-    // Reverse-lookup type key from LocalizedValue
-    let album_type = tag_set.tags.get("type").and_then(|vals| {
-        vals.first().and_then(|lv| {
-            type_defs
-                .iter()
-                .find(|(_, def)| *def == lv)
-                .map(|(k, _)| k.clone())
-                .or_else(|| {
-                    lv.0.get("en-US")
-                        .or_else(|| lv.0.get("zh-CN"))
-                        .or_else(|| lv.0.values().next())
-                        .cloned()
-                })
-        })
-    });
-
-    AlbumEntry {
-        cid: cid.to_string(),
-        album_type,
-        name: get_first_str("name"),
-        release_date: get_first_str("releaseDate"),
-        faction: get_first_lv("faction"),
-        character: get_first_lv("character"),
-    }
-}
-
-/// 将 `Locale` 枚举转换为 BCP 47 语言标签字符串。
-fn locale_to_key(locale: Locale) -> &'static str {
-    match locale {
-        Locale::ZhCN => "zh-CN",
-        Locale::EnUS => "en-US",
-    }
-}
-
-/// 判断 `LocalizedValue` 内部 map 的 key 是否为已知 locale 标签。
-///
-/// 非 locale key（如 `"color"`）属于元数据字段，不应参与文本解析或搜索索引。
-fn is_locale_key(key: &str) -> bool {
-    matches!(key, "zh-CN" | "en-US" | "ja-JP" | "ko-KR")
-}
-
-/// 从多语种字符串 map 中按 locale 回退策略取值。
-///
-/// 回退顺序：locale 对应 key → "zh-CN" → "en-US" → map 中第一个 locale key 的值 → 空字符串。
-fn resolve_locale_str(map: &HashMap<String, String>, locale: Locale) -> String {
-    let key = locale_to_key(locale);
-    if let Some(v) = map.get(key) {
-        return v.clone();
-    }
-    if let Some(v) = map.get("zh-CN") {
-        return v.clone();
-    }
-    if let Some(v) = map.get("en-US") {
-        return v.clone();
-    }
-    map.iter()
-        .find(|(k, _)| is_locale_key(k))
-        .map(|(_, v)| v.clone())
-        .unwrap_or_default()
-}
-
-/// 从单个 `LocalizedValue` 内部的 map 中按 locale 回退策略取值。
-///
-/// 与 [`resolve_locale_str`] 逻辑相同，但针对 `LocalizedValue` 包装的内部 map。
-fn resolve_localized_value(map: &HashMap<String, String>, locale: Locale) -> String {
-    resolve_locale_str(map, locale)
-}
-
-/// 将 `TagSet` 解析为 `Vec<TagEntry>`，按 locale 解析维度名与 tag 值。
-///
-/// 遍历所有维度定义，若 `tag_set` 中存在该维度则生成对应的 [`TagEntry`]；
-/// 值列表去重后按出现顺序保留。
-fn resolve_tag_set(
-    tag_set: Option<&TagSet>,
-    dimensions: &[TagDimension],
-    locale: Locale,
-) -> Vec<TagEntry> {
-    let Some(tag_set) = tag_set else {
-        return Vec::new();
-    };
-    build_tag_entries(&tag_set.tags, dimensions, locale)
-}
-
-/// 合并专辑 tag 与单曲 tag 后解析为 `Vec<TagEntry>`。
-///
-/// 合并规则：先取专辑 tag 中的所有维度值，再追加单曲 tag 中同维度的新值（去重）。
-/// 整体按维度定义顺序输出。
-fn resolve_merged_tag_set(
-    album: Option<&TagSet>,
-    song: Option<&TagSet>,
-    dims: &[TagDimension],
-    locale: Locale,
-) -> Vec<TagEntry> {
-    // 构建合并后的 dimension_key → LocalizedValue 列表映射
-    let mut merged: HashMap<String, Vec<LocalizedValue>> = HashMap::new();
-
-    for set_opt in [album, song] {
-        let Some(set) = set_opt else { continue };
-        for (dim_key, values) in &set.tags {
-            let entry = merged.entry(dim_key.clone()).or_default();
-            for v in values {
-                if let Some(existing) = entry.iter_mut().find(|e| e.text_eq(v)) {
-                    *existing = LocalizedValue::merge_metadata(existing, v);
-                } else {
-                    entry.push(v.clone());
-                }
-            }
-        }
-    }
-
-    build_tag_entries(&merged, dims, locale)
-}
-
-/// 从 dimension_key → LocalizedValue 列表映射构建 `Vec<TagEntry>`。
-///
-/// 按 `dims` 顺序输出，仅包含 `tags` 中存在且值非空的维度。
-fn build_tag_entries(
-    tags: &HashMap<String, Vec<LocalizedValue>>,
-    dims: &[TagDimension],
-    locale: Locale,
-) -> Vec<TagEntry> {
-    let mut result = Vec::new();
-    for dim in dims {
-        let Some(values) = tags.get(&dim.key) else {
-            continue;
-        };
-        let resolved_values: Vec<String> = values
-            .iter()
-            .map(|lv| resolve_localized_value(&lv.0, locale))
-            .collect();
-        if resolved_values.is_empty() {
-            continue;
-        }
-        let colors: Vec<Option<String>> =
-            values.iter().map(|lv| lv.0.get("color").cloned()).collect();
-        let colors = if colors.iter().any(|c| c.is_some()) {
-            colors
-        } else {
-            Vec::new()
-        };
-        result.push(TagEntry {
-            dimension: resolve_locale_str(&dim.label, locale),
-            values: resolved_values,
-            colors,
-        });
-    }
-    result
-}
-
-/// 收集专辑和/或单曲 tag 中所有语种、所有维度的 tag 值，以空格拼接。
-///
-/// 用于为搜索索引生成全语种标签文本，使搜索能够命中任意语种的 tag 值。
-fn collect_all_locale_values(album: Option<&TagSet>, song: Option<&TagSet>) -> String {
-    let mut all_values: Vec<String> = Vec::new();
-    for set_opt in [album, song] {
-        let Some(set) = set_opt else { continue };
-        for values in set.tags.values() {
-            for lv in values {
-                for (k, v) in &lv.0 {
-                    if is_locale_key(k) && !v.is_empty() {
-                        all_values.push(v.clone());
-                    }
-                }
-            }
-        }
-    }
-    all_values.join(" ")
-}
+pub(crate) use crate::tag_registry_index::{
+    albums_to_tag_map, songs_to_tag_map, tag_map_to_albums, tag_map_to_songs,
+};
+use crate::tag_registry_index::{
+    build_album_index, build_song_index, collect_all_locale_values, is_locale_key,
+    resolve_locale_str, resolve_localized_value, resolve_merged_tag_set, resolve_tag_set,
+    AlbumTagIndex, SongTagIndex,
+};
 
 /// 从缓存文件加载 tag 注册表。
 ///

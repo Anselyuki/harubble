@@ -17,8 +17,6 @@ export interface TrackDownloadBadge {
 
 export type LocalInventoryStatus = 'idle' | 'scanning' | 'completed' | 'failed';
 
-export type VerificationMode = 'none' | 'whenAvailable' | 'strict';
-
 export interface LocalInventorySnapshot {
   rootOutputDir: string;
   status: LocalInventoryStatus;
@@ -29,15 +27,6 @@ export interface LocalInventorySnapshot {
   matchedTrackCount: number;
   verifiedTrackCount: number;
   lastError: string | null;
-}
-
-export interface LocalInventoryScanProgressEvent {
-  rootOutputDir: string;
-  inventoryVersion: string;
-  filesScanned: number;
-  matchedTrackCount: number;
-  verifiedTrackCount: number;
-  currentPath: string | null;
 }
 
 export interface AlbumDownloadBadge {
@@ -165,6 +154,25 @@ export interface ThemePalette {
   accentHoverHex: string;
   accentRgb: [number, number, number];
   accentHoverRgb: [number, number, number];
+  waveColors: [number, number, number][];
+}
+
+export type ThemeColorSlot =
+  | 'accent'
+  | 'surface'
+  | 'textPrimary'
+  | 'textSecondary'
+  | 'tint'
+  | 'danger';
+
+export type ThemeColorSlots = Record<ThemeColorSlot, string>;
+
+export type ColorScheme = 'auto' | 'light' | 'dark';
+
+export interface ThemePreferences {
+  presetId: string;
+  customColors: Partial<ThemeColorSlots>;
+  colorScheme?: ColorScheme;
 }
 
 export type OutputFormat = 'flac' | 'wav' | 'mp3';
@@ -306,6 +314,8 @@ export interface AppPreferences {
   notifyOnPlaybackChange: boolean;
   logLevel: LogLevel;
   locale: Locale;
+  volume: number;
+  theme?: ThemePreferences;
 }
 
 export type AppErrorLevel = 'warn' | 'error';
@@ -350,12 +360,6 @@ export interface LogFileStatus {
   hasSessionLog: boolean;
   hasPersistentLog: boolean;
 }
-
-export type NotificationPermissionState =
-  | 'granted'
-  | 'denied'
-  | 'prompt'
-  | 'prompt-with-rationale';
 
 export interface SeriesGroup {
   series: string;
@@ -407,11 +411,18 @@ export interface TagEditorDimension {
 
 export interface TagEditorAlbumEntry {
   cid: string;
-  type: string | null;
+  type?: string[];
   name: string | null;
   releaseDate: string | null;
   faction: TagEditorLocalizedValue | null;
   character: TagEditorLocalizedValue | null;
+  [key: string]:
+    | string
+    | string[]
+    | TagEditorLocalizedValue
+    | TagEditorLocalizedValue[]
+    | null
+    | undefined;
 }
 
 export interface TagEditorRegistry {
