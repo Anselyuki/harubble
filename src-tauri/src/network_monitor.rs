@@ -5,7 +5,6 @@
 //! 其他平台当前不提供后台监听，依赖前端 `online` 事件触发重建。
 
 use crate::app_state::AppState;
-use crate::logging::{LogLevel, LogPayload};
 
 /// 启动网络配置变更监听后台任务。
 ///
@@ -22,6 +21,8 @@ pub fn spawn_network_monitor(state: &AppState) {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use crate::logging::{LogLevel, LogPayload};
+
     use super::*;
     use std::sync::Arc;
     use std::time::{Duration, Instant};

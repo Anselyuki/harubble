@@ -1,3 +1,7 @@
+use crate::logging::{LogCenter, LogLevel};
+use crate::startup_recovery::{
+    backup_path_if_exists, record_recovery_log, recovered_backup_suffix,
+};
 use anyhow::{Context, Result};
 use harubble_core::download::model::InternalDownloadTask;
 use harubble_core::download::worker::CompletedTaskArtifacts;
@@ -29,11 +33,19 @@ pub(crate) struct LocalInventoryProvenanceStore {
 }
 
 impl LocalInventoryProvenanceStore {
+    #[cfg(test)]
     pub(crate) fn new(app_data_dir: PathBuf) -> Result<Self> {
+        Self::new_with_logger(app_data_dir, None)
+    }
+
+    pub(crate) fn new_with_logger(
+        app_data_dir: PathBuf,
+        log_center: Option<&LogCenter>,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&app_data_dir)
             .with_context(|| format!("failed to create {}", app_data_dir.display()))?;
         let path = app_data_dir.join("local_inventory_provenance.json");
-        let records = load_records(&path)?;
+        let records = load_records(&path, log_center)?;
         Ok(Self {
             path,
             records: Arc::new(Mutex::new(records)),
@@ -81,7 +93,10 @@ impl LocalInventoryProvenanceStore {
     }
 }
 
-fn load_records(path: &Path) -> Result<Vec<LocalInventoryProvenanceRecord>> {
+fn load_records(
+    path: &Path,
+    log_center: Option<&LogCenter>,
+) -> Result<Vec<LocalInventoryProvenanceRecord>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -92,7 +107,26 @@ fn load_records(path: &Path) -> Result<Vec<LocalInventoryProvenanceRecord>> {
         return Ok(Vec::new());
     }
 
-    serde_json::from_str(&content).with_context(|| format!("failed to parse {}", path.display()))
+    match serde_json::from_str(&content) {
+        Ok(records) => Ok(records),
+        Err(error) => {
+            let suffix = recovered_backup_suffix();
+            let backup = backup_path_if_exists(path, &suffix, log_center);
+            let backup_details = backup
+                .as_ref()
+                .map(|backup| format!(" backupPath={}", backup.display()))
+                .unwrap_or_default();
+            record_recovery_log(
+                log_center,
+                LogLevel::Warn,
+                "startup-recovery",
+                "startup-recovery.provenance_recreated_from_backup",
+                "Recreated provenance cache from backup",
+                format!("path={}{} error={error}", path.display(), backup_details),
+            );
+            Ok(Vec::new())
+        }
+    }
 }
 
 fn save_records(path: &Path, records: &[LocalInventoryProvenanceRecord]) -> Result<()> {
@@ -119,4 +153,60 @@ fn checksum_path(path: &Path) -> Result<String> {
     let bytes =
         std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     Ok(format!("{:x}", md5::compute(bytes)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalInventoryProvenanceStore;
+    use tempfile::tempdir;
+
+    #[test]
+    fn backs_up_invalid_json_and_starts_with_empty_records() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("local_inventory_provenance.json");
+        std::fs::write(&path, b"not json").expect("write invalid json");
+
+        let store = LocalInventoryProvenanceStore::new(dir.path().to_path_buf())
+            .expect("store should load invalid json with empty records");
+
+        let backup_exists = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("local_inventory_provenance.json.recovered-backup-")
+            });
+        assert!(backup_exists);
+
+        let records = tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(store.snapshot_records());
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn missing_file_starts_empty_without_backup() {
+        let dir = tempdir().expect("temp dir");
+
+        let store = LocalInventoryProvenanceStore::new(dir.path().to_path_buf())
+            .expect("store should load empty records");
+
+        let backup_exists = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("local_inventory_provenance.json.recovered-backup-")
+            });
+        assert!(!backup_exists);
+
+        let records = tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(store.snapshot_records());
+        assert!(records.is_empty());
+    }
 }

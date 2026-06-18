@@ -12,6 +12,7 @@ use crate::player::stream::PlaybackInput;
 use crate::player::AudioPlayer;
 use crate::preferences::{AppPreferences, PreferencesStore};
 use crate::search::LibrarySearchService;
+use crate::startup_recovery::prepare_local_database;
 use crate::tag_editor::TagEditorService;
 use crate::tag_registry::TagRegistryService;
 use harubble_core::{DownloadManagerSnapshot, DownloadService};
@@ -71,14 +72,18 @@ impl AppState {
             loaded_download_session.snapshot.clone(),
         )));
         let local_inventory_provenance_store = Arc::new(
-            LocalInventoryProvenanceStore::new(app_data_dir.clone()).map_err(|e| e.to_string())?,
+            LocalInventoryProvenanceStore::new_with_logger(
+                app_data_dir.clone(),
+                Some(log_center.as_ref()),
+            )
+            .map_err(|e| e.to_string())?,
         );
         let local_inventory_service =
             LocalInventoryService::new(local_inventory_provenance_store.clone());
         let search_data_dir = app_data_dir.join("library-search");
         let library_search_service =
             LibrarySearchService::new(search_data_dir, preferences.output_dir.clone());
-        let db_path = app_data_dir.join("harubble_local.db");
+        let db_path = prepare_local_database(&app_data_dir, Some(log_center.as_ref()))?;
         let listening_history = Arc::new(
             ListeningHistoryService::new(&db_path)
                 .map_err(|e| format!("初始化收听历史服务失败: {e}"))?,

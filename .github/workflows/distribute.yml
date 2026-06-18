@@ -257,6 +257,20 @@ jobs:
           includeDebug: false
           includeUpdaterJson: false
 
+      - name: Postprocess unsigned macOS DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=( ${{ matrix.artifact_glob }} )
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "Expected exactly one macOS DMG, got ${#files[@]}" >&2
+            printf '%s\n' "${files[@]}"
+            exit 1
+          fi
+          bash scripts/postprocess-macos-dmg.sh "${files[0]}"
+
       - name: Collect release asset
         id: collect_asset
         shell: bash
