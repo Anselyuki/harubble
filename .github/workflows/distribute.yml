@@ -127,8 +127,7 @@ jobs:
           fi
 
           if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $release_tag already exists." >&2
-            exit 1
+            echo "Release $release_tag already exists; continuing so release assets can be retried."
           fi
 
           prerelease="false"

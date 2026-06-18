@@ -59,12 +59,7 @@ if [[ "${#apps[@]}" -ne 1 ]]; then
   exit 1
 fi
 
-app_path="${apps[0]}"
-
 cp "$readme_path" "$mount_dir/README-macOS.txt"
-xattr -cr "$app_path"
-codesign --force --deep --sign - "$app_path"
-codesign --verify --deep --strict --verbose=4 "$app_path"
 
 sync
 hdiutil detach "$mount_dir" -quiet
