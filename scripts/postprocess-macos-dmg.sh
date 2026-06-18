@@ -14,6 +14,7 @@ fi
 dmg_path="$1"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readme_path="${2:-"$script_dir/macos-dmg-readme.txt"}"
+background_source="$script_dir/macos-dmg-background.swift"
 
 if [[ ! -f "$dmg_path" ]]; then
   echo "DMG not found: $dmg_path" >&2
@@ -22,6 +23,11 @@ fi
 
 if [[ ! -f "$readme_path" ]]; then
   echo "README not found: $readme_path" >&2
+  exit 66
+fi
+
+if [[ ! -f "$background_source" ]]; then
+  echo "DMG background source not found: $background_source" >&2
   exit 66
 fi
 
@@ -60,6 +66,44 @@ if [[ "${#apps[@]}" -ne 1 ]]; then
 fi
 
 cp "$readme_path" "$mount_dir/README-macOS.txt"
+if [[ ! -e "$mount_dir/Applications" ]]; then
+  ln -s /Applications "$mount_dir/Applications"
+fi
+mkdir -p "$mount_dir/.background"
+swift "$background_source" "$mount_dir/.background/harubble-dmg-background.png"
+chflags hidden "$mount_dir/.background" 2>/dev/null || true
+SetFile -a V "$mount_dir/.background" 2>/dev/null || true
+
+osascript - "$mount_dir" <<'APPLESCRIPT'
+on run argv
+  set mountPath to item 1 of argv
+  set dmgFolder to POSIX file mountPath as alias
+  set backgroundFile to POSIX file (mountPath & "/.background/harubble-dmg-background.png") as alias
+
+  tell application "Finder"
+    open dmgFolder
+    delay 1
+
+    set dmgWindow to container window of dmgFolder
+    set current view of dmgWindow to icon view
+    set toolbar visible of dmgWindow to false
+    set statusbar visible of dmgWindow to false
+    set bounds of dmgWindow to {100, 100, 820, 520}
+
+    set dmgViewOptions to icon view options of dmgWindow
+    set background picture of dmgViewOptions to backgroundFile
+    set arrangement of dmgViewOptions to not arranged
+    set icon size of dmgViewOptions to 72
+
+    set position of item "README-macOS.txt" of dmgFolder to {180, 122}
+    set position of item "Harubble.app" of dmgFolder to {180, 254}
+    set position of item "Applications" of dmgFolder to {540, 254}
+    update dmgFolder without registering applications
+    delay 1
+    close dmgWindow
+  end tell
+end run
+APPLESCRIPT
 
 sync
 hdiutil detach "$mount_dir" -quiet
