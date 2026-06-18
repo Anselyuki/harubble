@@ -50,6 +50,7 @@ mod notification;
 mod player;
 mod preferences;
 mod search;
+mod startup_recovery;
 mod tag_editor;
 mod tag_registry;
 mod tag_registry_index;
