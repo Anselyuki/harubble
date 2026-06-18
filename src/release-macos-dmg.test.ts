@@ -12,16 +12,16 @@ describe('macOS DMG postprocess assets', () => {
     expect(readme).toContain('Harubble for macOS is not notarized yet');
   });
 
-  it('guards the DMG rewrite and ad-hoc signs exactly one app bundle', async () => {
+  it('guards the DMG rewrite without mutating the app bundle', async () => {
     // @ts-expect-error Vitest runs in Node and reads release support files.
     const { readFileSync } = await import('node:fs');
     const script = readFileSync('scripts/postprocess-macos-dmg.sh', 'utf8');
 
     expect(script).toContain('hdiutil attach');
-    expect(script).toContain('codesign --force --deep --sign -');
     expect(script).toContain('Expected exactly one .app bundle');
-    expect(script).toContain('xattr -cr');
     expect(script).toContain('hdiutil convert');
+    expect(script).not.toContain('codesign ');
+    expect(script).not.toContain('xattr -cr');
   });
 
   it('runs only for macOS release assets before collection', async () => {
@@ -34,5 +34,18 @@ describe('macOS DMG postprocess assets', () => {
     expect(workflow.indexOf('Postprocess unsigned macOS DMG')).toBeLessThan(
       workflow.indexOf('Collect release asset')
     );
+  });
+
+  it('allows rerunning a partial release when the tag already exists', async () => {
+    // @ts-expect-error Vitest runs in Node and reads release workflow files.
+    const { readFileSync } = await import('node:fs');
+    const workflow = readFileSync('.github/workflows/distribute.yml', 'utf8');
+
+    expect(workflow).toContain(
+      'Release $release_tag already exists; continuing'
+    );
+    expect(workflow).toContain('gh release upload');
+    expect(workflow).toContain('--clobber');
+    expect(workflow).not.toContain('Release $release_tag already exists." >&2');
   });
 });
