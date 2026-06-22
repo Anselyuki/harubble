@@ -12,6 +12,12 @@ use std::sync::Arc;
 use super::{normalize_seek_position, AppState, PreparedPlaybackInput};
 
 impl AppState {
+    pub fn toggle_playback_from_lifecycle(&self) -> Result<(), String> {
+        self.player
+            .toggle_playback()
+            .map_err(|error| format!("{error:#}"))
+    }
+
     pub(crate) async fn play_song_internal(
         &self,
         song_cid: String,

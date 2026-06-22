@@ -36,6 +36,7 @@ mod app_state;
 mod audio_cache;
 pub mod collection;
 pub mod commands;
+pub mod desktop_lifecycle;
 mod download_session;
 mod downloads;
 mod i18n;

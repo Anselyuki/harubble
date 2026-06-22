@@ -42,8 +42,10 @@
 
 use anyhow::Context;
 use harubble::{
-    commands, initialize_download_bridge, spawn_belong_warmup, spawn_inventory_scan,
-    spawn_network_monitor, spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
+    commands,
+    desktop_lifecycle::{self, DesktopLifecycleState},
+    initialize_download_bridge, spawn_belong_warmup, spawn_inventory_scan, spawn_network_monitor,
+    spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
 };
 use tauri::{LogicalSize, Manager, RunEvent, WebviewWindow};
 
@@ -103,6 +105,11 @@ fn main() {
                 .context("Failed to locate main window")?;
             let state =
                 AppState::new(app.handle().clone()).expect("Failed to initialize app state");
+            app.manage(DesktopLifecycleState::default());
+            let lifecycle_window = window.clone();
+            window.on_window_event(move |event| {
+                desktop_lifecycle::handle_main_window_event(&lifecycle_window, event);
+            });
             if let Err(error) = fit_main_window_to_monitor(&window) {
                 state.record_log(
                     LogPayload::new(
@@ -136,6 +143,19 @@ fn main() {
             spawn_tag_registry_sync(&state);
             spawn_network_monitor(&state);
             app.manage(state);
+            if let Err(error) = desktop_lifecycle::install_background_entrypoint(app.handle()) {
+                if let Some(state) = app.handle().try_state::<AppState>() {
+                    state.record_log(
+                        LogPayload::new(
+                            LogLevel::Warn,
+                            "desktop-lifecycle",
+                            "desktop_lifecycle.entrypoint_install_failed",
+                            "Failed to install tray/menu bar entrypoint",
+                        )
+                        .details(error.to_string()),
+                    );
+                }
+            }
 
             #[cfg(debug_assertions)]
             {
