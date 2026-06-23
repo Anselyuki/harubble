@@ -163,9 +163,13 @@ impl LibrarySearchService {
             ));
         };
 
-        let (items, total) = active_index
-            .search(&sanitized)
-            .map_err(|error| error.to_string())?;
+        let sanitized_for_search = sanitized.clone();
+        let search_result =
+            tokio::task::spawn_blocking(move || active_index.search(&sanitized_for_search))
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
+        let (items, total) = search_result;
 
         Ok(SearchLibraryResponse {
             items,

@@ -151,9 +151,11 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
                 break;
             };
 
-            state.persist_download_snapshot(&service.lock().await.manager_snapshot());
-            emit_download_job_updated(app, &preparing_snapshot);
             let manager_snapshot = service.lock().await.manager_snapshot();
+            state
+                .persist_download_snapshot_async(manager_snapshot.clone())
+                .await;
+            emit_download_job_updated(app, &preparing_snapshot);
             emit_download_manager_state_changed(app, &manager_snapshot);
 
             let task_id = task.id.clone();
@@ -213,7 +215,9 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
 
                     if let Some(update) = update {
                         let manager_snapshot = service.lock().await.manager_snapshot();
-                        state.persist_download_snapshot(&manager_snapshot);
+                        state
+                            .persist_download_snapshot_async(manager_snapshot.clone())
+                            .await;
                         emit_download_job_updated(app, &update.snapshot);
                         emit_download_manager_state_changed(app, &manager_snapshot);
                     }
@@ -239,7 +243,9 @@ async fn start_job(
 
     let manager_snapshot = service.lock().await.manager_snapshot();
     if let Some(state) = app.try_state::<AppState>() {
-        state.persist_download_snapshot(&manager_snapshot);
+        state
+            .persist_download_snapshot_async(manager_snapshot.clone())
+            .await;
     }
     emit_download_job_updated(app, &job_snapshot);
     emit_download_manager_state_changed(app, &manager_snapshot);
@@ -276,7 +282,9 @@ async fn start_job(
                                 if update.should_persist {
                                     let manager_snapshot = service.lock().await.manager_snapshot();
                                     if let Some(state) = app.try_state::<AppState>() {
-                                        state.persist_download_snapshot(&manager_snapshot);
+                                        state
+                                            .persist_download_snapshot_async(manager_snapshot)
+                                            .await;
                                     }
                                 }
                                 emit_download_job_updated(&app, &update.snapshot);
@@ -388,7 +396,9 @@ async fn run_download_phase(
                     if update.should_persist {
                         let manager_snapshot = service.lock().await.manager_snapshot();
                         if let Some(app_state) = app.try_state::<AppState>() {
-                            app_state.persist_download_snapshot(&manager_snapshot);
+                            app_state
+                                .persist_download_snapshot_async(manager_snapshot)
+                                .await;
                         }
                     }
                     emit_download_job_updated(&app, &update.snapshot);
@@ -426,7 +436,9 @@ async fn finalize_job(
     if let Some(s) = snapshot {
         let manager_snapshot = service.lock().await.manager_snapshot();
         if let Some(state) = app.try_state::<AppState>() {
-            state.persist_download_snapshot(&manager_snapshot);
+            state
+                .persist_download_snapshot_async(manager_snapshot.clone())
+                .await;
         }
         emit_download_job_updated(app, &s);
         emit_download_manager_state_changed(app, &manager_snapshot);
@@ -476,7 +488,9 @@ async fn collect_write_result(
 
     if let Some(update) = update {
         let manager_snapshot = state.download_service.lock().await.manager_snapshot();
-        state.persist_download_snapshot(&manager_snapshot);
+        state
+            .persist_download_snapshot_async(manager_snapshot.clone())
+            .await;
         emit_download_job_updated(app, &update.snapshot);
         emit_download_manager_state_changed(app, &manager_snapshot);
     }

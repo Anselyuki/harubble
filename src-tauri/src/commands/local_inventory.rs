@@ -92,13 +92,23 @@ pub async fn get_audio_metadata(
     song_name: String,
 ) -> Result<Option<AudioFileMetadata>, String> {
     let output_dir = state.output_dir();
-    let root = Path::new(&output_dir);
+    tokio::task::spawn_blocking(move || read_audio_metadata(&output_dir, &album_name, &song_name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn read_audio_metadata(
+    output_dir: &str,
+    album_name: &str,
+    song_name: &str,
+) -> Result<Option<AudioFileMetadata>, String> {
+    let root = Path::new(output_dir);
 
     if !root.exists() {
         return Ok(None);
     }
 
-    let candidates = candidate_relative_paths(&album_name, &song_name);
+    let candidates = candidate_relative_paths(album_name, song_name);
     let file_path = candidates
         .iter()
         .map(|rel| root.join(rel))

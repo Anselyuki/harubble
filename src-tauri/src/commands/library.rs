@@ -42,9 +42,13 @@ pub async fn get_album_detail(
         .get_album_detail(&album_cid)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = state
-        .album_metadata_cache
-        .upsert_belong(&album.cid, &album.belong);
+    let cache = state.album_metadata_cache.clone();
+    let album_cid_for_cache = album.cid.clone();
+    let album_belong_for_cache = album.belong.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        cache.upsert_belong(&album_cid_for_cache, &album_belong_for_cache)
+    })
+    .await;
     let mut enriched = state
         .local_inventory_service
         .enrich_album_detail(album)

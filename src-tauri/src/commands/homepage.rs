@@ -41,7 +41,10 @@ pub async fn get_albums_by_series(state: State<'_, AppState>) -> Result<Vec<Seri
     for album in &mut enriched {
         album.tags = state.tag_registry.get_album_tags(&album.cid, locale);
     }
-    let belongs = state.album_metadata_cache.get_all_belongs()?;
+    let cache = state.album_metadata_cache.clone();
+    let belongs = tokio::task::spawn_blocking(move || cache.get_all_belongs())
+        .await
+        .map_err(|e| e.to_string())??;
 
     let belong_map: std::collections::HashMap<&str, &str> = belongs
         .iter()
@@ -119,7 +122,10 @@ pub async fn get_recent_history(
     state: State<'_, AppState>,
     limit: u32,
 ) -> Result<Vec<HistoryEntry>, String> {
-    state.listening_history.get_recent(limit)
+    let history = state.listening_history.clone();
+    tokio::task::spawn_blocking(move || history.get_recent(limit))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 清除所有收听历史，返回删除条数。
@@ -129,7 +135,10 @@ pub async fn get_recent_history(
 /// 该接口会删除所有历史记录，操作不可逆；调用方应在执行前向用户确认。
 #[tauri::command]
 pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, String> {
-    state.listening_history.clear()
+    let history = state.listening_history.clone();
+    tokio::task::spawn_blocking(move || history.clear())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 获取首页状态仪表盘聚合数据。

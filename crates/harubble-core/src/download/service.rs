@@ -135,7 +135,7 @@ pub struct PreparedJob {
 #[derive(Default)]
 pub struct DownloadService {
     state: DownloadServiceState,
-    id_generator: IdGenerator,
+    id_generator: Arc<IdGenerator>,
 }
 
 impl DownloadService {
@@ -158,17 +158,17 @@ impl DownloadService {
                 active_task_id: None,
                 active_task_cancel_flag: None,
             },
-            id_generator: IdGenerator::default(),
+            id_generator: Arc::new(IdGenerator::default()),
         }
     }
 
-    /// 返回当前服务使用的 ID 生成器引用。
+    /// 返回当前服务使用的共享 ID 生成器。
     ///
     /// 由于 [`IdGenerator`] 内部使用原子计数器，多线程/多任务调用是安全的。
     /// 适用于调用方需要在不持有下载服务独占锁的前提下，将 ID 生成器传给
     /// [`prepare_job`] 进行无锁异步准备。
-    pub fn id_generator(&self) -> &IdGenerator {
-        &self.id_generator
+    pub fn id_generator(&self) -> Arc<IdGenerator> {
+        Arc::clone(&self.id_generator)
     }
 
     /// 获取当前下载管理器快照。
@@ -850,6 +850,7 @@ mod tests {
         InternalDownloadTask,
     };
     use std::path::Path;
+    use std::sync::Arc;
     use time::format_description::well_known::Iso8601;
     use time::OffsetDateTime;
 
@@ -1015,7 +1016,7 @@ mod tests {
                 active_task_id: Some("task-2".to_string()),
                 active_task_cancel_flag: None,
             },
-            id_generator: IdGenerator::default(),
+            id_generator: Arc::new(IdGenerator::default()),
         };
 
         let snapshot = service.finish_job("job-1").expect("job should exist");
@@ -1035,7 +1036,7 @@ mod tests {
                 active_task_id: Some("task-1".to_string()),
                 active_task_cancel_flag: None,
             },
-            id_generator: IdGenerator::default(),
+            id_generator: Arc::new(IdGenerator::default()),
         };
 
         let snapshot = service

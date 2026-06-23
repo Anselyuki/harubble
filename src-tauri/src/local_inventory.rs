@@ -234,15 +234,24 @@ pub fn spawn_inventory_scan(
 
         let inventory_version = started.inventory_version.clone();
         let locale = state.preferences().locale;
-        let scan_result = collect_local_audio_evidence(
-            Path::new(&root_output_dir),
-            &root_output_dir,
-            &inventory_version,
-            &provenance_records,
-            &state.local_inventory_service.cancel_flag,
-            locale,
-            |event| emit_local_inventory_scan_progress(&app, &event),
-        );
+        let app_for_scan = app.clone();
+        let cancel_flag = state.local_inventory_service.cancel_flag.clone();
+        let root_output_dir_for_scan = root_output_dir.clone();
+        let inventory_version_for_scan = inventory_version.clone();
+        let scan_result = tokio::task::spawn_blocking(move || {
+            collect_local_audio_evidence(
+                Path::new(&root_output_dir_for_scan),
+                &root_output_dir_for_scan,
+                &inventory_version_for_scan,
+                &provenance_records,
+                &cancel_flag,
+                locale,
+                |event| emit_local_inventory_scan_progress(&app_for_scan, &event),
+            )
+        })
+        .await
+        .map_err(|error| format!("inventory scan worker failed: {error}"))
+        .and_then(|result| result);
 
         let finished = match scan_result {
             Ok(ScanCollectionOutcome::Completed(result)) => {

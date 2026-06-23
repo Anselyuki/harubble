@@ -94,15 +94,14 @@ pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerState, Strin
 /// 该接口具备幂等性：传入相同有效音量时结果稳定；若传入越界值会被自动裁剪，调用方不应假设返回值一定等于原始输入。
 /// 音量变化会自动持久化到偏好文件，下次启动时恢复。
 #[tauri::command]
-pub fn set_playback_volume(state: State<'_, AppState>, volume: f64) -> Result<f64, String> {
+pub async fn set_playback_volume(state: State<'_, AppState>, volume: f64) -> Result<f64, String> {
     let actual = state.player.set_volume(volume);
-    let mut prefs = state.preferences();
-    if (prefs.volume - actual).abs() > 0.001 {
-        prefs.volume = actual;
-        let locale = prefs.locale;
-        let store = state.preferences_store();
-        let _ = store.save(&prefs, locale);
-        state.set_preferences(prefs);
+    if (state.preferences().volume - actual).abs() > 0.001 {
+        state
+            .update_preferences(|prefs| {
+                prefs.volume = actual;
+            })
+            .await?;
     }
     Ok(actual)
 }
