@@ -66,3 +66,13 @@ player-no-active-track = 当前没有正在播放的曲目
 player-still-loading = 播放正在加载中
 player-no-next-track = 没有下一首可播放的曲目
 player-no-previous-track = 没有上一首可播放的曲目
+
+## 桌面菜单
+
+desktop-menu-not-playing = 未在播放
+desktop-menu-previous = 上一首
+desktop-menu-play = 播放
+desktop-menu-pause = 暂停
+desktop-menu-next = 下一首
+desktop-menu-show = 显示 Harubble
+desktop-menu-quit = 退出 Harubble

@@ -149,6 +149,10 @@ export async function setPlaybackVolume(volume: number): Promise<number> {
   return invoke('set_playback_volume', { volume });
 }
 
+export async function showMainWindow(): Promise<void> {
+  return invoke('show_main_window');
+}
+
 export async function getDefaultOutputDir(): Promise<string> {
   return invoke('get_default_output_dir');
 }

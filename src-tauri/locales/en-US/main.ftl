@@ -66,3 +66,13 @@ player-no-active-track = No active track
 player-still-loading = Playback is still loading
 player-no-next-track = No next track available
 player-no-previous-track = No previous track available
+
+## Desktop menu
+
+desktop-menu-not-playing = Not Playing
+desktop-menu-previous = Previous Track
+desktop-menu-play = Play
+desktop-menu-pause = Pause
+desktop-menu-next = Next Track
+desktop-menu-show = Show Harubble
+desktop-menu-quit = Quit Harubble

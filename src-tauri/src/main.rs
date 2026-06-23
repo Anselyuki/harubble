@@ -190,6 +190,7 @@ fn main() {
             commands::playback::play_previous,
             commands::playback::get_player_state,
             commands::playback::set_playback_volume,
+            commands::window::show_main_window,
             commands::preferences::get_preferences,
             commands::preferences::set_preferences,
             commands::preferences::export_preferences,
