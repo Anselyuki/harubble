@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -207,20 +207,12 @@ impl GrowingFileHandle {
         &self.path
     }
 
-    /// 向增长文件追加一个字节块，并更新读取侧可见长度。
-    pub fn append_chunk(&self, writer: &mut File, chunk: &[u8]) -> Result<()> {
-        writer
-            .write_all(chunk)
-            .context("Failed to append audio chunk to cache file")?;
-        let position = writer
-            .stream_position()
-            .context("Failed to inspect cache file position")?;
-
+    /// 通知读取侧当前增长文件已经可读取到指定字节位置。
+    pub fn publish_available_len(&self, len: u64) {
         let (lock, condvar) = &*self.state;
         let mut state = lock.lock().unwrap();
-        state.available_len = position;
+        state.available_len = len;
         condvar.notify_all();
-        Ok(())
     }
 
     /// 标记增长文件已完成写入。

@@ -4,10 +4,12 @@ use crate::logging::{LogLevel, LogPayload};
 use crate::player::stream::{GrowingFileHandle, PlaybackInput, SampleBuffer};
 use crate::player::PlaybackContext;
 use crate::player::PlaybackQueueEntry;
+use crate::player::PlayerState;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 
 use super::{normalize_seek_position, AppState, PreparedPlaybackInput};
 
@@ -16,6 +18,18 @@ impl AppState {
         self.player
             .toggle_playback()
             .map_err(|error| format!("{error:#}"))
+    }
+
+    pub(crate) fn player_snapshot(&self) -> PlayerState {
+        self.player.get_state()
+    }
+
+    pub(crate) async fn play_next_from_lifecycle(&self) -> Result<f64, String> {
+        self.play_next_internal().await
+    }
+
+    pub(crate) async fn play_previous_from_lifecycle(&self) -> Result<f64, String> {
+        self.play_previous_internal().await
     }
 
     pub(crate) async fn play_song_internal(
@@ -68,7 +82,13 @@ impl AppState {
                     cover_url: cover_url.clone(),
                     artists: song_detail.artists.clone(),
                 };
-                if let Err(e) = self.listening_history.record(&listening_event) {
+                let listening_history = self.listening_history.clone();
+                let record_result =
+                    tokio::task::spawn_blocking(move || listening_history.record(&listening_event))
+                        .await
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result);
+                if let Err(e) = record_result {
                     self.log_center.record(
                         LogPayload::new(
                             LogLevel::Warn,
@@ -159,13 +179,29 @@ impl AppState {
     ) -> Result<f64> {
         let stop_flag = self.player.stop_signal();
         let pause_flag = self.player.pause_signal();
-        let prepared_input = self.prepare_playback_input(song_cid, source_url, &stop_flag)?;
+        let prepared_input = self
+            .prepare_playback_input(song_cid.to_string(), source_url.to_string(), &stop_flag)
+            .await?;
+        let cache_path_for_failure = prepared_input.cache_path.clone();
         let input = prepared_input.input.clone();
 
         let inspect_input = input.clone();
-        let source_format = tokio::task::spawn_blocking(move || inspect_input.inspect_format())
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))??;
+        let source_format =
+            match tokio::task::spawn_blocking(move || inspect_input.inspect_format())
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))
+                .and_then(|result| result)
+            {
+                Ok(source_format) => source_format,
+                Err(error) => {
+                    self.cleanup_failed_playback_cache(
+                        cache_path_for_failure.clone(),
+                        session_id,
+                        &stop_flag,
+                    );
+                    return Err(error);
+                }
+            };
 
         anyhow::ensure!(
             self.player.is_session_active(session_id),
@@ -190,7 +226,7 @@ impl AppState {
             );
         });
 
-        let _decode_worker = input.spawn_decode_worker(
+        let _decode_worker = match input.spawn_decode_worker(
             source_format,
             output_format,
             sample_buffer.clone(),
@@ -198,10 +234,25 @@ impl AppState {
             Arc::clone(&pause_flag),
             start_position_secs,
             error_handler,
-        )?;
+        ) {
+            Ok(worker) => worker,
+            Err(error) => {
+                self.cleanup_failed_playback_cache(
+                    cache_path_for_failure.clone(),
+                    session_id,
+                    &stop_flag,
+                );
+                return Err(error);
+            }
+        };
 
-        self.wait_for_initial_buffer(&sample_buffer, output_format, &stop_flag)
-            .await?;
+        if let Err(error) = self
+            .wait_for_initial_buffer(&sample_buffer, output_format, &stop_flag)
+            .await
+        {
+            self.cleanup_failed_playback_cache(cache_path_for_failure, session_id, &stop_flag);
+            return Err(error);
+        }
 
         self.start_prepared_playback(
             session_id,
@@ -229,37 +280,86 @@ impl AppState {
             .await
     }
 
-    fn prepare_playback_input(
+    async fn prepare_playback_input(
         &self,
-        song_cid: &str,
-        source_url: &str,
+        song_cid: String,
+        source_url: String,
         stop_flag: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<PreparedPlaybackInput> {
-        let cache_path = audio_cache::cached_song_path(song_cid, source_url)?;
-        let pending_marker = audio_cache::pending_marker_path(&cache_path);
+        let (cache_path_for_failure, pending_download, prepared_input) = {
+            let song_cid = song_cid.clone();
+            let source_url = source_url.clone();
+            tokio::task::spawn_blocking(move || {
+                let cache_path = audio_cache::cached_song_path(&song_cid, &source_url)?;
+                let pending_marker = audio_cache::pending_marker_path(&cache_path);
+                if audio_cache::is_song_cached(&cache_path) {
+                    return Ok::<_, anyhow::Error>((
+                        None,
+                        None,
+                        PlaybackInput::cached_file(cache_path),
+                    ));
+                }
 
-        let input = if audio_cache::is_song_cached(&cache_path) {
-            PlaybackInput::cached_file(cache_path.clone())
-        } else {
-            let _ = std::fs::remove_file(&cache_path);
-            let _ = std::fs::remove_file(&pending_marker);
-            std::fs::write(&pending_marker, b"pending").with_context(|| {
-                format!("Failed to create cache marker {}", pending_marker.display())
-            })?;
+                let _ = std::fs::remove_file(&cache_path);
+                let _ = std::fs::remove_file(&pending_marker);
+                std::fs::write(&pending_marker, b"pending").with_context(|| {
+                    format!("Failed to create cache marker {}", pending_marker.display())
+                })?;
 
-            let (handle, writer) = GrowingFileHandle::new(cache_path.clone())?;
-            self.spawn_stream_download(
-                source_url.to_string(),
-                Arc::clone(stop_flag),
-                handle.clone(),
-                writer,
-                cache_path.clone(),
-                pending_marker.clone(),
-            );
-            PlaybackInput::growing_file(handle)
+                let (handle, writer) = GrowingFileHandle::new(cache_path.clone())?;
+                drop(writer);
+                Ok((
+                    Some(cache_path.clone()),
+                    Some((cache_path, pending_marker)),
+                    PlaybackInput::growing_file(handle),
+                ))
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))??
         };
 
-        Ok(PreparedPlaybackInput { input })
+        let input = match prepared_input {
+            PlaybackInput::GrowingFile(handle) => {
+                let Some((cache_path, pending_marker)) = pending_download else {
+                    anyhow::bail!("Streaming playback cache paths were not prepared");
+                };
+                self.spawn_stream_download(
+                    source_url,
+                    Arc::clone(stop_flag),
+                    handle.clone(),
+                    cache_path.clone(),
+                    pending_marker,
+                );
+                PlaybackInput::growing_file(handle)
+            }
+            input => input,
+        };
+
+        Ok(PreparedPlaybackInput {
+            input,
+            cache_path: cache_path_for_failure,
+        })
+    }
+
+    fn cleanup_failed_playback_cache(
+        &self,
+        cache_path: Option<PathBuf>,
+        session_id: u64,
+        stop_flag: &Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        if stop_flag.load(Ordering::SeqCst) || !self.player.is_session_active(session_id) {
+            return;
+        }
+        stop_flag.store(true, Ordering::SeqCst);
+
+        let Some(cache_path) = cache_path else {
+            return;
+        };
+        let pending_marker = audio_cache::pending_marker_path(&cache_path);
+        tokio::task::spawn_blocking(move || {
+            let _ = std::fs::remove_file(&pending_marker);
+            let _ = std::fs::remove_file(&cache_path);
+        });
     }
 
     fn spawn_stream_download(
@@ -267,7 +367,6 @@ impl AppState {
         source_url: String,
         stop_flag: Arc<std::sync::atomic::AtomicBool>,
         handle: GrowingFileHandle,
-        mut writer: std::fs::File,
         cache_path: PathBuf,
         pending_marker: PathBuf,
     ) {
@@ -275,35 +374,88 @@ impl AppState {
         let log_center = Arc::clone(&self.log_center);
 
         tokio::spawn(async move {
-            let total_len_set = std::sync::atomic::AtomicBool::new(false);
+            let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
+            let writer_handle = handle.clone();
+            let writer_cache_path = cache_path.clone();
+            let write_task = tokio::spawn(async move {
+                let mut writer = tokio::fs::OpenOptions::new()
+                    .create(false)
+                    .write(true)
+                    .open(&writer_cache_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to open streaming cache file {}",
+                            writer_cache_path.display()
+                        )
+                    })?;
+                let mut position = 0_u64;
+
+                while let Some(chunk) = chunk_rx.recv().await {
+                    writer
+                        .write_all(&chunk)
+                        .await
+                        .context("Failed to append audio chunk to cache file")?;
+                    position += chunk.len() as u64;
+                    writer_handle.publish_available_len(position);
+                }
+
+                writer
+                    .flush()
+                    .await
+                    .context("Failed to flush streaming cache file")?;
+                Ok::<_, anyhow::Error>(())
+            });
+
+            let total_len_set = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let handle_for_download = handle.clone();
+            let stop_flag_for_download = Arc::clone(&stop_flag);
+            let chunk_tx_for_download = chunk_tx.clone();
             let download_result = api
-                .download_stream(&source_url, |chunk, _, total| {
-                    if stop_flag.load(Ordering::SeqCst) {
-                        return Ok(false);
-                    }
-                    if !total_len_set.load(Ordering::Relaxed) {
-                        if let Some(total) = total {
-                            handle.set_expected_total_len(total);
-                            total_len_set.store(true, Ordering::Relaxed);
+                .download_stream_owned(&source_url, move |chunk, _, total| {
+                    let chunk_tx = chunk_tx_for_download.clone();
+                    let handle = handle_for_download.clone();
+                    let stop_flag = Arc::clone(&stop_flag_for_download);
+                    let total_len_set = Arc::clone(&total_len_set);
+                    async move {
+                        if stop_flag.load(Ordering::SeqCst) {
+                            return Ok(false);
                         }
+                        if !total_len_set.load(Ordering::Relaxed) {
+                            if let Some(total) = total {
+                                handle.set_expected_total_len(total);
+                                total_len_set.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        if chunk_tx.send(chunk).await.is_err() {
+                            return Ok(false);
+                        }
+                        Ok(true)
                     }
-                    handle.append_chunk(&mut writer, chunk)?;
-                    Ok(true)
                 })
                 .await;
+            drop(chunk_tx);
+            let write_result = write_task
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))
+                .and_then(|result| result);
 
-            match download_result {
-                Ok(()) if !stop_flag.load(Ordering::SeqCst) => {
+            match (download_result, write_result) {
+                (Ok(()), Ok(())) if !stop_flag.load(Ordering::SeqCst) => {
                     handle.mark_complete();
-                    let _ = std::fs::remove_file(&pending_marker);
-                    audio_cache::spawn_cleanup_if_needed();
+                    tokio::task::spawn_blocking(move || {
+                        let _ = std::fs::remove_file(&pending_marker);
+                        audio_cache::spawn_cleanup_if_needed();
+                    });
                 }
-                Ok(()) => {
+                (Ok(()), Ok(())) => {
                     handle.mark_error("Playback stopped");
-                    let _ = std::fs::remove_file(&pending_marker);
-                    let _ = std::fs::remove_file(&cache_path);
+                    tokio::task::spawn_blocking(move || {
+                        let _ = std::fs::remove_file(&pending_marker);
+                        let _ = std::fs::remove_file(&cache_path);
+                    });
                 }
-                Err(error) => {
+                (Err(error), _) | (_, Err(error)) => {
                     log_center.record(
                         LogPayload::new(
                             LogLevel::Error,
@@ -314,8 +466,10 @@ impl AppState {
                         .details(format!("{error:#}")),
                     );
                     handle.mark_error(error.to_string());
-                    let _ = std::fs::remove_file(&pending_marker);
-                    let _ = std::fs::remove_file(&cache_path);
+                    tokio::task::spawn_blocking(move || {
+                        let _ = std::fs::remove_file(&pending_marker);
+                        let _ = std::fs::remove_file(&cache_path);
+                    });
                 }
             }
         });

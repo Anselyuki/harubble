@@ -5,10 +5,12 @@
 
 use crate::local_inventory::{AlbumDownloadBadge, TrackDownloadBadge};
 use anyhow::Result;
+use futures::future::{BoxFuture, FutureExt, Shared};
 use lru::LruCache;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -21,6 +23,17 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_JSON_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
 const MAX_AUDIO_RESPONSE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+
+type SharedApiFetch = Shared<BoxFuture<'static, Result<Arc<Vec<u8>>, String>>>;
+
+struct InflightApiRequest {
+    fetch: SharedApiFetch,
+}
+
+enum CachedApiRequest {
+    Cached(Vec<u8>),
+    Inflight(Arc<InflightApiRequest>),
+}
 
 /// 专辑列表查询返回的基础条目。
 ///
@@ -166,6 +179,7 @@ pub struct ApiClient {
     client: Arc<RwLock<Client>>,
     base_url: String,
     response_cache: Arc<Mutex<LruCache<String, Vec<u8>>>>,
+    inflight_api_requests: Arc<Mutex<HashMap<String, Arc<InflightApiRequest>>>>,
 }
 
 impl ApiClient {
@@ -184,6 +198,7 @@ impl ApiClient {
             client: Arc::new(RwLock::new(client)),
             base_url: base_url.trim_end_matches('/').to_string(),
             response_cache: Arc::new(Mutex::new(LruCache::new(capacity))),
+            inflight_api_requests: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -211,7 +226,7 @@ impl ApiClient {
     pub fn reset_http_client(&self) -> Result<()> {
         let new_client = Self::build_client()?;
         *self.client.write().unwrap_or_else(|e| e.into_inner()) = new_client;
-        self.clear_response_cache();
+        self.clear_completed_response_cache();
         Ok(())
     }
 
@@ -233,6 +248,67 @@ impl ApiClient {
     fn write_cached_bytes(&self, cache_key: String, bytes: &[u8]) {
         if let Ok(mut cache) = self.response_cache.lock() {
             cache.put(cache_key, bytes.to_vec());
+        }
+    }
+
+    fn clear_completed_response_cache(&self) {
+        if let Ok(mut cache) = self.response_cache.lock() {
+            cache.clear();
+        }
+    }
+
+    fn get_or_create_inflight_api_request(&self, cache_key: &str, path: &str) -> CachedApiRequest {
+        let mut requests = self
+            .inflight_api_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if let Some(request) = requests.get(cache_key) {
+            return CachedApiRequest::Inflight(request.clone());
+        }
+
+        if let Some(bytes) = self.read_cached_bytes(cache_key) {
+            return CachedApiRequest::Cached(bytes);
+        }
+
+        let client = ApiClient::clone(self);
+        let url = self.api_url(path);
+        let fetch = async move {
+            client
+                .fetch_response_bytes(&url, true)
+                .await
+                .map(Arc::new)
+                .map_err(|e| e.to_string())
+        }
+        .boxed()
+        .shared();
+        let request = Arc::new(InflightApiRequest { fetch });
+        requests.insert(cache_key.to_string(), request.clone());
+
+        CachedApiRequest::Inflight(request)
+    }
+
+    fn finish_inflight_api_request(
+        &self,
+        cache_key: &str,
+        request: &Arc<InflightApiRequest>,
+        bytes: Option<&[u8]>,
+    ) {
+        let mut requests = self
+            .inflight_api_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if requests
+            .get(cache_key)
+            .is_some_and(|current| Arc::ptr_eq(current, request))
+        {
+            if let Some(bytes) = bytes {
+                if let Ok(mut cache) = self.response_cache.lock() {
+                    cache.put(cache_key.to_string(), bytes.to_vec());
+                }
+            }
+            requests.remove(cache_key);
         }
     }
 
@@ -383,9 +459,26 @@ impl ApiClient {
             return Self::decode_api_response(&bytes);
         }
 
-        let bytes = self.fetch_response_bytes(&self.api_url(path), true).await?;
-        let data = Self::decode_api_response(&bytes)?;
-        self.write_cached_bytes(cache_key, &bytes);
+        let request = match self.get_or_create_inflight_api_request(&cache_key, path) {
+            CachedApiRequest::Cached(bytes) => return Self::decode_api_response(&bytes),
+            CachedApiRequest::Inflight(request) => request,
+        };
+
+        let bytes = match request.fetch.clone().await {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                self.finish_inflight_api_request(&cache_key, &request, None);
+                return Err(anyhow::anyhow!(message));
+            }
+        };
+        let data = match Self::decode_api_response(bytes.as_slice()) {
+            Ok(data) => data,
+            Err(error) => {
+                self.finish_inflight_api_request(&cache_key, &request, None);
+                return Err(error);
+            }
+        };
+        self.finish_inflight_api_request(&cache_key, &request, Some(bytes.as_slice()));
         Ok(data)
     }
 
@@ -394,9 +487,10 @@ impl ApiClient {
     /// 适用于上游资源已更新、需要强制重新拉取，或测试场景下希望消除缓存影响时
     /// 调用。该操作只影响内存缓存，不会触发任何网络请求。
     pub fn clear_response_cache(&self) {
-        if let Ok(mut cache) = self.response_cache.lock() {
-            cache.clear();
+        if let Ok(mut requests) = self.inflight_api_requests.lock() {
+            requests.clear();
         }
+        self.clear_completed_response_cache();
     }
 
     /// 获取专辑列表。
@@ -497,6 +591,74 @@ impl ApiClient {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Request failed after retries")))
     }
 
+    /// 以流式方式下载远端资源，并把每个分块以拥有所有权的 `Vec<u8>` 交给异步回调。
+    ///
+    /// 适用于回调本身还需要执行异步操作的场景，例如把下载分块交给异步文件写入任务。
+    /// 与 [`ApiClient::download_stream`] 一样，该方法会执行下载 URL 校验、大小限制与一次连接错误重试。
+    pub async fn download_stream_owned<F, Fut>(&self, url: &str, mut on_chunk: F) -> Result<()>
+    where
+        F: FnMut(Vec<u8>, u64, Option<u64>) -> Fut,
+        Fut: std::future::Future<Output = Result<bool>>,
+    {
+        use futures::StreamExt;
+
+        crate::url_validator::validate_download_url(url)?;
+
+        let mut last_error = None;
+        let max_retries = 1;
+
+        for attempt in 0..=max_retries {
+            match self.http_client().get(url).send().await {
+                Ok(resp) => match resp.error_for_status() {
+                    Ok(resp) => {
+                        let total = resp.content_length();
+                        if let Some(len) = total {
+                            anyhow::ensure!(
+                                len <= MAX_AUDIO_RESPONSE_SIZE,
+                                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
+                            );
+                        }
+                        let mut stream = resp.bytes_stream();
+                        let mut downloaded = 0_u64;
+
+                        while let Some(chunk) = stream.next().await {
+                            let chunk = chunk?;
+                            downloaded += chunk.len() as u64;
+                            anyhow::ensure!(
+                                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
+                                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
+                            );
+                            if !on_chunk(chunk.to_vec(), downloaded, total).await? {
+                                break;
+                            }
+                        }
+
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        last_error = Some(e.into());
+                    }
+                },
+                Err(e) => {
+                    let is_connection_error = e.is_connect() || e.is_timeout();
+                    last_error = Some(e.into());
+
+                    if is_connection_error && attempt < max_retries {
+                        let _ = self.reset_http_client();
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(err) = last_error {
+                return Err(err);
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Request failed after retries")))
+    }
+
     /// 下载完整字节内容，并在可命中时复用内部缓存。
     ///
     /// 入参 `url` 为待下载资源地址；`on_progress` 会收到累计已下载字节数与可选总大小。
@@ -541,6 +703,8 @@ impl ApiClient {
 mod tests {
     use super::ApiClient;
     use httpmock::prelude::*;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     impl ApiClient {
         fn new_for_test(base_url: String, capacity: usize) -> anyhow::Result<Self> {
@@ -576,6 +740,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn coalesces_concurrent_album_detail_requests_into_single_network_call() {
+        let server = MockServer::start();
+        let album_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/alpha/detail");
+            then.status(200)
+                .header("content-type", "application/json")
+                .delay(Duration::from_millis(100))
+                .body(album_detail_body("alpha", "Alpha"));
+        });
+
+        let client = Arc::new(
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client"),
+        );
+
+        let calls = (0..8)
+            .map(|_| {
+                let client = Arc::clone(&client);
+                tokio::spawn(async move { client.get_album_detail("alpha").await })
+            })
+            .collect::<Vec<_>>();
+
+        for call in calls {
+            let album = call.await.expect("task should complete").expect("api call");
+            assert_eq!(album.cid, "alpha");
+            assert_eq!(album.name, "Alpha");
+        }
+        album_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn reset_http_client_keeps_inflight_api_requests_coalesced() {
+        let server = MockServer::start();
+        let album_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/alpha/detail");
+            then.status(200)
+                .header("content-type", "application/json")
+                .delay(Duration::from_millis(100))
+                .body(album_detail_body("alpha", "Alpha"));
+        });
+
+        let client = Arc::new(
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client"),
+        );
+        let first_client = Arc::clone(&client);
+        let first = tokio::spawn(async move { first_client.get_album_detail("alpha").await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        client.reset_http_client().expect("reset should succeed");
+        let second = client.get_album_detail("alpha").await.expect("second call");
+        let first = first
+            .await
+            .expect("first task should complete")
+            .expect("first call");
+
+        assert_eq!(first.cid, "alpha");
+        assert_eq!(second.cid, "alpha");
+        album_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
     async fn does_not_cache_failed_upstream_response() {
         let server = MockServer::start();
         let failure_mock = server.mock(|when, then| {
@@ -587,6 +811,34 @@ mod tests {
             ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client");
 
         assert!(client.get_album_detail("beta").await.is_err());
+        assert!(client.get_album_detail("beta").await.is_err());
+        failure_mock.assert_hits(2);
+    }
+
+    #[tokio::test]
+    async fn coalesced_failed_requests_are_not_cached() {
+        let server = MockServer::start();
+        let failure_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/beta/detail");
+            then.status(500).delay(Duration::from_millis(100));
+        });
+
+        let client = Arc::new(
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client"),
+        );
+
+        let calls = (0..4)
+            .map(|_| {
+                let client = Arc::clone(&client);
+                tokio::spawn(async move { client.get_album_detail("beta").await })
+            })
+            .collect::<Vec<_>>();
+
+        for call in calls {
+            assert!(call.await.expect("task should complete").is_err());
+        }
+        failure_mock.assert_hits(1);
+
         assert!(client.get_album_detail("beta").await.is_err());
         failure_mock.assert_hits(2);
     }

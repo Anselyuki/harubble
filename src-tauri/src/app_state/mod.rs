@@ -30,6 +30,8 @@ pub struct AppState {
     pub(crate) player: Arc<AudioPlayer>,
     pub(crate) api: Arc<harubble_core::ApiClient>,
     pub(crate) download_service: Arc<Mutex<DownloadService>>,
+    pub(crate) download_job_creation_lock: Arc<Mutex<()>>,
+    pub(crate) preferences_write_lock: Arc<Mutex<()>>,
     pub(crate) local_inventory_service: LocalInventoryService,
     pub(crate) local_inventory_provenance_store: Arc<LocalInventoryProvenanceStore>,
     pub(crate) download_session_store: Arc<DownloadSessionStore>,
@@ -46,6 +48,7 @@ pub struct AppState {
 
 struct PreparedPlaybackInput {
     input: PlaybackInput,
+    cache_path: Option<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -99,6 +102,8 @@ impl AppState {
             player: Arc::new(player),
             api: Arc::new(api),
             download_service,
+            download_job_creation_lock: Arc::new(Mutex::new(())),
+            preferences_write_lock: Arc::new(Mutex::new(())),
             local_inventory_service,
             local_inventory_provenance_store,
             download_session_store,
@@ -175,11 +180,65 @@ impl AppState {
         self.preferences_store.clone()
     }
 
+    pub(crate) async fn persist_preferences(&self, prefs: AppPreferences) -> Result<(), String> {
+        let _guard = self.preferences_write_lock.lock().await;
+        let locale = prefs.locale;
+        let store = self.preferences_store();
+        let prefs_to_save = prefs.clone();
+        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
+            .await
+            .map_err(|error| error.to_string())??;
+        self.set_preferences(prefs);
+        Ok(())
+    }
+
+    pub(crate) async fn update_preferences<F>(&self, update: F) -> Result<AppPreferences, String>
+    where
+        F: FnOnce(&mut AppPreferences),
+    {
+        let _guard = self.preferences_write_lock.lock().await;
+        let mut prefs = self.preferences();
+        update(&mut prefs);
+        let locale = prefs.locale;
+        let store = self.preferences_store();
+        let prefs_to_save = prefs.clone();
+        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
+            .await
+            .map_err(|error| error.to_string())??;
+        self.set_preferences(prefs.clone());
+        Ok(prefs)
+    }
+
     pub(crate) fn persist_download_snapshot(&self, snapshot: &DownloadManagerSnapshot) {
         if let Err(error) = self
             .download_session_store
             .save(snapshot, self.preferences().locale)
         {
+            self.log_center.record(
+                LogPayload::new(
+                    LogLevel::Error,
+                    "download-session",
+                    "download_session.write_failed",
+                    "Failed to persist download session",
+                )
+                .user_message(crate::i18n::tr(
+                    self.preferences().locale,
+                    "download-session-save-failed",
+                ))
+                .details(error),
+            );
+        }
+    }
+
+    pub(crate) async fn persist_download_snapshot_async(&self, snapshot: DownloadManagerSnapshot) {
+        let store = self.download_session_store.clone();
+        let locale = self.preferences().locale;
+        let result = tokio::task::spawn_blocking(move || store.save(&snapshot, locale))
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
+
+        if let Err(error) = result {
             self.log_center.record(
                 LogPayload::new(
                     LogLevel::Error,
@@ -231,7 +290,13 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
         };
 
         let all_cids: Vec<String> = albums.iter().map(|a| a.cid.clone()).collect();
-        let missing = match cache.get_missing_album_cids(&all_cids) {
+        let missing = match {
+            let cache = cache.clone();
+            tokio::task::spawn_blocking(move || cache.get_missing_album_cids(&all_cids))
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result)
+        } {
             Ok(m) => m,
             Err(e) => {
                 log_center.record(
@@ -265,7 +330,14 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
                 let _permit = permit.acquire().await;
                 match api.get_album_detail(&cid).await {
                     Ok(detail) => {
-                        if let Err(e) = cache.upsert_belong(&cid, &detail.belong) {
+                        let cid_for_log = cid.clone();
+                        let belong = detail.belong;
+                        let upsert_result =
+                            tokio::task::spawn_blocking(move || cache.upsert_belong(&cid, &belong))
+                                .await
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result);
+                        if let Err(e) = upsert_result {
                             log_center.record(
                                 LogPayload::new(
                                     LogLevel::Warn,
@@ -273,7 +345,7 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
                                     "homepage.belong_warmup_upsert_failed",
                                     "belong 预热: 写入缓存失败",
                                 )
-                                .details(format!("{cid}: {e}")),
+                                .details(format!("{cid_for_log}: {e}")),
                             );
                         }
                     }
@@ -303,13 +375,17 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
 /// dev 模式下从本地项目文件加载 tag registry，release 模式下从远端拉取。
 #[cfg(debug_assertions)]
 async fn load_tag_registry_bytes(_state: &AppState) -> anyhow::Result<Vec<u8>> {
-    let path = std::path::Path::new(crate::tag_registry::DEV_LOCAL_PATH);
-    std::fs::read(path).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to read local tag registry at {}: {e}",
-            path.display()
-        )
+    let path = std::path::PathBuf::from(crate::tag_registry::DEV_LOCAL_PATH);
+    tokio::task::spawn_blocking(move || {
+        std::fs::read(&path).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to read local tag registry at {}: {e}",
+                path.display()
+            )
+        })
     })
+    .await
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?
 }
 
 #[cfg(not(debug_assertions))]
@@ -351,7 +427,25 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
                 }
             }
 
-            state.tag_registry.update(new_registry)?;
+            state.tag_registry.replace_in_memory(new_registry.clone());
+            let tag_registry = state.tag_registry.clone();
+            let persist_result =
+                tokio::task::spawn_blocking(move || tag_registry.persist_registry(&new_registry))
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))
+                    .and_then(|result| result);
+            if let Err(error) = persist_result {
+                state.log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "tag-registry",
+                        "tag_registry.persist_failed",
+                        "Failed to persist synced tag registry",
+                    )
+                    .details(error.to_string()),
+                );
+            }
+
             Ok::<bool, anyhow::Error>(true)
         }
         .await;

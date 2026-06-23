@@ -402,19 +402,8 @@ impl TagRegistryService {
         result
     }
 
-    /// 用新的注册表替换当前内存状态，并原子写入缓存文件。
-    ///
-    /// 内存状态在持久化成功前即已更新；若写盘失败，返回 `Err` 但内存中已使用新数据。
-    /// 调用方应在 `Err` 时记录日志并继续运行（降级策略：内存数据仍可用）。
-    ///
-    /// # 参数
-    ///
-    /// - `new_registry`：新版本的 tag 注册表。
-    ///
-    /// # 错误
-    ///
-    /// 若创建临时文件、写入内容或原子重命名失败，返回 `Err`。
-    pub(crate) fn update(&self, new_registry: TagRegistry) -> Result<()> {
+    /// 用新的注册表替换当前内存状态，但不执行磁盘持久化。
+    pub(crate) fn replace_in_memory(&self, new_registry: TagRegistry) {
         let new_album_index =
             build_album_index(&new_registry.albums, &new_registry.type_definitions);
         let new_song_index = build_song_index(&new_registry.songs);
@@ -433,7 +422,11 @@ impl TagRegistryService {
             let mut index = self.song_index.write().expect("song_index RwLock poisoned");
             *index = new_song_index;
         }
-        persist_to_cache(&self.cache_path, &new_registry)
+    }
+
+    /// 将给定注册表写入本地缓存文件。
+    pub(crate) fn persist_registry(&self, registry: &TagRegistry) -> Result<()> {
+        persist_to_cache(&self.cache_path, registry)
     }
 
     /// 获取当前内存中注册表的 `updated_at` 字段（ISO 8601 字符串）。
