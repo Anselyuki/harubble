@@ -4,7 +4,6 @@ use crate::logging::{LogLevel, LogPayload};
 use crate::player::stream::{GrowingFileHandle, PlaybackInput, SampleBuffer};
 use crate::player::PlaybackContext;
 use crate::player::PlaybackQueueEntry;
-use crate::player::PlayerState;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -18,18 +17,6 @@ impl AppState {
         self.player
             .toggle_playback()
             .map_err(|error| format!("{error:#}"))
-    }
-
-    pub(crate) fn player_snapshot(&self) -> PlayerState {
-        self.player.get_state()
-    }
-
-    pub(crate) async fn play_next_from_lifecycle(&self) -> Result<f64, String> {
-        self.play_next_internal().await
-    }
-
-    pub(crate) async fn play_previous_from_lifecycle(&self) -> Result<f64, String> {
-        self.play_previous_internal().await
     }
 
     pub(crate) async fn play_song_internal(

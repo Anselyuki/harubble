@@ -37,7 +37,6 @@
   let logoContainerEl: HTMLDivElement | null = $state(null);
   let logoSlabEl: HTMLElement | null = $state(null);
   let brandRegionEl: HTMLElement | null = $state(null);
-
   let contentCollapsed = $state(runtime.sidebarCollapsed);
   let contentInteractive = $state(!runtime.sidebarCollapsed);
   let layoutCollapsed = $state(runtime.sidebarCollapsed);
