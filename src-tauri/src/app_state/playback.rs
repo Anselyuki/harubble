@@ -169,7 +169,7 @@ impl AppState {
         let prepared_input = self
             .prepare_playback_input(song_cid.to_string(), source_url.to_string(), &stop_flag)
             .await?;
-        let cache_path_for_failure = prepared_input.cache_path.clone();
+        let cache_path_for_failure = Some(prepared_input.cache_path.clone());
         let input = prepared_input.input.clone();
 
         let inspect_input = input.clone();
@@ -273,33 +273,11 @@ impl AppState {
         source_url: String,
         stop_flag: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<PreparedPlaybackInput> {
-        let (cache_path_for_failure, pending_download, prepared_input) = {
+        let (cache_path, pending_download, prepared_input) = {
             let song_cid = song_cid.clone();
             let source_url = source_url.clone();
             tokio::task::spawn_blocking(move || {
-                let cache_path = audio_cache::cached_song_path(&song_cid, &source_url)?;
-                let pending_marker = audio_cache::pending_marker_path(&cache_path);
-                if audio_cache::is_song_cached(&cache_path) {
-                    return Ok::<_, anyhow::Error>((
-                        None,
-                        None,
-                        PlaybackInput::cached_file(cache_path),
-                    ));
-                }
-
-                let _ = std::fs::remove_file(&cache_path);
-                let _ = std::fs::remove_file(&pending_marker);
-                std::fs::write(&pending_marker, b"pending").with_context(|| {
-                    format!("Failed to create cache marker {}", pending_marker.display())
-                })?;
-
-                let (handle, writer) = GrowingFileHandle::new(cache_path.clone())?;
-                drop(writer);
-                Ok((
-                    Some(cache_path.clone()),
-                    Some((cache_path, pending_marker)),
-                    PlaybackInput::growing_file(handle),
-                ))
+                prepare_cached_or_streaming_input(&song_cid, &source_url)
             })
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))??
@@ -322,10 +300,7 @@ impl AppState {
             input => input,
         };
 
-        Ok(PreparedPlaybackInput {
-            input,
-            cache_path: cache_path_for_failure,
-        })
+        Ok(PreparedPlaybackInput { input, cache_path })
     }
 
     fn cleanup_failed_playback_cache(
@@ -501,5 +476,84 @@ impl AppState {
             sample_buffer,
             start_position_secs,
         )
+    }
+}
+
+fn prepare_cached_or_streaming_input(
+    song_cid: &str,
+    source_url: &str,
+) -> Result<(PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput)> {
+    let cache_path = audio_cache::cached_song_path(song_cid, source_url)?;
+    prepare_playback_input_from_cache_path(cache_path)
+}
+
+fn prepare_playback_input_from_cache_path(
+    cache_path: PathBuf,
+) -> Result<(PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput)> {
+    let pending_marker = audio_cache::pending_marker_path(&cache_path);
+    if audio_cache::is_song_cached(&cache_path) {
+        return Ok((
+            cache_path.clone(),
+            None,
+            PlaybackInput::cached_file(cache_path),
+        ));
+    }
+
+    let _ = std::fs::remove_file(&cache_path);
+    let _ = std::fs::remove_file(&pending_marker);
+    std::fs::write(&pending_marker, b"pending")
+        .with_context(|| format!("Failed to create cache marker {}", pending_marker.display()))?;
+
+    let (handle, writer) = GrowingFileHandle::new(cache_path.clone())?;
+    drop(writer);
+    Ok((
+        cache_path.clone(),
+        Some((cache_path, pending_marker)),
+        PlaybackInput::growing_file(handle),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepare_playback_input_from_cache_path;
+    use crate::audio_cache;
+    use crate::player::stream::PlaybackInput;
+    use tempfile::tempdir;
+
+    #[test]
+    fn cached_playback_input_keeps_cache_path_for_failure_cleanup() {
+        let temp_dir = tempdir().expect("tempdir");
+        let cache_path = temp_dir.path().join("cached-song.wav");
+        let pending_marker = audio_cache::pending_marker_path(&cache_path);
+        std::fs::write(&cache_path, b"not a real wav").expect("cached file");
+
+        let (failure_cache_path, pending_download, input) =
+            prepare_playback_input_from_cache_path(cache_path.clone())
+                .expect("prepared cached input");
+
+        assert_eq!(failure_cache_path, cache_path);
+        assert!(pending_download.is_none());
+        assert!(matches!(input, PlaybackInput::CachedFile(path) if path == failure_cache_path));
+        assert!(!pending_marker.exists());
+    }
+
+    #[test]
+    fn streaming_playback_input_keeps_cache_path_for_failure_cleanup() {
+        let temp_dir = tempdir().expect("tempdir");
+        let cache_path = temp_dir.path().join("stream-song.wav");
+        let pending_marker = audio_cache::pending_marker_path(&cache_path);
+
+        let (failure_cache_path, pending_download, input) =
+            prepare_playback_input_from_cache_path(cache_path.clone())
+                .expect("prepared streaming input");
+
+        assert_eq!(failure_cache_path, cache_path);
+        assert_eq!(
+            pending_download,
+            Some((failure_cache_path.clone(), pending_marker.clone()))
+        );
+        assert!(matches!(input, PlaybackInput::GrowingFile(_)));
+        assert!(pending_marker.exists());
+        assert!(failure_cache_path.exists());
     }
 }
