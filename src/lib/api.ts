@@ -41,6 +41,35 @@ const CACHE_KEY_SONG_DETAIL = 'song_detail:';
 const CACHE_KEY_SONG_LYRICS = 'song_lyrics:';
 const CACHE_KEY_IMAGE_THEME = 'image_theme:';
 const CACHE_KEY_IMAGE_DATA_URL = 'image_data_url:';
+const IMAGE_DATA_URL_CONCURRENCY_LIMIT = 4;
+
+const inflightImageDataUrlRequests = new Map<string, Promise<string>>();
+const queuedImageDataUrlRequests: (() => void)[] = [];
+let activeImageDataUrlRequestCount = 0;
+
+function scheduleImageDataUrlRequest<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const run = () => {
+      activeImageDataUrlRequestCount += 1;
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeImageDataUrlRequestCount = Math.max(
+            activeImageDataUrlRequestCount - 1,
+            0
+          );
+          queuedImageDataUrlRequests.shift()?.();
+        });
+    };
+
+    if (activeImageDataUrlRequestCount < IMAGE_DATA_URL_CONCURRENCY_LIMIT) {
+      run();
+      return;
+    }
+
+    queuedImageDataUrlRequests.push(run);
+  });
+}
 
 export async function getAlbums(): Promise<Album[]> {
   return invoke('get_albums');
@@ -194,14 +223,37 @@ export async function extractImageTheme(
 
 export async function getImageDataUrl(imageUrl: string): Promise<string> {
   const cacheKey = `${CACHE_KEY_IMAGE_DATA_URL}${imageUrl}`;
-  const cached = await cacheManager.covers.get(cacheKey);
-  if (cached.found) {
-    return cached.data;
+  const inflight = inflightImageDataUrlRequests.get(cacheKey);
+  if (inflight) {
+    return inflight;
   }
 
-  const data = await invoke<string>('get_image_data_url', { imageUrl });
-  await cacheManager.covers.set(cacheKey, data);
-  return data;
+  const request = (async () => {
+    const cached = await cacheManager.covers.get(cacheKey);
+    if (cached.found) {
+      return cached.data;
+    }
+
+    return scheduleImageDataUrlRequest(async () => {
+      const queuedCached = await cacheManager.covers.get(cacheKey);
+      if (queuedCached.found) {
+        return queuedCached.data;
+      }
+
+      const data = await invoke<string>('get_image_data_url', { imageUrl });
+      await cacheManager.covers.set(cacheKey, data);
+      return data;
+    });
+  })();
+  inflightImageDataUrlRequests.set(cacheKey, request);
+
+  try {
+    return await request;
+  } finally {
+    if (inflightImageDataUrlRequests.get(cacheKey) === request) {
+      inflightImageDataUrlRequests.delete(cacheKey);
+    }
+  }
 }
 
 export async function createDownloadJob(

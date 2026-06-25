@@ -85,7 +85,10 @@
     <div class="now-playing" aria-label={labels.nowPlayingAria}>
       {#if currentSong.coverUrl}
         <img
-          use:imageDataSrc={currentSong.coverUrl}
+          use:imageDataSrc={{
+            src: currentSong.coverUrl,
+            loading: 'eager',
+          }}
           alt=""
           class="np-cover"
           class:playing={isPlaying}

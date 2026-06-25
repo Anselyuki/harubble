@@ -141,7 +141,7 @@
 
   <OverlayScrollbarsComponent
     element="div"
-    class="h-full"
+    class="album-detail-scroll"
     data-overlayscrollbars-initialize
     options={overlayScrollbarOptions}
     events={contentScrollbarEvents}

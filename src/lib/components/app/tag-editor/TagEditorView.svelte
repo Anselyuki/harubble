@@ -136,12 +136,15 @@
 <style>
   .tag-editor-view {
     flex: 1;
+    min-height: 0;
     display: flex;
     overflow: hidden;
   }
 
   .tag-editor-content {
     flex: 1;
+    min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -149,6 +152,8 @@
 
   .tag-editor-content :global(.tag-editor-scroll) {
     flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .tag-editor-empty {

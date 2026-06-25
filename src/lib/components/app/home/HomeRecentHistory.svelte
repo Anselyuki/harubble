@@ -59,7 +59,11 @@
         >
           {#if entry.coverUrl}
             <img
-              use:imageDataSrc={entry.coverUrl}
+              use:imageDataSrc={{
+                src: entry.coverUrl,
+                loading: 'lazy',
+                rootMargin: '600px',
+              }}
               alt=""
               class="history-cover"
               loading="lazy"

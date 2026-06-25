@@ -89,10 +89,12 @@
   .tag-editor-album-list {
     width: 200px;
     flex-shrink: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     border-right: 1px solid rgba(255, 255, 255, 0.06);
     background: var(--surface-sidebar, rgba(0, 0, 0, 0.2));
+    overflow: hidden;
   }
 
   .album-list-header {
@@ -154,6 +156,8 @@
 
   .tag-editor-album-list :global(.album-list-scroll) {
     flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .album-list-items {

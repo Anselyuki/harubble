@@ -36,17 +36,21 @@
     <p class="empty-hint">{labels.empty}</p>
   {:else}
     <div class="album-scroll">
-      {#each albums as album (album.cid)}
+      {#each albums as album, index (album.cid)}
         <button
           class="album-card-wrapper"
           onclick={() => onSelect(album)}
           type="button"
         >
           <img
-            use:imageDataSrc={album.coverUrl}
+            use:imageDataSrc={{
+              src: album.coverUrl,
+              loading: index < 6 ? 'eager' : 'lazy',
+              rootMargin: '700px',
+            }}
             alt={album.name}
             class="album-cover"
-            loading="lazy"
+            loading={index < 6 ? 'eager' : 'lazy'}
           />
           <span class="album-name">{album.name}</span>
           <span class="album-artists">{album.artists.join(', ')}</span>

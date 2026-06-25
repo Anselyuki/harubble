@@ -168,11 +168,13 @@
 
 <style>
   .album-overview {
+    flex: 1;
     display: flex;
     flex-direction: column;
     height: 100%;
     min-height: 0;
     background: var(--surface-workspace);
+    overflow: hidden;
   }
 
   .overview-scroll-area {

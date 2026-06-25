@@ -594,6 +594,12 @@ img[data-image-state='error'] {
   overflow: hidden;
 }
 
+.content.album-workspace-shell {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .os-theme-app {
   --os-size: 10px;
   --os-padding-perpendicular: 2px;
@@ -777,7 +783,15 @@ img[data-image-state='error'] {
 
 .album-workspace-content {
   position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.album-workspace-content > .album-detail-scroll {
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .album-workspace-content > .back-button {
