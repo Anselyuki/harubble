@@ -38,7 +38,6 @@ pub enum DockReopenAction {
 #[derive(Clone, Default)]
 pub struct DesktopLifecycleState {
     quitting: Arc<AtomicBool>,
-    main_window_close_requested: Arc<AtomicBool>,
 }
 
 impl DesktopLifecycleState {
@@ -49,16 +48,6 @@ impl DesktopLifecycleState {
     pub fn is_quitting(&self) -> bool {
         self.quitting.load(Ordering::SeqCst)
     }
-
-    pub fn mark_main_window_close_requested(&self) {
-        self.main_window_close_requested
-            .store(true, Ordering::SeqCst);
-    }
-
-    pub fn take_main_window_close_requested(&self) -> bool {
-        self.main_window_close_requested
-            .swap(false, Ordering::SeqCst)
-    }
 }
 
 pub fn should_install_background_entrypoint(os: &str) -> bool {
@@ -67,6 +56,10 @@ pub fn should_install_background_entrypoint(os: &str) -> bool {
 
 pub fn should_close_to_background(window_label: &str, os: &str) -> bool {
     window_label == MAIN_WINDOW_LABEL && matches!(os, "windows")
+}
+
+pub fn should_minimize_to_dock_on_close(window_label: &str, os: &str) -> bool {
+    window_label == MAIN_WINDOW_LABEL && matches!(os, "macos")
 }
 
 pub fn should_install_mini_player_window(os: &str) -> bool {
@@ -87,6 +80,18 @@ pub fn should_close_to_background_with_state(
     }
 
     should_close_to_background(window_label, os)
+}
+
+pub fn should_minimize_to_dock_on_close_with_state(
+    window_label: &str,
+    os: &str,
+    lifecycle: Option<&DesktopLifecycleState>,
+) -> bool {
+    if lifecycle.is_some_and(DesktopLifecycleState::is_quitting) {
+        return false;
+    }
+
+    should_minimize_to_dock_on_close(window_label, os)
 }
 
 pub fn current_platform() -> &'static str {
@@ -113,21 +118,11 @@ pub fn dock_reopen_action(
     }
 }
 
-pub fn should_prevent_exit_after_window_close(
-    os: &str,
-    lifecycle: Option<&DesktopLifecycleState>,
-) -> bool {
-    matches!(os, "macos")
-        && lifecycle.is_some_and(|lifecycle| {
-            !lifecycle.is_quitting() && lifecycle.take_main_window_close_requested()
-        })
-}
-
 pub fn restore_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     hide_mini_player_window(app)?;
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        window.show()?;
         window.unminimize()?;
+        window.show()?;
         window.set_focus()?;
     }
 
@@ -136,6 +131,10 @@ pub fn restore_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> 
 
 pub fn hide_main_window<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
     window.hide()
+}
+
+pub fn minimize_main_window<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+    window.minimize()
 }
 
 pub fn hide_mini_player_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -251,11 +250,20 @@ pub fn handle_main_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &W
 
     let app_handle = window.app_handle();
     let lifecycle = app_handle.try_state::<DesktopLifecycleState>();
-    if window.label() == MAIN_WINDOW_LABEL && current_platform() == "macos" {
-        if let Some(lifecycle) = lifecycle.as_deref() {
-            if !lifecycle.is_quitting() {
-                lifecycle.mark_main_window_close_requested();
-            }
+    if should_minimize_to_dock_on_close_with_state(
+        window.label(),
+        current_platform(),
+        lifecycle.as_deref(),
+    ) {
+        api.prevent_close();
+        if let Err(error) = minimize_main_window(window) {
+            record_lifecycle_log(
+                &app_handle,
+                LogLevel::Warn,
+                "desktop_lifecycle.minimize_failed",
+                "Failed to minimize main window for background playback",
+                error.to_string(),
+            );
         }
         return;
     }

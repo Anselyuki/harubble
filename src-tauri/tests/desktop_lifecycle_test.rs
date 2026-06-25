@@ -1,8 +1,9 @@
 use harubble::desktop_lifecycle::{
     dock_reopen_action, should_close_to_background, should_close_to_background_with_state,
     should_hide_on_focus_loss, should_install_background_entrypoint,
-    should_install_mini_player_window, should_prevent_exit_after_window_close,
-    DesktopLifecycleState, DockReopenAction, MINI_PLAYER_WINDOW_LABEL,
+    should_install_mini_player_window, should_minimize_to_dock_on_close,
+    should_minimize_to_dock_on_close_with_state, DesktopLifecycleState, DockReopenAction,
+    MINI_PLAYER_WINDOW_LABEL,
 };
 
 #[test]
@@ -20,6 +21,15 @@ fn close_to_background_is_enabled_only_for_main_window_on_supported_platforms() 
     assert!(!should_close_to_background("main", "linux"));
     assert!(!should_close_to_background("settings", "windows"));
     assert!(!should_close_to_background("", "macos"));
+}
+
+#[test]
+fn minimize_to_dock_on_close_is_enabled_only_for_macos_main_window() {
+    assert!(should_minimize_to_dock_on_close("main", "macos"));
+    assert!(!should_minimize_to_dock_on_close("main", "windows"));
+    assert!(!should_minimize_to_dock_on_close("main", "linux"));
+    assert!(!should_minimize_to_dock_on_close("settings", "macos"));
+    assert!(!should_minimize_to_dock_on_close("", "macos"));
 }
 
 #[test]
@@ -93,34 +103,30 @@ fn real_quit_disables_close_to_background() {
 }
 
 #[test]
-fn macos_window_close_prevents_only_the_immediate_implicit_exit() {
+fn real_quit_disables_macos_close_to_dock_minimize() {
     let state = DesktopLifecycleState::default();
 
-    assert!(!should_prevent_exit_after_window_close(
+    assert!(should_minimize_to_dock_on_close_with_state(
+        "main",
         "macos",
         Some(&state)
     ));
-
-    state.mark_main_window_close_requested();
-
-    assert!(should_prevent_exit_after_window_close(
+    assert!(!should_minimize_to_dock_on_close_with_state(
+        "settings",
         "macos",
         Some(&state)
     ));
-    assert!(!should_prevent_exit_after_window_close(
-        "macos",
+    assert!(!should_minimize_to_dock_on_close_with_state(
+        "main",
+        "windows",
         Some(&state)
     ));
 
-    state.mark_main_window_close_requested();
     state.mark_quitting();
 
-    assert!(!should_prevent_exit_after_window_close(
+    assert!(!should_minimize_to_dock_on_close_with_state(
+        "main",
         "macos",
-        Some(&state)
-    ));
-    assert!(!should_prevent_exit_after_window_close(
-        "windows",
         Some(&state)
     ));
 }

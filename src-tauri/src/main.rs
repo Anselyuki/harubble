@@ -346,14 +346,7 @@ fn main() {
             } => {
                 handle_macos_dock_reopen(app_handle, has_visible_windows);
             }
-            RunEvent::ExitRequested { api, .. } => {
-                if desktop_lifecycle::should_prevent_exit_after_window_close(
-                    desktop_lifecycle::current_platform(),
-                    app_handle.try_state::<DesktopLifecycleState>().as_deref(),
-                ) {
-                    api.prevent_exit();
-                    return;
-                }
+            RunEvent::ExitRequested { .. } => {
                 flush_logs_on_exit(app_handle);
             }
             RunEvent::Exit => {
