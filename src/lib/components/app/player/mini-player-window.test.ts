@@ -16,6 +16,7 @@ describe('mini player window entrypoint', () => {
       /listen<PlayerState>\(\s*'player-state-changed'/
     );
     expect(miniPlayer).toMatch(/listen<PlayerState>\(\s*'player-progress'/);
+    expect(miniPlayer).toContain('sessionId');
     expect(miniPlayer).toContain('showMainWindow');
     expect(miniPlayer).not.toContain('createAppRuntime');
   });

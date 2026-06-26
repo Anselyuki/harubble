@@ -24,6 +24,7 @@
   type PendingAction = 'play' | 'previous' | 'next' | 'seek';
 
   const EMPTY_PLAYER_STATE: PlayerState = {
+    sessionId: 0,
     songCid: null,
     songName: null,
     artists: [],
@@ -146,8 +147,10 @@
         const progressUnlisten = await listen<PlayerState>(
           'player-progress',
           (event) => {
+            if (event.payload.sessionId < playerState.sessionId) return;
             playerState = {
               ...playerState,
+              sessionId: event.payload.sessionId,
               isPlaying: event.payload.isPlaying,
               isPaused: event.payload.isPaused,
               progress: event.payload.progress,

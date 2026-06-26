@@ -76,11 +76,12 @@ impl PlaybackInput {
         Self::GrowingFile(handle)
     }
 
-    /// 探测当前输入的音频格式。
-    ///
-    /// 返回值包含通道数、采样率和可推断出的总时长。
-    pub fn inspect_format(&self) -> Result<AudioFormat> {
-        inspect_audio_reader(self.open_reader(None)?, self.build_hint())
+    /// 探测当前输入的音频格式，并在读取器初始化或探测失败时自动重试。
+    pub fn inspect_format_with_retry(
+        &self,
+        stop_flag: Option<Arc<AtomicBool>>,
+    ) -> Result<AudioFormat> {
+        inspect_audio_reader_with_retry(self, stop_flag)
     }
 
     /// 启动后台解码线程，将输入流转换为目标采样缓冲。
@@ -98,10 +99,9 @@ impl PlaybackInput {
         start_position_secs: f64,
         error_handler: PlaybackErrorHandler,
     ) -> Result<JoinHandle<()>> {
-        let reader = self.open_reader(Some(Arc::clone(&stop_flag)))?;
         let hint = self.build_hint();
         Ok(spawn_decode_worker(
-            reader,
+            self.clone(),
             hint,
             source_format,
             target_format,
@@ -263,6 +263,10 @@ pub struct GrowingFileReader {
 /// 即使写入端既未追加数据也未标记完成/失败，读取端也会每隔该间隔醒来检查
 /// `stop_flag`，从而保证在播放会话已终止时能及时释放解码线程。
 const GROWING_FILE_WAIT_TIMEOUT: Duration = Duration::from_millis(200);
+/// 音频探测失败后的重试次数。
+const AUDIO_PROBE_RETRY_ATTEMPTS: usize = 6;
+/// 音频探测失败后每次重试前的等待间隔。
+const AUDIO_PROBE_RETRY_DELAY: Duration = Duration::from_millis(120);
 
 impl Read for GrowingFileReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -385,6 +389,10 @@ impl SampleBuffer {
                 .wait_timeout(state, Duration::from_millis(50))
                 .unwrap();
             state = next_state;
+        }
+        if state.finished || state.error.is_some() {
+            condvar.notify_all();
+            return;
         }
         state.queue.extend(samples.iter().copied());
         condvar.notify_all();
@@ -512,16 +520,22 @@ struct OpenedAudioReader {
     audio_format: AudioFormat,
 }
 
-/// 探测一个已打开音频读取器的格式信息。
-///
-/// 该函数会选取默认或首个可解码音轨，并返回播放器后续协商所需的基础参数。
-pub fn inspect_audio_reader(reader: BoxedAudioReader, hint: Hint) -> Result<AudioFormat> {
-    Ok(open_audio_reader(reader, hint)?.audio_format)
+fn inspect_audio_reader_with_retry(
+    input: &PlaybackInput,
+    stop_flag: Option<Arc<AtomicBool>>,
+) -> Result<AudioFormat> {
+    let hint = input.build_hint();
+    open_audio_reader_with_retry(
+        || input.open_reader(stop_flag.clone()),
+        &hint,
+        stop_flag.as_deref(),
+    )
+    .map(|reader| reader.audio_format)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_decode_worker(
-    reader: BoxedAudioReader,
+    input: PlaybackInput,
     hint: Hint,
     source_format: AudioFormat,
     target_format: AudioFormat,
@@ -540,7 +554,11 @@ fn spawn_decode_worker(
                     mut decoder,
                     track_id,
                     ..
-                } = open_audio_reader(reader, hint)?;
+                } = open_audio_reader_with_retry(
+                    || input.open_reader(Some(Arc::clone(&stop_flag))),
+                    &hint,
+                    Some(&stop_flag),
+                )?;
                 let mut converter = SampleConverter::new(source_format, target_format);
                 let mut decoded_samples: Option<SymphoniaSampleBuffer<f32>> = None;
                 let mut remaining_seek_frames = if start_position_secs > 0.0 {
@@ -654,12 +672,48 @@ fn seek_to_time(format: &mut dyn FormatReader, track_id: u32, seconds: f64) -> R
         .saturating_sub(seek_result.actual_ts))
 }
 
-fn open_audio_reader(reader: BoxedAudioReader, hint: Hint) -> Result<OpenedAudioReader> {
+fn open_audio_reader_with_retry<F>(
+    mut open_reader: F,
+    hint: &Hint,
+    stop_flag: Option<&AtomicBool>,
+) -> Result<OpenedAudioReader>
+where
+    F: FnMut() -> Result<BoxedAudioReader>,
+{
+    let mut last_error: Option<anyhow::Error> = None;
+
+    for attempt in 0..AUDIO_PROBE_RETRY_ATTEMPTS {
+        if stop_flag.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            anyhow::bail!("Playback stopped");
+        }
+
+        match open_reader().and_then(|reader| open_audio_reader(reader, hint)) {
+            Ok(reader) => return Ok(reader),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt + 1 == AUDIO_PROBE_RETRY_ATTEMPTS {
+                    break;
+                }
+            }
+        }
+
+        if stop_flag.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            anyhow::bail!("Playback stopped");
+        }
+
+        thread::sleep(AUDIO_PROBE_RETRY_DELAY);
+    }
+
+    Err(last_error.expect("audio probe retry should record an error"))
+        .context("Failed to probe audio stream after retries")
+}
+
+fn open_audio_reader(reader: BoxedAudioReader, hint: &Hint) -> Result<OpenedAudioReader> {
     let media_source = Box::new(SymphoniaSource { inner: reader });
     let media_source_stream = MediaSourceStream::new(media_source, Default::default());
     let probed = symphonia::default::get_probe()
         .format(
-            &hint,
+            hint,
             media_source_stream,
             &FormatOptions::default(),
             &MetadataOptions::default(),
@@ -775,13 +829,26 @@ impl SampleConverter {
         let ratio = self.source_rate as f64 / self.target_rate as f64;
         let available_abs_frames = self.pending_base_frame + available_frames as u64;
 
-        while (self.next_source_frame.floor() as u64) < available_abs_frames {
+        loop {
             let source_frame_abs = self.next_source_frame.floor() as u64;
+            if source_frame_abs >= available_abs_frames {
+                break;
+            }
+            if !finalizing && source_frame_abs + 1 >= available_abs_frames {
+                break;
+            }
             let local_frame = (source_frame_abs - self.pending_base_frame) as usize;
             if local_frame >= available_frames {
                 break;
             }
-            self.push_remixed_frame(local_frame, &mut output);
+            let next_local_frame = (local_frame + 1).min(available_frames - 1);
+            let fraction = self.next_source_frame - source_frame_abs as f64;
+            self.push_interpolated_frame(
+                local_frame,
+                next_local_frame,
+                fraction as f32,
+                &mut output,
+            );
             self.next_source_frame += ratio;
         }
 
@@ -827,5 +894,193 @@ impl SampleConverter {
             let mapped = target_channel.min(self.source_channels - 1);
             output.push(self.pending[base + mapped]);
         }
+    }
+
+    fn push_interpolated_frame(
+        &self,
+        source_frame: usize,
+        next_source_frame: usize,
+        fraction: f32,
+        output: &mut Vec<f32>,
+    ) {
+        if source_frame == next_source_frame {
+            self.push_remixed_frame(source_frame, output);
+            return;
+        }
+
+        if self.source_channels == self.target_channels {
+            for channel in 0..self.source_channels {
+                output.push(self.interpolated_sample(
+                    source_frame,
+                    next_source_frame,
+                    channel,
+                    fraction,
+                ));
+            }
+            return;
+        }
+
+        if self.source_channels == 1 {
+            let sample = self.interpolated_sample(source_frame, next_source_frame, 0, fraction);
+            output.extend(std::iter::repeat_n(sample, self.target_channels));
+            return;
+        }
+
+        if self.target_channels == 1 {
+            let sum = (0..self.source_channels)
+                .map(|channel| {
+                    self.interpolated_sample(source_frame, next_source_frame, channel, fraction)
+                })
+                .sum::<f32>();
+            output.push(sum / self.source_channels as f32);
+            return;
+        }
+
+        for target_channel in 0..self.target_channels {
+            let mapped = target_channel.min(self.source_channels - 1);
+            output.push(self.interpolated_sample(
+                source_frame,
+                next_source_frame,
+                mapped,
+                fraction,
+            ));
+        }
+    }
+
+    fn interpolated_sample(
+        &self,
+        source_frame: usize,
+        next_source_frame: usize,
+        channel: usize,
+        fraction: f32,
+    ) -> f32 {
+        let current = self.pending[source_frame * self.source_channels + channel];
+        let next = self.pending[next_source_frame * self.source_channels + channel];
+        current + (next - current) * fraction
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        open_audio_reader_with_retry, AudioFormat, BoxedAudioReader, Hint, SampleBuffer,
+        SampleConverter,
+    };
+    use std::fs::File;
+    use std::io::{self, Read, Seek, SeekFrom};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tempfile::tempdir;
+
+    struct FlakyReader {
+        inner: File,
+        fail_once: AtomicBool,
+    }
+
+    impl FlakyReader {
+        fn new(inner: File) -> Self {
+            Self {
+                inner,
+                fail_once: AtomicBool::new(true),
+            }
+        }
+
+        fn maybe_fail(&self) -> io::Result<()> {
+            if self.fail_once.swap(false, Ordering::SeqCst) {
+                Err(io::Error::other("transient probe failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl Read for FlakyReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.maybe_fail()?;
+            self.inner.read(buf)
+        }
+    }
+
+    impl Seek for FlakyReader {
+        fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+            self.maybe_fail()?;
+            self.inner.seek(position)
+        }
+    }
+
+    #[test]
+    fn audio_probe_retries_after_transient_failure() {
+        let temp_dir = tempdir().expect("tempdir");
+        let audio_path = temp_dir.path().join("probe-test.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&audio_path, spec).expect("wav writer");
+        writer.write_sample(0i16).expect("sample");
+        writer.write_sample(1024i16).expect("sample");
+        writer.finalize().expect("finalize");
+
+        let attempts = AtomicUsize::new(0);
+        let mut hint = Hint::new();
+        hint.with_extension("wav");
+
+        let opened = open_audio_reader_with_retry(
+            || {
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                let file = File::open(&audio_path).expect("open audio file");
+                if attempt == 0 {
+                    Ok(Box::new(FlakyReader::new(file)) as BoxedAudioReader)
+                } else {
+                    Ok(Box::new(file) as BoxedAudioReader)
+                }
+            },
+            &hint,
+            None,
+        )
+        .expect("probe should recover");
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(opened.audio_format.channels, 1);
+        assert_eq!(opened.audio_format.sample_rate, 44_100);
+    }
+
+    #[test]
+    fn sample_converter_interpolates_resampled_chunks() {
+        let mut converter = SampleConverter::new(
+            AudioFormat {
+                channels: 1,
+                sample_rate: 2,
+                duration_secs: 0.0,
+            },
+            AudioFormat {
+                channels: 1,
+                sample_rate: 4,
+                duration_secs: 0.0,
+            },
+        );
+
+        let first = converter.push_chunk(&[0.0, 1.0]);
+        let second = converter.push_chunk(&[0.0]);
+        let tail = converter.finish();
+
+        assert_eq!(first, vec![0.0, 0.5]);
+        assert_eq!(second, vec![1.0, 0.5]);
+        assert_eq!(tail, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn sample_buffer_rejects_push_after_finish() {
+        let buffer = SampleBuffer::new();
+        buffer.finish();
+        buffer.push(&[1.0, 0.5]);
+
+        let mut output = [0.0_f32; 2];
+        let status = buffer.pop_into(&mut output);
+
+        assert_eq!(status.written, 0);
+        assert!(status.finished);
+        assert_eq!(output, [0.0, 0.0]);
     }
 }

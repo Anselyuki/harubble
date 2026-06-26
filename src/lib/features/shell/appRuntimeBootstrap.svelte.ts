@@ -2,6 +2,7 @@ import type { listen as tauriListen } from '@tauri-apps/api/event';
 import type {
   Album,
   PlayerState,
+  PlaybackEndedEvent,
   DownloadManagerSnapshot,
   DownloadJobSnapshot,
   DownloadTaskProgressEvent,
@@ -78,6 +79,7 @@ export interface EventSubscriptionDeps {
   playerController: {
     syncPlayerState: (state: PlayerState) => void;
     syncPlayerProgress: (state: PlayerState) => void;
+    syncPlaybackEnded: (event: PlaybackEndedEvent) => void;
   };
   downloadController: {
     applyManagerEvent: (snapshot: DownloadManagerSnapshot) => void;
@@ -274,6 +276,13 @@ export async function subscribeToTauriEvents(
     if (
       !(await register<PlayerState>('player-progress', (event) => {
         deps.playerController.syncPlayerProgress(event.payload);
+      }))
+    ) {
+      return cleanup;
+    }
+    if (
+      !(await register<PlaybackEndedEvent>('player-ended', (event) => {
+        deps.playerController.syncPlaybackEnded(event.payload);
       }))
     ) {
       return cleanup;

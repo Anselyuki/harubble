@@ -9,6 +9,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerState {
+    /// 当前播放器会话 ID；每次开始、停止或失败都会推进。
+    pub session_id: u64,
     /// 当前已加载歌曲的 CID；空闲时为 `None`。
     pub song_cid: Option<String>,
     /// 当前已加载歌曲名；空闲时为 `None`。
@@ -38,6 +40,7 @@ pub struct PlayerState {
 impl Default for PlayerState {
     fn default() -> Self {
         Self {
+            session_id: 0,
             song_cid: None,
             song_name: None,
             artists: Vec::new(),

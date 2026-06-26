@@ -290,6 +290,7 @@ export interface CreateDownloadJobRequest {
 }
 
 export interface PlayerState {
+  sessionId: number;
   songCid: string | null;
   songName: string | null;
   artists: string[];
@@ -302,6 +303,36 @@ export interface PlayerState {
   progress: number;
   duration: number;
   volume: number;
+}
+
+export interface PlaybackStartResult {
+  duration: number;
+  sessionId: number;
+}
+
+export type PlaybackErrorCode =
+  | 'superseded'
+  | 'noActiveTrack'
+  | 'noNextTrack'
+  | 'noPreviousTrack'
+  | 'loading'
+  | 'network'
+  | 'audio'
+  | 'io'
+  | 'internal';
+
+export interface PlaybackErrorPayload {
+  code: PlaybackErrorCode;
+  message: string;
+  retryable: boolean;
+  sessionId: number | null;
+}
+
+export interface PlaybackEndedEvent {
+  sessionId: number;
+  songCid: string;
+  progress: number;
+  duration: number;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

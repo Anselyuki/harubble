@@ -2,9 +2,15 @@ import type {
   PlaybackContext,
   PlaybackQueueEntry,
   PlayerState,
+  PlaybackEndedEvent,
 } from '$lib/types';
 import { parseLyricText } from './lyrics';
 import { buildPlaybackContext } from './queue';
+import {
+  shouldApplyPlaybackEnded,
+  shouldIgnorePlaybackError,
+  type PlaybackSnapshot,
+} from './playback-contract';
 import * as m from '$lib/paraglide/messages.js';
 
 interface PlayerControllerDeps {
@@ -63,9 +69,11 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let muted = $state(false);
   let volumeBeforeMute = 1.0;
   let playbackEndRequestSeq = 0;
-  let lastPlaybackSnapshot = {
+  let playRequestSeq = 0;
+  let lastPlaybackSnapshot: PlaybackSnapshot = {
     cid: null as string | null,
     active: false,
+    sessionId: 0,
   };
   let lyricRequestSeq = 0;
 
@@ -106,6 +114,12 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   function assignPlayerStateFields(state: PlayerState) {
+    if (state.sessionId >= lastPlaybackSnapshot.sessionId) {
+      lastPlaybackSnapshot = {
+        ...lastPlaybackSnapshot,
+        sessionId: state.sessionId,
+      };
+    }
     if (isPlaying !== state.isPlaying) isPlaying = state.isPlaying;
     if (isPaused !== state.isPaused) isPaused = state.isPaused;
     if (isLoading !== state.isLoading) isLoading = state.isLoading;
@@ -257,17 +271,6 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       Boolean(songCid) && (isPlaying || isPaused || isLoading);
     const previousSnapshot = lastPlaybackSnapshot;
 
-    if (
-      previousSnapshot.cid &&
-      previousSnapshot.active &&
-      !isCurrentActive &&
-      songCid === previousSnapshot.cid &&
-      duration > 0 &&
-      progress >= Math.max(0, duration - 0.25)
-    ) {
-      void handlePlaybackEnded(previousSnapshot.cid);
-    }
-
     if (!songCid) {
       lyricRequestSeq += 1;
       lyricsSongCid = null;
@@ -277,7 +280,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       lyricsOpen = false;
       playlistOpen = false;
       if (previousSnapshot.cid !== null || previousSnapshot.active) {
-        lastPlaybackSnapshot = { cid: null, active: false };
+        lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
       }
       return;
     }
@@ -289,6 +292,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       lastPlaybackSnapshot = {
         cid: songCid,
         active: isCurrentActive,
+        sessionId: previousSnapshot.sessionId,
       };
     }
 
@@ -326,10 +330,14 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     }
 
     playingCid = entry.cid;
+    const requestSeq = ++playRequestSeq;
     try {
       const context = buildPlaybackContext(playbackOrder, playbackIndex);
       await deps.playSong(entry.cid, entry.coverUrl ?? null, context ?? null);
     } catch (error) {
+      if (shouldIgnorePlaybackError(error, requestSeq, playRequestSeq)) {
+        return;
+      }
       playingCid = null;
       deps.notifyError(
         m.player_error_play_failed({
@@ -337,6 +345,25 @@ export function createPlayerController(deps: PlayerControllerDeps) {
         })
       );
     }
+  }
+
+  function syncPlaybackEnded(event: PlaybackEndedEvent) {
+    if (
+      !shouldApplyPlaybackEnded(
+        event,
+        currentSong?.cid ?? null,
+        lastPlaybackSnapshot
+      )
+    )
+      return;
+    lastPlaybackSnapshot = {
+      cid: event.songCid,
+      active: false,
+      sessionId: event.sessionId,
+    };
+    progress = event.progress;
+    duration = event.duration;
+    void handlePlaybackEnded(event.songCid);
   }
 
   function resolveWrappedQueueIndex(step: 1 | -1): number {
@@ -532,7 +559,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     volume = 1.0;
     muted = false;
     volumeBeforeMute = 1.0;
-    lastPlaybackSnapshot = { cid: null, active: false };
+    lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
     lyricRequestSeq += 1;
     playbackEndRequestSeq += 1;
   }
@@ -626,6 +653,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     dispose,
     syncPlayerState,
     syncPlayerProgress,
+    syncPlaybackEnded,
     syncPlaybackLifecycle,
     playQueueEntry,
     toggleShuffle,

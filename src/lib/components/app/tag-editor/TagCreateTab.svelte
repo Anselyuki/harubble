@@ -64,7 +64,7 @@
 <div class="create-form">
   <div class="create-input-wrapper">
     <input
-      value={createValues[getLocale()] ?? ''}
+      value={createValues[getLocale()]}
       oninput={(e) => {
         createValues[getLocale()] = (e.target as HTMLInputElement).value;
       }}

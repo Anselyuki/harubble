@@ -12,6 +12,8 @@ import type {
   SongDetail,
   ThemePalette,
   PlayerState,
+  PlaybackErrorPayload,
+  PlaybackStartResult,
   PlaybackContext,
   CreateDownloadJobRequest,
   DownloadJobSnapshot,
@@ -46,6 +48,44 @@ const IMAGE_DATA_URL_CONCURRENCY_LIMIT = 4;
 const inflightImageDataUrlRequests = new Map<string, Promise<string>>();
 const queuedImageDataUrlRequests: (() => void)[] = [];
 let activeImageDataUrlRequestCount = 0;
+
+export class PlaybackCommandError extends Error {
+  readonly code: PlaybackErrorPayload['code'];
+  readonly retryable: boolean;
+  readonly sessionId: number | null;
+
+  constructor(payload: PlaybackErrorPayload) {
+    super(payload.message);
+    this.name = 'PlaybackCommandError';
+    this.code = payload.code;
+    this.retryable = payload.retryable;
+    this.sessionId = payload.sessionId;
+  }
+}
+
+function isPlaybackErrorPayload(value: unknown): value is PlaybackErrorPayload {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<PlaybackErrorPayload>;
+  return (
+    typeof candidate.code === 'string' &&
+    typeof candidate.message === 'string' &&
+    typeof candidate.retryable === 'boolean'
+  );
+}
+
+async function invokePlayback<T>(
+  command: string,
+  args?: Record<string, unknown>
+): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    if (isPlaybackErrorPayload(error)) {
+      throw new PlaybackCommandError(error);
+    }
+    throw error;
+  }
+}
 
 function scheduleImageDataUrlRequest<T>(task: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -140,8 +180,8 @@ export async function playSong(
   songCid: string,
   coverUrl?: string,
   playbackContext?: PlaybackContext
-): Promise<number> {
-  return invoke('play_song', {
+): Promise<PlaybackStartResult> {
+  return invokePlayback('play_song', {
     songCid,
     coverUrl: coverUrl ?? null,
     playbackContext: playbackContext ?? null,
@@ -158,16 +198,16 @@ export async function resumePlayback(): Promise<void> {
 
 export async function seekCurrentPlayback(
   positionSecs: number
-): Promise<number> {
-  return invoke('seek_current_playback', { positionSecs });
+): Promise<PlaybackStartResult> {
+  return invokePlayback('seek_current_playback', { positionSecs });
 }
 
-export async function playNext(): Promise<number> {
-  return invoke('play_next');
+export async function playNext(): Promise<PlaybackStartResult> {
+  return invokePlayback('play_next');
 }
 
-export async function playPrevious(): Promise<number> {
-  return invoke('play_previous');
+export async function playPrevious(): Promise<PlaybackStartResult> {
+  return invokePlayback('play_previous');
 }
 
 export async function getPlayerState(): Promise<PlayerState> {

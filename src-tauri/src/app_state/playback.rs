@@ -4,6 +4,7 @@ use crate::logging::{LogLevel, LogPayload};
 use crate::player::stream::{GrowingFileHandle, PlaybackInput, SampleBuffer};
 use crate::player::PlaybackContext;
 use crate::player::PlaybackQueueEntry;
+use crate::player::{PlaybackError, PlaybackErrorCode, PlaybackStartResult};
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -24,12 +25,12 @@ impl AppState {
         song_cid: String,
         cover_url: Option<String>,
         playback_context: Option<PlaybackContext>,
-    ) -> Result<f64, String> {
-        let song_detail = self
-            .api
-            .get_song_detail(&song_cid)
-            .await
-            .map_err(|e| e.to_string())?;
+    ) -> Result<PlaybackStartResult, PlaybackError> {
+        let request_id = self.player.begin_playback_request();
+        let song_detail = self.api.get_song_detail(&song_cid).await.map_err(|error| {
+            playback_error(PlaybackErrorCode::Network, error.to_string(), true, None)
+        })?;
+        self.ensure_playback_request_active(request_id, None)?;
 
         self.player.prepare_playback_context(
             playback_context,
@@ -51,9 +52,10 @@ impl AppState {
                 0.0,
                 None,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| classify_playback_error(error, None))?;
 
         let result: Result<f64> = async {
+            self.ensure_playback_request_active(request_id, Some(session_id))?;
             self.start_playback_session(session_id, &song_cid, &song_detail.source_url, 0.0)
                 .await
         }
@@ -86,36 +88,56 @@ impl AppState {
                         .details(e),
                     );
                 }
-                Ok(duration)
+                Ok(PlaybackStartResult::new(duration, session_id))
             }
             Err(error) => {
                 self.player.fail_session(session_id);
-                Err(error.to_string())
+                Err(classify_playback_error(error, Some(session_id)))
             }
         }
     }
 
-    pub(crate) async fn seek_current_internal(&self, position_secs: f64) -> Result<f64, String> {
+    pub(crate) async fn seek_current_internal(
+        &self,
+        position_secs: f64,
+    ) -> Result<PlaybackStartResult, PlaybackError> {
+        let request_id = self.player.begin_playback_request();
         let current_state = self.player.get_state();
-        let song_cid = current_state
-            .song_cid
-            .clone()
-            .ok_or_else(|| i18n::tr(self.preferences().locale, "player-no-active-track"))?;
+        let song_cid = current_state.song_cid.clone().ok_or_else(|| {
+            playback_error(
+                PlaybackErrorCode::NoActiveTrack,
+                i18n::tr(self.preferences().locale, "player-no-active-track"),
+                false,
+                None,
+            )
+        })?;
 
         if current_state.is_loading {
-            return Err(i18n::tr(self.preferences().locale, "player-still-loading"));
+            return Err(playback_error(
+                PlaybackErrorCode::Loading,
+                i18n::tr(self.preferences().locale, "player-still-loading"),
+                false,
+                Some(current_state.session_id),
+            ));
         }
 
         let target_position = normalize_seek_position(position_secs, current_state.duration);
         if (current_state.progress - target_position).abs() < 0.05 {
-            return Ok(current_state.duration);
+            return Ok(PlaybackStartResult::new(
+                current_state.duration,
+                current_state.session_id,
+            ));
         }
 
-        let song_detail = self
-            .api
-            .get_song_detail(&song_cid)
-            .await
-            .map_err(|e| e.to_string())?;
+        let song_detail = self.api.get_song_detail(&song_cid).await.map_err(|error| {
+            playback_error(
+                PlaybackErrorCode::Network,
+                error.to_string(),
+                true,
+                Some(current_state.session_id),
+            )
+        })?;
+        self.ensure_playback_request_active(request_id, Some(current_state.session_id))?;
 
         let session_id = self
             .player
@@ -127,10 +149,11 @@ impl AppState {
                 target_position,
                 (current_state.duration > 0.0).then_some(current_state.duration),
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| classify_playback_error(error, Some(current_state.session_id)))?;
 
         let should_pause_after_seek = current_state.is_paused;
         let result: Result<f64> = async {
+            self.ensure_playback_request_active(request_id, Some(session_id))?;
             let duration = self
                 .start_playback_session(
                     session_id,
@@ -149,10 +172,10 @@ impl AppState {
         .await;
 
         match result {
-            Ok(duration) => Ok(duration),
+            Ok(duration) => Ok(PlaybackStartResult::new(duration, session_id)),
             Err(error) => {
                 self.player.fail_session(session_id);
-                Err(error.to_string())
+                Err(classify_playback_error(error, Some(session_id)))
             }
         }
     }
@@ -173,22 +196,24 @@ impl AppState {
         let input = prepared_input.input.clone();
 
         let inspect_input = input.clone();
-        let source_format =
-            match tokio::task::spawn_blocking(move || inspect_input.inspect_format())
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))
-                .and_then(|result| result)
-            {
-                Ok(source_format) => source_format,
-                Err(error) => {
-                    self.cleanup_failed_playback_cache(
-                        cache_path_for_failure.clone(),
-                        session_id,
-                        &stop_flag,
-                    );
-                    return Err(error);
-                }
-            };
+        let inspect_stop_flag = Arc::clone(&stop_flag);
+        let source_format = match tokio::task::spawn_blocking(move || {
+            inspect_input.inspect_format_with_retry(Some(inspect_stop_flag))
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+        .and_then(|result| result)
+        {
+            Ok(source_format) => source_format,
+            Err(error) => {
+                self.cleanup_failed_playback_cache(
+                    cache_path_for_failure.clone(),
+                    session_id,
+                    &stop_flag,
+                );
+                return Err(error);
+            }
+        };
 
         anyhow::ensure!(
             self.player.is_session_active(session_id),
@@ -249,22 +274,45 @@ impl AppState {
         )
     }
 
-    pub(crate) async fn play_next_internal(&self) -> Result<f64, String> {
-        let target = self
-            .player
-            .select_next_entry()
-            .ok_or_else(|| i18n::tr(self.preferences().locale, "player-no-next-track"))?;
+    pub(crate) async fn play_next_internal(&self) -> Result<PlaybackStartResult, PlaybackError> {
+        let target = self.player.select_next_entry().ok_or_else(|| {
+            playback_error(
+                PlaybackErrorCode::NoNextTrack,
+                i18n::tr(self.preferences().locale, "player-no-next-track"),
+                false,
+                Some(self.player.get_state().session_id),
+            )
+        })?;
         self.play_song_internal(target.cid, target.cover_url, None)
             .await
     }
 
-    pub(crate) async fn play_previous_internal(&self) -> Result<f64, String> {
-        let target = self
-            .player
-            .select_previous_entry()
-            .ok_or_else(|| i18n::tr(self.preferences().locale, "player-no-previous-track"))?;
+    pub(crate) async fn play_previous_internal(
+        &self,
+    ) -> Result<PlaybackStartResult, PlaybackError> {
+        let target = self.player.select_previous_entry().ok_or_else(|| {
+            playback_error(
+                PlaybackErrorCode::NoPreviousTrack,
+                i18n::tr(self.preferences().locale, "player-no-previous-track"),
+                false,
+                Some(self.player.get_state().session_id),
+            )
+        })?;
         self.play_song_internal(target.cid, target.cover_url, None)
             .await
+    }
+
+    fn ensure_playback_request_active(
+        &self,
+        request_id: u64,
+        session_id: Option<u64>,
+    ) -> Result<(), PlaybackError> {
+        if self.player.is_playback_request_active(request_id) {
+            return Ok(());
+        }
+        Err(PlaybackError::superseded(
+            session_id.unwrap_or_else(|| self.player.get_state().session_id),
+        ))
     }
 
     async fn prepare_playback_input(
@@ -511,6 +559,55 @@ fn prepare_playback_input_from_cache_path(
         Some((cache_path, pending_marker)),
         PlaybackInput::growing_file(handle),
     ))
+}
+
+fn playback_error(
+    code: PlaybackErrorCode,
+    message: impl Into<String>,
+    retryable: bool,
+    session_id: Option<u64>,
+) -> PlaybackError {
+    PlaybackError::new(code, message, retryable, session_id)
+}
+
+fn classify_playback_error(error: anyhow::Error, session_id: Option<u64>) -> PlaybackError {
+    let message = format!("{error:#}");
+    let lowered = message.to_ascii_lowercase();
+    let code = if lowered.contains("playback request was superseded")
+        || lowered.contains("playback stopped")
+        || lowered.contains("playback session expired")
+    {
+        PlaybackErrorCode::Superseded
+    } else if lowered.contains("failed to open")
+        || lowered.contains("failed to create cache")
+        || lowered.contains("failed to append")
+        || lowered.contains("failed to flush")
+        || lowered.contains("audio cache")
+    {
+        PlaybackErrorCode::Io
+    } else if lowered.contains("download")
+        || lowered.contains("network")
+        || lowered.contains("request")
+        || lowered.contains("http")
+    {
+        PlaybackErrorCode::Network
+    } else if lowered.contains("audio")
+        || lowered.contains("decoder")
+        || lowered.contains("decode")
+        || lowered.contains("probe")
+        || lowered.contains("stream")
+        || lowered.contains("output")
+        || lowered.contains("cpal")
+    {
+        PlaybackErrorCode::Audio
+    } else {
+        PlaybackErrorCode::Internal
+    };
+    let retryable = matches!(
+        code,
+        PlaybackErrorCode::Network | PlaybackErrorCode::Audio | PlaybackErrorCode::Io
+    );
+    PlaybackError::new(code, message, retryable, session_id)
 }
 
 #[cfg(test)]

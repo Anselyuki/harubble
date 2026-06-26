@@ -5,8 +5,8 @@
 
 use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
 use anyhow::Result;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::Arc;
 
 /// 音频播放后端抽象。
 pub trait PlaybackBackend: Send {
@@ -20,7 +20,7 @@ pub trait PlaybackBackend: Send {
         format: AudioFormat,
         samples: SampleBuffer,
         stop_flag: Arc<AtomicBool>,
-        volume: Arc<Mutex<f64>>,
+        volume: Arc<AtomicU64>,
         progress_callback: Arc<dyn Fn(f64, f64) + Send + Sync>,
         finish_callback: Arc<dyn Fn() + Send + Sync>,
         error_handler: PlaybackErrorHandler,

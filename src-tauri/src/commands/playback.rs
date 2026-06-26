@@ -4,7 +4,7 @@
 //! 主要服务于前端播放器、系统媒体控制和播放进度交互。
 
 use crate::app_state::AppState;
-use crate::player::{PlaybackContext, PlayerState};
+use crate::player::{PlaybackContext, PlaybackError, PlaybackStartResult, PlayerState};
 use tauri::State;
 
 /// 播放指定歌曲，并可携带封面地址与播放队列上下文。
@@ -18,7 +18,7 @@ pub async fn play_song(
     song_cid: String,
     cover_url: Option<String>,
     playback_context: Option<PlaybackContext>,
-) -> Result<f64, String> {
+) -> Result<PlaybackStartResult, PlaybackError> {
     state
         .play_song_internal(song_cid, cover_url, playback_context)
         .await
@@ -53,7 +53,7 @@ pub fn resume_playback(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn seek_current_playback(
     state: State<'_, AppState>,
     position_secs: f64,
-) -> Result<f64, String> {
+) -> Result<PlaybackStartResult, PlaybackError> {
     state.seek_current_internal(position_secs).await
 }
 
@@ -61,9 +61,9 @@ pub async fn seek_current_playback(
 ///
 /// 适用于播放器“下一首”操作或系统媒体会话的 next 控制。
 /// 返回值为切换后歌曲的总时长（秒）。
-/// 该接口依赖当前会话已建立可导航的队列上下文；若当前不是队列播放或已位于末尾，将返回错误。
+/// 该接口依赖当前会话已建立可导航的队列上下文；队列中多于一首时会循环前进，否则返回错误。
 #[tauri::command]
-pub async fn play_next(state: State<'_, AppState>) -> Result<f64, String> {
+pub async fn play_next(state: State<'_, AppState>) -> Result<PlaybackStartResult, PlaybackError> {
     state.play_next_internal().await
 }
 
@@ -71,9 +71,11 @@ pub async fn play_next(state: State<'_, AppState>) -> Result<f64, String> {
 ///
 /// 适用于播放器“上一首”操作或系统媒体会话的 previous 控制。
 /// 返回值为切换后歌曲的总时长（秒）。
-/// 该接口依赖当前会话已建立可导航的队列上下文；若当前不是队列播放或已位于开头，将返回错误。
+/// 该接口依赖当前会话已建立可导航的队列上下文；队列中多于一首时会循环后退，否则返回错误。
 #[tauri::command]
-pub async fn play_previous(state: State<'_, AppState>) -> Result<f64, String> {
+pub async fn play_previous(
+    state: State<'_, AppState>,
+) -> Result<PlaybackStartResult, PlaybackError> {
     state.play_previous_internal().await
 }
 
