@@ -28,7 +28,7 @@ Harubble 应采用 **Command Domain + 独立资源域 + 降级策略**，而不�
 
 当前已经具备第一层隔离，并已开始落地调度域：
 
-- `AppState` 内有普通 `api` 和专用 `playback_api`。
+- `AppState` 内有普通 `api`、专用 `playback_api`、视觉辅助 `image_api` 和下载 `download_api`。
 - `AppState` 内有专用 `harubble-playback` runtime，当前配置为 2 个 worker threads 和 4 个 blocking threads。
 - `src-tauri/src/command_scheduling.rs` 已声明 command domain、priority 和 cancel policy，并用测试覆盖 Tauri command 注册表。
 - `play_song`、`seek_current_playback`、`play_next`、`play_previous` 已通过 `dispatch_playback_transition` 调度。
@@ -45,7 +45,7 @@ Harubble 应采用 **Command Domain + 独立资源域 + 降级策略**，而不�
 
 - `dispatch_playback_transition` 仍是轻量 dispatcher，不是完整 actor；它已经统一 request 创建和 supersede，但还没有独立 inbox、队列观测和 side-effect 调度。
 - 普通 UI 和偏好保存仍不被 gate 阻塞；它们只能使用普通资源域，后续需要继续避免长时间同步写入影响交互。
-- `playback_api` 已隔离音频下载，但图片/下载任务仍共享普通 `api`；切换专辑时普通资源争抢已通过 gate/串行化缓解，Phase 4 仍应拆出 `image_api` 与 `download_api`。
+- `image_api` / `download_api` 已隔离普通 UI client；后续仍可继续为 image/download client 增加更细的 timeout、连接池和并发配置。
 
 ## Command Domains
 
@@ -174,7 +174,12 @@ ResourceRegistry
   runtime.background -> download write, inventory scan, history side effect
 ```
 
-短期可以先保留 `api` / `playback_api`，但文档和测试要禁止非播放代码拿 `playback_api`，也禁止播放启动拿普通 `api`。
+当前已拆出四个 API client，并用静态测试限制资源域误用：
+
+- `api`：普通 UI、首页、tag、搜索索引和轻量数据读取。
+- `playback_api`：播放启动、音频流下载、probe 前置数据。
+- `image_api`：封面 data URL、主题色、歌词、通知封面临时缓存。
+- `download_api`：下载任务准备、专辑封面落盘、歌词侧车、音频大文件下载。
 
 ### PlaybackLoadGate
 
@@ -253,10 +258,11 @@ ResourceRegistry
 
 ### Phase 4: Split More Clients
 
-- 在 `api` / `playback_api` 之外增加 `image_api` 和 `download_api`。
-- `download_api` 可配置更低并发或独立连接池，避免大文件下载影响普通 UI。
-- `image_api` 支持 in-flight dedupe 和短超时，失败不影响播放。
-- `reset_http_client` 和 `clear_response_cache` 通过 registry fan-out，并按 domain 记录日志。
+- 已在 `api` / `playback_api` 之外增加 `image_api` 和 `download_api`。
+- 已将 image/theme/lyrics/通知封面切到 `image_api`。
+- 已将下载任务准备、下载执行循环、专辑封面落盘、歌词侧车和音频大文件下载切到 `download_api`。
+- 已让 `reset_http_client` 和 `clear_response_cache` fan-out 到 app/playback/image/download 四个资源域。
+- 待继续：为 `download_api` 配置更低并发或独立连接池；为 `image_api` 配置短超时/小资源大小限制；按 domain 补结构化日志字段。
 
 ### Phase 5: Optional OS/Process Isolation
 

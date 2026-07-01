@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn playback_resources_are_only_used_from_allowed_modules() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let allowed = [
+        let playback_allowed = [
             "app_state/mod.rs",
             "app_state/playback.rs",
             "app_state/media_controls.rs",
@@ -620,8 +620,24 @@ mod tests {
             "playback_load_gate.rs",
         ];
 
-        assert_identifier_is_limited_to(&root, "playback_api", &allowed);
-        assert_identifier_is_limited_to(&root, "playback_runtime", &allowed);
+        assert_identifier_is_limited_to(&root, "playback_api", &playback_allowed);
+        assert_identifier_is_limited_to(&root, "playback_runtime", &playback_allowed);
+
+        let image_allowed = [
+            "app_state/mod.rs",
+            "commands/library.rs",
+            "network_monitor.rs",
+            "notification/cover.rs",
+        ];
+        assert_identifier_is_limited_to(&root, "image_api", &image_allowed);
+
+        let download_allowed = [
+            "app_state/mod.rs",
+            "commands/downloads.rs",
+            "downloads/bridge.rs",
+            "network_monitor.rs",
+        ];
+        assert_identifier_is_limited_to(&root, "download_api", &download_allowed);
     }
 
     fn assert_identifier_is_limited_to(

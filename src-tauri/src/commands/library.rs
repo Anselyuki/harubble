@@ -107,7 +107,7 @@ pub async fn get_song_lyrics(
     let _visual_guard = state.enter_visual_aux("get_song_lyrics").await;
 
     let song_detail = state
-        .api
+        .image_api
         .get_song_detail(&cid)
         .await
         .map_err(|e| e.to_string())?;
@@ -138,7 +138,7 @@ pub async fn extract_image_theme(
     let _visual_guard = state.enter_visual_aux("extract_image_theme").await;
 
     let bytes = state
-        .api
+        .image_api
         .download_bytes_coalesced(&image_url)
         .await
         .map_err(|e| e.to_string())?;
@@ -171,7 +171,7 @@ pub async fn get_image_data_url(
     let _visual_guard = state.enter_visual_aux("get_image_data_url").await;
 
     let bytes = state
-        .api
+        .image_api
         .download_bytes_coalesced(&image_url)
         .await
         .map_err(|e| e.to_string())?;

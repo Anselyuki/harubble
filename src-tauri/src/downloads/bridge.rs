@@ -131,7 +131,7 @@ struct StartedJob {
 /// 关键状态迁移时持续发出 Tauri 事件。
 async fn execution_loop(app: &AppHandle, state: AppState) {
     let service = Arc::clone(&state.download_service);
-    let api = Arc::clone(&state.api);
+    let api = Arc::clone(&state.download_api);
 
     loop {
         tokio::time::sleep(Duration::from_millis(500)).await;

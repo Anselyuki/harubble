@@ -35,6 +35,8 @@ pub struct AppState {
     pub(crate) player: Arc<AudioPlayer>,
     pub(crate) api: Arc<harubble_core::ApiClient>,
     pub(crate) playback_api: Arc<harubble_core::ApiClient>,
+    pub(crate) image_api: Arc<harubble_core::ApiClient>,
+    pub(crate) download_api: Arc<harubble_core::ApiClient>,
     pub(crate) playback_runtime: Arc<tokio::runtime::Runtime>,
     pub(crate) playback_load_gate: PlaybackLoadGate,
     pub(crate) visual_aux_lock: Arc<Mutex<()>>,
@@ -71,6 +73,8 @@ impl AppState {
         let player = AudioPlayer::new(app.clone()).map_err(|e| e.to_string())?;
         let api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
         let playback_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let image_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let download_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
         let playback_runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name("harubble-playback")
             .worker_threads(2)
@@ -119,6 +123,8 @@ impl AppState {
             player: Arc::new(player),
             api: Arc::new(api),
             playback_api: Arc::new(playback_api),
+            image_api: Arc::new(image_api),
+            download_api: Arc::new(download_api),
             playback_runtime: Arc::new(playback_runtime),
             playback_load_gate: PlaybackLoadGate::new(),
             visual_aux_lock: Arc::new(Mutex::new(())),
@@ -204,21 +210,30 @@ impl AppState {
     pub(crate) fn clear_api_response_caches(&self) {
         self.api.clear_response_cache();
         self.playback_api.clear_response_cache();
+        self.image_api.clear_response_cache();
+        self.download_api.clear_response_cache();
     }
 
     pub(crate) fn reset_http_clients(&self) -> Result<(), String> {
-        let app_result = self.api.reset_http_client();
-        let playback_result = self.playback_api.reset_http_client();
+        let results = [
+            ("app", self.api.reset_http_client()),
+            ("playback", self.playback_api.reset_http_client()),
+            ("image", self.image_api.reset_http_client()),
+            ("download", self.download_api.reset_http_client()),
+        ];
+        let errors = results
+            .into_iter()
+            .filter_map(|(domain, result)| {
+                result
+                    .err()
+                    .map(|error| format!("{domain} HTTP client reset failed: {error}"))
+            })
+            .collect::<Vec<_>>();
 
-        match (app_result, playback_result) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(app_error), Ok(())) => Err(format!("app HTTP client reset failed: {app_error}")),
-            (Ok(()), Err(playback_error)) => Err(format!(
-                "playback HTTP client reset failed: {playback_error}"
-            )),
-            (Err(app_error), Err(playback_error)) => Err(format!(
-                "app HTTP client reset failed: {app_error}; playback HTTP client reset failed: {playback_error}"
-            )),
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
         }
     }
 
