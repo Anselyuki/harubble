@@ -21,8 +21,13 @@ const DEFAULT_CACHE_CAPACITY: usize = 100;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const IMAGE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+const IMAGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const IMAGE_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
+const DOWNLOAD_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_JSON_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
 const MAX_AUDIO_RESPONSE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_IMAGE_RESPONSE_SIZE: u64 = 32 * 1024 * 1024;
 
 type SharedApiFetch = Shared<BoxFuture<'static, Result<Arc<Vec<u8>>, String>>>;
 
@@ -37,6 +42,43 @@ struct InflightDownloadRequest {
 enum CachedApiRequest {
     Cached(Vec<u8>),
     Inflight(Arc<InflightApiRequest>),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ApiClientProfile {
+    connect_timeout: Duration,
+    request_timeout: Duration,
+    pool_idle_timeout: Duration,
+    max_streamed_response_size: u64,
+}
+
+impl ApiClientProfile {
+    const fn app() -> Self {
+        Self {
+            connect_timeout: CONNECT_TIMEOUT,
+            request_timeout: REQUEST_TIMEOUT,
+            pool_idle_timeout: POOL_IDLE_TIMEOUT,
+            max_streamed_response_size: MAX_AUDIO_RESPONSE_SIZE,
+        }
+    }
+
+    const fn image() -> Self {
+        Self {
+            connect_timeout: IMAGE_CONNECT_TIMEOUT,
+            request_timeout: IMAGE_REQUEST_TIMEOUT,
+            pool_idle_timeout: IMAGE_POOL_IDLE_TIMEOUT,
+            max_streamed_response_size: MAX_IMAGE_RESPONSE_SIZE,
+        }
+    }
+
+    const fn download() -> Self {
+        Self {
+            connect_timeout: CONNECT_TIMEOUT,
+            request_timeout: REQUEST_TIMEOUT,
+            pool_idle_timeout: DOWNLOAD_POOL_IDLE_TIMEOUT,
+            max_streamed_response_size: MAX_AUDIO_RESPONSE_SIZE,
+        }
+    }
 }
 
 /// 专辑列表查询返回的基础条目。
@@ -181,6 +223,7 @@ struct ApiResponse<T> {
 #[derive(Clone)]
 pub struct ApiClient {
     client: Arc<RwLock<Client>>,
+    profile: ApiClientProfile,
     base_url: String,
     response_cache: Arc<Mutex<LruCache<String, Vec<u8>>>>,
     inflight_api_requests: Arc<Mutex<HashMap<String, Arc<InflightApiRequest>>>>,
@@ -193,14 +236,45 @@ impl ApiClient {
     /// 适用于生产环境默认接入；返回值为可复用的客户端实例。若 HTTP 客户端构造
     /// 失败，会直接返回错误。
     pub fn new() -> Result<Self> {
-        Self::new_with_config(DEFAULT_BASE_URL.to_string(), DEFAULT_CACHE_CAPACITY)
+        Self::new_with_profile(
+            DEFAULT_BASE_URL.to_string(),
+            DEFAULT_CACHE_CAPACITY,
+            ApiClientProfile::app(),
+        )
     }
 
-    fn new_with_config(base_url: String, capacity: usize) -> Result<Self> {
-        let client = Self::build_client()?;
+    /// 创建视觉辅助资源客户端。
+    ///
+    /// 该客户端用于封面、主题色和歌词等低优先级小资源，使用更短超时和更小的下载大小上限。
+    pub fn new_image() -> Result<Self> {
+        Self::new_with_profile(
+            DEFAULT_BASE_URL.to_string(),
+            DEFAULT_CACHE_CAPACITY,
+            ApiClientProfile::image(),
+        )
+    }
+
+    /// 创建下载任务客户端。
+    ///
+    /// 该客户端用于下载任务准备、封面落盘、歌词侧车和音频大文件下载，独立于普通 UI 与播放客户端。
+    pub fn new_download() -> Result<Self> {
+        Self::new_with_profile(
+            DEFAULT_BASE_URL.to_string(),
+            DEFAULT_CACHE_CAPACITY,
+            ApiClientProfile::download(),
+        )
+    }
+
+    fn new_with_profile(
+        base_url: String,
+        capacity: usize,
+        profile: ApiClientProfile,
+    ) -> Result<Self> {
+        let client = Self::build_client(profile)?;
         let capacity = NonZeroUsize::new(capacity).expect("cache capacity must be non-zero");
         Ok(Self {
             client: Arc::new(RwLock::new(client)),
+            profile,
             base_url: base_url.trim_end_matches('/').to_string(),
             response_cache: Arc::new(Mutex::new(LruCache::new(capacity))),
             inflight_api_requests: Arc::new(Mutex::new(HashMap::new())),
@@ -208,12 +282,12 @@ impl ApiClient {
         })
     }
 
-    fn build_client() -> Result<Client> {
+    fn build_client(profile: ApiClientProfile) -> Result<Client> {
         Ok(Client::builder()
             .user_agent("Mozilla/5.0 (compatible; harubble)")
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+            .connect_timeout(profile.connect_timeout)
+            .timeout(profile.request_timeout)
+            .pool_idle_timeout(profile.pool_idle_timeout)
             .build()?)
     }
 
@@ -230,7 +304,7 @@ impl ApiClient {
     /// 与代理配置。调用此方法会丢弃旧客户端并以当前系统环境重新构建，使后续请求
     /// 能够正确路由。若重建失败则保留原有客户端不变。
     pub fn reset_http_client(&self) -> Result<()> {
-        let new_client = Self::build_client()?;
+        let new_client = Self::build_client(self.profile)?;
         *self.client.write().unwrap_or_else(|e| e.into_inner()) = new_client;
         self.clear_completed_response_cache();
         Ok(())
@@ -448,6 +522,7 @@ impl ApiClient {
         use futures::StreamExt;
 
         let mut last_error = None;
+        let max_response_size = self.profile.max_streamed_response_size;
 
         for attempt in 0..=max_retries {
             match self.http_client().get(url).send().await {
@@ -456,8 +531,8 @@ impl ApiClient {
                         let total = response.content_length();
                         if let Some(len) = total {
                             anyhow::ensure!(
-                                len <= MAX_AUDIO_RESPONSE_SIZE,
-                                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
+                                len <= max_response_size,
+                                "response too large: {len} bytes exceeds limit of {max_response_size}"
                             );
                         }
                         let mut stream = response.bytes_stream();
@@ -468,8 +543,8 @@ impl ApiClient {
                             let chunk = chunk?;
                             downloaded += chunk.len() as u64;
                             anyhow::ensure!(
-                                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
-                                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
+                                downloaded <= max_response_size,
+                                "download exceeded size limit of {max_response_size} bytes"
                             );
                             bytes.extend_from_slice(&chunk);
                             on_progress(downloaded, total);
@@ -595,6 +670,7 @@ impl ApiClient {
 
         let mut last_error = None;
         let max_retries = 1;
+        let max_response_size = self.profile.max_streamed_response_size;
 
         for attempt in 0..=max_retries {
             match self.http_client().get(url).send().await {
@@ -603,8 +679,8 @@ impl ApiClient {
                         let total = resp.content_length();
                         if let Some(len) = total {
                             anyhow::ensure!(
-                                len <= MAX_AUDIO_RESPONSE_SIZE,
-                                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
+                                len <= max_response_size,
+                                "response too large: {len} bytes exceeds limit of {max_response_size}"
                             );
                         }
                         let mut stream = resp.bytes_stream();
@@ -614,8 +690,8 @@ impl ApiClient {
                             let chunk = chunk?;
                             downloaded += chunk.len() as u64;
                             anyhow::ensure!(
-                                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
-                                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
+                                downloaded <= max_response_size,
+                                "download exceeded size limit of {max_response_size} bytes"
                             );
                             if !on_chunk(&chunk, downloaded, total)? {
                                 break;
@@ -663,6 +739,7 @@ impl ApiClient {
 
         let mut last_error = None;
         let max_retries = 1;
+        let max_response_size = self.profile.max_streamed_response_size;
 
         for attempt in 0..=max_retries {
             match self.http_client().get(url).send().await {
@@ -671,8 +748,8 @@ impl ApiClient {
                         let total = resp.content_length();
                         if let Some(len) = total {
                             anyhow::ensure!(
-                                len <= MAX_AUDIO_RESPONSE_SIZE,
-                                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
+                                len <= max_response_size,
+                                "response too large: {len} bytes exceeds limit of {max_response_size}"
                             );
                         }
                         let mut stream = resp.bytes_stream();
@@ -682,8 +759,8 @@ impl ApiClient {
                             let chunk = chunk?;
                             downloaded += chunk.len() as u64;
                             anyhow::ensure!(
-                                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
-                                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
+                                downloaded <= max_response_size,
+                                "download exceeded size limit of {max_response_size} bytes"
                             );
                             if !on_chunk(chunk.to_vec(), downloaded, total).await? {
                                 break;
@@ -784,14 +861,25 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::ApiClient;
+    use super::{ApiClient, ApiClientProfile};
     use httpmock::prelude::*;
     use std::sync::Arc;
     use std::time::Duration;
 
     impl ApiClient {
         fn new_for_test(base_url: String, capacity: usize) -> anyhow::Result<Self> {
-            Self::new_with_config(base_url, capacity)
+            Self::new_with_profile(base_url, capacity, ApiClientProfile::app())
+        }
+
+        fn new_small_image_for_test(base_url: String, capacity: usize) -> anyhow::Result<Self> {
+            Self::new_with_profile(
+                base_url,
+                capacity,
+                ApiClientProfile {
+                    max_streamed_response_size: 8,
+                    ..ApiClientProfile::image()
+                },
+            )
         }
     }
 
@@ -954,6 +1042,59 @@ mod tests {
 
         alpha_mock.assert_hits(2);
         beta_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn image_client_rejects_oversized_downloads() {
+        let server = MockServer::start();
+        let image_mock = server.mock(|when, then| {
+            when.method(GET).path("/cover.jpg");
+            then.status(200)
+                .header("content-length", "9")
+                .body(vec![0_u8; 9]);
+        });
+        let url = format!("{}/cover.jpg", server.base_url());
+
+        let client = ApiClient::new_small_image_for_test(format!("{}/api", server.base_url()), 100)
+            .expect("client");
+
+        let error = client
+            .fetch_streamed_bytes(&url, |_, _| {})
+            .await
+            .expect_err("oversized image should fail");
+
+        assert!(
+            error.to_string().contains("response too large"),
+            "unexpected error: {error:#}"
+        );
+        image_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn reset_http_client_preserves_image_download_limit() {
+        let server = MockServer::start();
+        let image_mock = server.mock(|when, then| {
+            when.method(GET).path("/cover-after-reset.jpg");
+            then.status(200)
+                .header("content-length", "9")
+                .body(vec![0_u8; 9]);
+        });
+        let url = format!("{}/cover-after-reset.jpg", server.base_url());
+
+        let client = ApiClient::new_small_image_for_test(format!("{}/api", server.base_url()), 100)
+            .expect("client");
+        client.reset_http_client().expect("reset should succeed");
+
+        let error = client
+            .fetch_streamed_bytes(&url, |_, _| {})
+            .await
+            .expect_err("oversized image should still fail after reset");
+
+        assert!(
+            error.to_string().contains("response too large"),
+            "unexpected error: {error:#}"
+        );
+        image_mock.assert_hits(1);
     }
 
     #[tokio::test]

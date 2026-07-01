@@ -73,8 +73,8 @@ impl AppState {
         let player = AudioPlayer::new(app.clone()).map_err(|e| e.to_string())?;
         let api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
         let playback_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
-        let image_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
-        let download_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let image_api = harubble_core::ApiClient::new_image().map_err(|e| e.to_string())?;
+        let download_api = harubble_core::ApiClient::new_download().map_err(|e| e.to_string())?;
         let playback_runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name("harubble-playback")
             .worker_threads(2)

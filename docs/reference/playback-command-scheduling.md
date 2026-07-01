@@ -45,7 +45,7 @@ Harubble 应采用 **Command Domain + 独立资源域 + 降级策略**，而不�
 
 - `dispatch_playback_transition` 仍是轻量 dispatcher，不是完整 actor；它已经统一 request 创建和 supersede，但还没有独立 inbox、队列观测和 side-effect 调度。
 - 普通 UI 和偏好保存仍不被 gate 阻塞；它们只能使用普通资源域，后续需要继续避免长时间同步写入影响交互。
-- `image_api` / `download_api` 已隔离普通 UI client；后续仍可继续为 image/download client 增加更细的 timeout、连接池和并发配置。
+- `image_api` / `download_api` 已隔离普通 UI client；`image_api` 使用更短超时与小资源上限，`download_api` 使用独立连接池配置。
 
 ## Command Domains
 
@@ -178,8 +178,8 @@ ResourceRegistry
 
 - `api`：普通 UI、首页、tag、搜索索引和轻量数据读取。
 - `playback_api`：播放启动、音频流下载、probe 前置数据。
-- `image_api`：封面 data URL、主题色、歌词、通知封面临时缓存。
-- `download_api`：下载任务准备、专辑封面落盘、歌词侧车、音频大文件下载。
+- `image_api`：封面 data URL、主题色、歌词、通知封面临时缓存；短超时、小资源上限。
+- `download_api`：下载任务准备、专辑封面落盘、歌词侧车、音频大文件下载；独立连接池配置。
 
 ### PlaybackLoadGate
 
@@ -262,7 +262,8 @@ ResourceRegistry
 - 已将 image/theme/lyrics/通知封面切到 `image_api`。
 - 已将下载任务准备、下载执行循环、专辑封面落盘、歌词侧车和音频大文件下载切到 `download_api`。
 - 已让 `reset_http_client` 和 `clear_response_cache` fan-out 到 app/playback/image/download 四个资源域。
-- 待继续：为 `download_api` 配置更低并发或独立连接池；为 `image_api` 配置短超时/小资源大小限制；按 domain 补结构化日志字段。
+- 已为 `image_api` 配置短超时和小资源大小限制；已为 `download_api` 配置独立连接池参数。
+- 待继续：按 domain 补结构化日志字段，必要时再为 download worker 增加显式并发令牌。
 
 ### Phase 5: Optional OS/Process Isolation
 
