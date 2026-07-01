@@ -1,7 +1,8 @@
 use crate::audio_cache;
 use crate::i18n;
 use crate::logging::{LogLevel, LogPayload};
-use crate::player::stream::{GrowingFileHandle, PlaybackInput, SampleBuffer};
+use crate::player::backend::OutputFormat;
+use crate::player::stream::{AudioFormat, GrowingFileHandle, PlaybackInput, SampleBuffer};
 use crate::player::PlaybackContext;
 use crate::player::PlaybackQueueEntry;
 use crate::player::{PlaybackError, PlaybackErrorCode, PlaybackStartResult};
@@ -20,16 +21,32 @@ impl AppState {
             .map_err(|error| format!("{error:#}"))
     }
 
-    pub(crate) async fn play_song_internal(
+    pub(crate) async fn play_song_for_request(
         &self,
+        request_id: u64,
         song_cid: String,
         cover_url: Option<String>,
         playback_context: Option<PlaybackContext>,
     ) -> Result<PlaybackStartResult, PlaybackError> {
-        let request_id = self.player.begin_playback_request();
-        let song_detail = self.api.get_song_detail(&song_cid).await.map_err(|error| {
-            playback_error(PlaybackErrorCode::Network, error.to_string(), true, None)
-        })?;
+        self.play_song_with_start_intent(
+            request_id,
+            song_cid,
+            cover_url,
+            playback_context,
+            PlaybackStartIntent::NewSelection,
+        )
+        .await
+    }
+
+    async fn play_song_with_start_intent(
+        &self,
+        request_id: u64,
+        song_cid: String,
+        cover_url: Option<String>,
+        playback_context: Option<PlaybackContext>,
+        start_intent: PlaybackStartIntent,
+    ) -> Result<PlaybackStartResult, PlaybackError> {
+        let song_detail = self.get_playback_song_detail(&song_cid, None).await?;
         self.ensure_playback_request_active(request_id, None)?;
 
         self.player.prepare_playback_context(
@@ -56,8 +73,14 @@ impl AppState {
 
         let result: Result<f64> = async {
             self.ensure_playback_request_active(request_id, Some(session_id))?;
-            self.start_playback_session(session_id, &song_cid, &song_detail.source_url, 0.0)
-                .await
+            self.start_playback_session(
+                session_id,
+                &song_cid,
+                &song_detail.source_url,
+                0.0,
+                start_intent,
+            )
+            .await
         }
         .await;
 
@@ -97,11 +120,11 @@ impl AppState {
         }
     }
 
-    pub(crate) async fn seek_current_internal(
+    pub(crate) async fn seek_current_for_request(
         &self,
+        request_id: u64,
         position_secs: f64,
     ) -> Result<PlaybackStartResult, PlaybackError> {
-        let request_id = self.player.begin_playback_request();
         let current_state = self.player.get_state();
         let song_cid = current_state.song_cid.clone().ok_or_else(|| {
             playback_error(
@@ -129,14 +152,9 @@ impl AppState {
             ));
         }
 
-        let song_detail = self.api.get_song_detail(&song_cid).await.map_err(|error| {
-            playback_error(
-                PlaybackErrorCode::Network,
-                error.to_string(),
-                true,
-                Some(current_state.session_id),
-            )
-        })?;
+        let song_detail = self
+            .get_playback_song_detail(&song_cid, Some(current_state.session_id))
+            .await?;
         self.ensure_playback_request_active(request_id, Some(current_state.session_id))?;
 
         let session_id = self
@@ -160,6 +178,7 @@ impl AppState {
                     &song_cid,
                     &song_detail.source_url,
                     target_position,
+                    PlaybackStartIntent::InteractiveRestart,
                 )
                 .await?;
 
@@ -186,6 +205,7 @@ impl AppState {
         song_cid: &str,
         source_url: &str,
         start_position_secs: f64,
+        start_intent: PlaybackStartIntent,
     ) -> Result<f64> {
         let stop_flag = self.player.stop_signal();
         let pause_flag = self.player.pause_signal();
@@ -197,12 +217,15 @@ impl AppState {
 
         let inspect_input = input.clone();
         let inspect_stop_flag = Arc::clone(&stop_flag);
-        let source_format = match tokio::task::spawn_blocking(move || {
-            inspect_input.inspect_format_with_retry(Some(inspect_stop_flag))
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-        .and_then(|result| result)
+        let source_format = match self
+            .playback_runtime
+            .handle()
+            .spawn_blocking(move || {
+                inspect_input.inspect_format_with_retry(Some(inspect_stop_flag))
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+            .and_then(|result| result)
         {
             Ok(source_format) => source_format,
             Err(error) => {
@@ -226,6 +249,10 @@ impl AppState {
         let sample_buffer = SampleBuffer::new();
 
         let log_center = Arc::clone(&self.log_center);
+        let player = Arc::clone(&self.player);
+        let stop_flag_for_error = Arc::clone(&stop_flag);
+        let cache_path_for_error = cache_path_for_failure.clone();
+        let app_for_error = self.clone();
         let error_handler: crate::player::stream::PlaybackErrorHandler = Arc::new(move |message| {
             log_center.record(
                 crate::logging::LogPayload::new(
@@ -236,11 +263,17 @@ impl AppState {
                 )
                 .details(message),
             );
+            app_for_error.cleanup_failed_playback_cache(
+                cache_path_for_error.clone(),
+                session_id,
+                &stop_flag_for_error,
+            );
+            player.fail_session(session_id);
         });
 
         let _decode_worker = match input.spawn_decode_worker(
             source_format,
-            output_format,
+            output_format.audio_format,
             sample_buffer.clone(),
             Arc::clone(&stop_flag),
             Arc::clone(&pause_flag),
@@ -258,8 +291,15 @@ impl AppState {
             }
         };
 
+        let is_streaming_input = matches!(input, PlaybackInput::GrowingFile(_));
         if let Err(error) = self
-            .wait_for_initial_buffer(&sample_buffer, output_format, &stop_flag)
+            .wait_for_initial_buffer(
+                &sample_buffer,
+                output_format.audio_format,
+                is_streaming_input,
+                start_intent,
+                &stop_flag,
+            )
             .await
         {
             self.cleanup_failed_playback_cache(cache_path_for_failure, session_id, &stop_flag);
@@ -274,8 +314,12 @@ impl AppState {
         )
     }
 
-    pub(crate) async fn play_next_internal(&self) -> Result<PlaybackStartResult, PlaybackError> {
-        let target = self.player.select_next_entry().ok_or_else(|| {
+    pub(crate) async fn play_next_for_request(
+        &self,
+        request_id: u64,
+    ) -> Result<PlaybackStartResult, PlaybackError> {
+        self.ensure_playback_request_active(request_id, None)?;
+        let target = self.player.peek_next_entry().ok_or_else(|| {
             playback_error(
                 PlaybackErrorCode::NoNextTrack,
                 i18n::tr(self.preferences().locale, "player-no-next-track"),
@@ -283,14 +327,22 @@ impl AppState {
                 Some(self.player.get_state().session_id),
             )
         })?;
-        self.play_song_internal(target.cid, target.cover_url, None)
-            .await
+        self.play_song_with_start_intent(
+            request_id,
+            target.cid,
+            target.cover_url,
+            None,
+            PlaybackStartIntent::InteractiveRestart,
+        )
+        .await
     }
 
-    pub(crate) async fn play_previous_internal(
+    pub(crate) async fn play_previous_for_request(
         &self,
+        request_id: u64,
     ) -> Result<PlaybackStartResult, PlaybackError> {
-        let target = self.player.select_previous_entry().ok_or_else(|| {
+        self.ensure_playback_request_active(request_id, None)?;
+        let target = self.player.peek_previous_entry().ok_or_else(|| {
             playback_error(
                 PlaybackErrorCode::NoPreviousTrack,
                 i18n::tr(self.preferences().locale, "player-no-previous-track"),
@@ -298,8 +350,14 @@ impl AppState {
                 Some(self.player.get_state().session_id),
             )
         })?;
-        self.play_song_internal(target.cid, target.cover_url, None)
-            .await
+        self.play_song_with_start_intent(
+            request_id,
+            target.cid,
+            target.cover_url,
+            None,
+            PlaybackStartIntent::InteractiveRestart,
+        )
+        .await
     }
 
     fn ensure_playback_request_active(
@@ -324,11 +382,11 @@ impl AppState {
         let (cache_path, pending_download, prepared_input) = {
             let song_cid = song_cid.clone();
             let source_url = source_url.clone();
-            tokio::task::spawn_blocking(move || {
-                prepare_cached_or_streaming_input(&song_cid, &source_url)
-            })
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))??
+            self.playback_runtime
+                .handle()
+                .spawn_blocking(move || prepare_cached_or_streaming_input(&song_cid, &source_url))
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))??
         };
 
         let input = match prepared_input {
@@ -366,10 +424,39 @@ impl AppState {
             return;
         };
         let pending_marker = audio_cache::pending_marker_path(&cache_path);
-        tokio::task::spawn_blocking(move || {
+        self.playback_runtime.handle().spawn_blocking(move || {
             let _ = std::fs::remove_file(&pending_marker);
             let _ = std::fs::remove_file(&cache_path);
         });
+    }
+
+    async fn get_playback_song_detail(
+        &self,
+        song_cid: &str,
+        session_id: Option<u64>,
+    ) -> Result<harubble_core::SongDetail, PlaybackError> {
+        let api = Arc::clone(&self.playback_api);
+        let song_cid = song_cid.to_string();
+
+        self.playback_runtime
+            .spawn(async move { api.get_song_detail(&song_cid).await })
+            .await
+            .map_err(|error| {
+                playback_error(
+                    PlaybackErrorCode::Internal,
+                    format!("playback runtime task failed: {error}"),
+                    false,
+                    session_id,
+                )
+            })?
+            .map_err(|error| {
+                playback_error(
+                    PlaybackErrorCode::Network,
+                    error.to_string(),
+                    true,
+                    session_id,
+                )
+            })
     }
 
     fn spawn_stream_download(
@@ -380,10 +467,12 @@ impl AppState {
         cache_path: PathBuf,
         pending_marker: PathBuf,
     ) {
-        let api = Arc::clone(&self.api);
+        let api = Arc::clone(&self.playback_api);
         let log_center = Arc::clone(&self.log_center);
+        let download_runtime = Arc::clone(&self.playback_runtime);
+        let cleanup_runtime = Arc::clone(&download_runtime);
 
-        tokio::spawn(async move {
+        let _download_task = download_runtime.spawn(async move {
             let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
             let writer_handle = handle.clone();
             let writer_cache_path = cache_path.clone();
@@ -453,14 +542,14 @@ impl AppState {
             match (download_result, write_result) {
                 (Ok(()), Ok(())) if !stop_flag.load(Ordering::SeqCst) => {
                     handle.mark_complete();
-                    tokio::task::spawn_blocking(move || {
+                    cleanup_runtime.handle().spawn_blocking(move || {
                         let _ = std::fs::remove_file(&pending_marker);
                         audio_cache::spawn_cleanup_if_needed();
                     });
                 }
                 (Ok(()), Ok(())) => {
                     handle.mark_error("Playback stopped");
-                    tokio::task::spawn_blocking(move || {
+                    cleanup_runtime.handle().spawn_blocking(move || {
                         let _ = std::fs::remove_file(&pending_marker);
                         let _ = std::fs::remove_file(&cache_path);
                     });
@@ -476,7 +565,7 @@ impl AppState {
                         .details(format!("{error:#}")),
                     );
                     handle.mark_error(error.to_string());
-                    tokio::task::spawn_blocking(move || {
+                    cleanup_runtime.handle().spawn_blocking(move || {
                         let _ = std::fs::remove_file(&pending_marker);
                         let _ = std::fs::remove_file(&cache_path);
                     });
@@ -488,28 +577,28 @@ impl AppState {
     async fn wait_for_initial_buffer(
         &self,
         sample_buffer: &SampleBuffer,
-        output_format: crate::player::stream::AudioFormat,
+        output_format: AudioFormat,
+        is_streaming_input: bool,
+        start_intent: PlaybackStartIntent,
         stop_flag: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<()> {
         let minimum_samples =
-            ((output_format.sample_rate as usize * output_format.channels as usize) / 3)
-                .max(output_format.channels as usize * 4096)
-                .min(output_format.channels as usize * 32_768);
+            initial_buffer_samples(output_format, is_streaming_input, start_intent);
 
         let wait_buffer = sample_buffer.clone();
         let wait_stop = Arc::clone(stop_flag);
-        tokio::task::spawn_blocking(move || {
-            wait_buffer.wait_for_samples(minimum_samples, &wait_stop)
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))??;
+        self.playback_runtime
+            .handle()
+            .spawn_blocking(move || wait_buffer.wait_for_samples(minimum_samples, &wait_stop))
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))??;
         Ok(())
     }
 
     fn start_prepared_playback(
         &self,
         session_id: u64,
-        output_format: crate::player::stream::AudioFormat,
+        output_format: OutputFormat,
         sample_buffer: SampleBuffer,
         start_position_secs: f64,
     ) -> Result<f64> {
@@ -525,6 +614,40 @@ impl AppState {
             start_position_secs,
         )
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackStartIntent {
+    NewSelection,
+    InteractiveRestart,
+}
+
+impl PlaybackStartIntent {
+    fn streaming_buffer_seconds(self) -> usize {
+        match self {
+            Self::NewSelection => 5,
+            Self::InteractiveRestart => 1,
+        }
+    }
+}
+
+fn initial_buffer_samples(
+    output_format: AudioFormat,
+    is_streaming_input: bool,
+    start_intent: PlaybackStartIntent,
+) -> usize {
+    let sample_rate = output_format.sample_rate.max(1) as usize;
+    let channels = output_format.channels.max(1) as usize;
+    let seconds = if is_streaming_input {
+        start_intent.streaming_buffer_seconds()
+    } else {
+        1
+    };
+    let target = sample_rate * channels * seconds;
+    let minimum = channels * 4096;
+    let maximum = SampleBuffer::max_capacity_samples() / 2;
+
+    target.max(minimum).min(maximum)
 }
 
 fn prepare_cached_or_streaming_input(
@@ -612,9 +735,11 @@ fn classify_playback_error(error: anyhow::Error, session_id: Option<u64>) -> Pla
 
 #[cfg(test)]
 mod tests {
-    use super::prepare_playback_input_from_cache_path;
+    use super::{
+        initial_buffer_samples, prepare_playback_input_from_cache_path, PlaybackStartIntent,
+    };
     use crate::audio_cache;
-    use crate::player::stream::PlaybackInput;
+    use crate::player::stream::{AudioFormat, PlaybackInput, SampleBuffer};
     use tempfile::tempdir;
 
     #[test]
@@ -652,5 +777,41 @@ mod tests {
         assert!(matches!(input, PlaybackInput::GrowingFile(_)));
         assert!(pending_marker.exists());
         assert!(failure_cache_path.exists());
+    }
+
+    #[test]
+    fn streaming_initial_buffer_waits_for_several_seconds_of_audio() {
+        let format = AudioFormat {
+            channels: 2,
+            sample_rate: 48_000,
+            duration_secs: 180.0,
+        };
+
+        assert_eq!(
+            initial_buffer_samples(format, true, PlaybackStartIntent::NewSelection),
+            480_000
+        );
+        assert_eq!(
+            initial_buffer_samples(format, true, PlaybackStartIntent::InteractiveRestart),
+            96_000
+        );
+        assert_eq!(
+            initial_buffer_samples(format, false, PlaybackStartIntent::NewSelection),
+            96_000
+        );
+    }
+
+    #[test]
+    fn initial_buffer_samples_caps_high_rate_devices_to_keep_headroom() {
+        let format = AudioFormat {
+            channels: 2,
+            sample_rate: 768_000,
+            duration_secs: 180.0,
+        };
+
+        assert_eq!(
+            initial_buffer_samples(format, true, PlaybackStartIntent::NewSelection),
+            SampleBuffer::max_capacity_samples() / 2
+        );
     }
 }

@@ -38,6 +38,7 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 异步任务并抢占下载服务锁，会造成任务队列与锁竞争堆积。进度事件统一经此间隔
 /// 节流；状态切换与传输完成帧始终放行，保证阶段变化与最终进度能及时反映到前端。
 const DOWNLOAD_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(150);
+const PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL: Duration = Duration::from_millis(250);
 
 /// 包装下载进度回调，按 [`DOWNLOAD_PROGRESS_EMIT_INTERVAL`] 节流转发。
 ///
@@ -135,6 +136,8 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
     loop {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
+        wait_for_playback_startup_to_settle(&state).await;
+
         let Some(started_job) = start_job(app, &service).await else {
             continue;
         };
@@ -142,6 +145,8 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
         let mut pending_write: Option<tokio::sync::oneshot::Receiver<WriteResult>> = None;
 
         loop {
+            wait_for_playback_startup_to_settle(&state).await;
+
             let task = {
                 let mut svc = service.lock().await;
                 svc.pop_next_task(&started_job.job_id)
@@ -231,6 +236,12 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+async fn wait_for_playback_startup_to_settle(state: &AppState) {
+    while state.player.get_state().is_loading {
+        tokio::time::sleep(PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL).await;
+    }
+}
 
 async fn start_job(
     app: &AppHandle,

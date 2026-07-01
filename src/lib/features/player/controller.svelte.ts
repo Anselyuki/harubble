@@ -23,11 +23,13 @@ interface PlayerControllerDeps {
   resumePlayback: () => Promise<void>;
   seekCurrentPlayback: (positionSecs: number) => Promise<void>;
   setPlaybackVolume: (volume: number) => Promise<number>;
+  getPlayerState: () => Promise<PlayerState>;
   getSongLyrics: (songCid: string) => Promise<string | null>;
   notifyError: (message: string) => void;
 }
 
 type RepeatMode = 'all' | 'one';
+type PlayToggleTarget = 'playing' | 'paused';
 
 interface PlayerSong {
   cid: string;
@@ -48,6 +50,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let isPlaying = $state(false);
   let isPaused = $state(false);
   let isLoading = $state(false);
+  let pendingPlayToggleTarget = $state<PlayToggleTarget | null>(null);
   let hasPrevious = $state(false);
   let hasNext = $state(false);
   let progress = $state(0);
@@ -129,6 +132,21 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     if (duration !== state.duration) duration = state.duration;
     if (Math.abs(volume - state.volume) > 0.001) volume = state.volume;
     if (state.volume > 0 && muted) muted = false;
+  }
+
+  function clearPlayTogglePendingWhenSettled(state: PlayerState) {
+    if (!pendingPlayToggleTarget) return;
+    if (state.isLoading) return;
+    if (!state.songCid || (!state.isPlaying && !state.isPaused)) {
+      pendingPlayToggleTarget = null;
+      return;
+    }
+    if (
+      (pendingPlayToggleTarget === 'playing' && state.isPlaying) ||
+      (pendingPlayToggleTarget === 'paused' && state.isPaused)
+    ) {
+      pendingPlayToggleTarget = null;
+    }
   }
 
   function buildSinglePlaybackEntry(song: PlayerSong): PlaybackQueueEntry {
@@ -250,6 +268,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       currentSong = nextSong;
     }
     assignPlayerStateFields(state);
+    clearPlayTogglePendingWhenSettled(state);
 
     if (!state.isLoading && playingCid !== null) {
       playingCid = null;
@@ -260,15 +279,12 @@ export function createPlayerController(deps: PlayerControllerDeps) {
 
   function syncPlayerProgress(state: PlayerState) {
     if (progress !== state.progress) progress = state.progress;
-    if (isPlaying !== state.isPlaying) isPlaying = state.isPlaying;
-    if (isPaused !== state.isPaused) isPaused = state.isPaused;
     if (duration !== state.duration) duration = state.duration;
   }
 
   function syncPlaybackLifecycle() {
     const songCid = currentSong?.cid ?? null;
-    const isCurrentActive =
-      Boolean(songCid) && (isPlaying || isPaused || isLoading);
+    const isCurrentActive = Boolean(songCid) && (isPlaying || isPaused);
     const previousSnapshot = lastPlaybackSnapshot;
 
     if (!songCid) {
@@ -296,7 +312,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       };
     }
 
-    if (songCid === lyricsSongCid) {
+    if (isLoading || songCid === lyricsSongCid) {
       return;
     }
 
@@ -316,7 +332,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
 
     if (!options.forceRestart) {
       if (currentSong?.cid === entry.cid && isPaused) {
-        await deps.resumePlayback();
+        await resume();
         return;
       }
 
@@ -451,26 +467,46 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   async function pause() {
+    if (pendingPlayToggleTarget || isLoading) return;
+    pendingPlayToggleTarget = 'paused';
     try {
       await deps.pausePlayback();
     } catch (error) {
+      pendingPlayToggleTarget = null;
       deps.notifyError(
         m.player_error_pause_failed({
           error: error instanceof Error ? error.message : String(error),
         })
       );
+      return;
+    }
+
+    try {
+      syncPlayerState(await deps.getPlayerState());
+    } catch {
+      pendingPlayToggleTarget = null;
     }
   }
 
   async function resume() {
+    if (pendingPlayToggleTarget || isLoading) return;
+    pendingPlayToggleTarget = 'playing';
     try {
       await deps.resumePlayback();
     } catch (error) {
+      pendingPlayToggleTarget = null;
       deps.notifyError(
         m.player_error_resume_failed({
           error: error instanceof Error ? error.message : String(error),
         })
       );
+      return;
+    }
+
+    try {
+      syncPlayerState(await deps.getPlayerState());
+    } catch {
+      pendingPlayToggleTarget = null;
     }
   }
 
@@ -539,6 +575,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     isPlaying = false;
     isPaused = false;
     isLoading = false;
+    pendingPlayToggleTarget = null;
     hasPrevious = false;
     hasNext = false;
     progress = 0;
@@ -576,6 +613,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     },
     get isLoading() {
       return isLoading;
+    },
+    get isPlayTogglePending() {
+      return pendingPlayToggleTarget !== null;
     },
     get hasPrevious() {
       return hasPrevious;

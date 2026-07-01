@@ -38,6 +38,7 @@ mod macos {
 
     struct CallbackState {
         api: Arc<harubble_core::ApiClient>,
+        playback_api: Arc<harubble_core::ApiClient>,
         log_center: Arc<crate::logging::LogCenter>,
         last_reset: std::sync::Mutex<Instant>,
     }
@@ -60,8 +61,11 @@ mod macos {
         // Increased from 200ms to 500ms to handle slower proxy configuration updates.
         std::thread::sleep(SETTLE_DELAY);
 
-        match state.api.reset_http_client() {
-            Ok(()) => {
+        let app_result = state.api.reset_http_client();
+        let playback_result = state.playback_api.reset_http_client();
+
+        match (app_result, playback_result) {
+            (Ok(()), Ok(())) => {
                 state.log_center.record(LogPayload::new(
                     LogLevel::Info,
                     "network",
@@ -69,7 +73,7 @@ mod macos {
                     "网络配置变更，已重建 HTTP 客户端",
                 ));
             }
-            Err(e) => {
+            (Err(app_error), Ok(())) => {
                 state.log_center.record(
                     LogPayload::new(
                         LogLevel::Warn,
@@ -77,7 +81,33 @@ mod macos {
                         "network.reset_client_failed",
                         "网络配置变更后重建 HTTP 客户端失败",
                     )
-                    .details(e.to_string()),
+                    .details(format!("app HTTP client reset failed: {app_error}")),
+                );
+            }
+            (Ok(()), Err(playback_error)) => {
+                state.log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "network",
+                        "network.reset_client_failed",
+                        "网络配置变更后重建 HTTP 客户端失败",
+                    )
+                    .details(format!(
+                        "playback HTTP client reset failed: {playback_error}"
+                    )),
+                );
+            }
+            (Err(app_error), Err(playback_error)) => {
+                state.log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "network",
+                        "network.reset_client_failed",
+                        "网络配置变更后重建 HTTP 客户端失败",
+                    )
+                    .details(format!(
+                        "app HTTP client reset failed: {app_error}; playback HTTP client reset failed: {playback_error}"
+                    )),
                 );
             }
         }
@@ -85,6 +115,7 @@ mod macos {
 
     pub(super) fn spawn(state: &AppState) {
         let api = state.api.clone();
+        let playback_api = state.playback_api.clone();
         let log_center = state.log_center.clone();
 
         std::thread::Builder::new()
@@ -92,6 +123,7 @@ mod macos {
             .spawn(move || {
                 let callback_state = CallbackState {
                     api,
+                    playback_api,
                     log_center,
                     last_reset: std::sync::Mutex::new(Instant::now() - DEBOUNCE_DURATION),
                 };

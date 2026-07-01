@@ -136,7 +136,7 @@ pub async fn extract_image_theme(
 
     let bytes = state
         .api
-        .download_bytes(&image_url, |_, _| {})
+        .download_bytes_coalesced(&image_url)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -168,7 +168,7 @@ pub async fn get_image_data_url(
 
     let bytes = state
         .api
-        .download_bytes(&image_url, |_, _| {})
+        .download_bytes_coalesced(&image_url)
         .await
         .map_err(|e| e.to_string())?;
 

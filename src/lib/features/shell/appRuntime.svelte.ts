@@ -100,6 +100,7 @@ import {
 import { preloadImage } from '$lib/features/library/helpers';
 import {
   buildAlbumPlaybackEntries,
+  getPreferredAlbumArtworkUrl,
   getSelectedAlbumCoverUrl,
 } from '$lib/features/library/selectors';
 import {
@@ -112,6 +113,7 @@ import { toast } from 'svelte-sonner';
 
 const MIN_DISPLAY_MS = 260;
 const DETAIL_SKELETON_DELAY_MS = 140;
+const ALBUM_VISUAL_REQUEST_DELAY_MS = 450;
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -130,7 +132,9 @@ export function createAppRuntime() {
   async function preloadAlbumArtwork(
     album: AlbumDetail
   ): Promise<number | null> {
-    const sourceUrl = album.coverDeUrl ?? album.coverUrl;
+    const sourceUrl = getPreferredAlbumArtworkUrl(album);
+    if (!sourceUrl) return null;
+
     const resolvedUrl = await getImageDataUrl(sourceUrl).catch(() => sourceUrl);
     const meta = await preloadImage(resolvedUrl);
     return meta?.aspectRatio ?? null;
@@ -162,6 +166,7 @@ export function createAppRuntime() {
       await seekCurrentPlayback(positionSecs);
     },
     setPlaybackVolume,
+    getPlayerState,
     getSongLyrics,
     notifyError,
   });
@@ -830,8 +835,7 @@ export function createAppRuntime() {
   }
 
   $effect(() => {
-    const artworkUrl =
-      selectedAlbum?.coverUrl ?? selectedAlbum?.coverDeUrl ?? null;
+    const artworkUrl = getPreferredAlbumArtworkUrl(selectedAlbum);
     if (artworkUrl === activeThemeArtworkUrl) {
       return;
     }
@@ -845,6 +849,9 @@ export function createAppRuntime() {
     }
 
     void (async () => {
+      await delay(ALBUM_VISUAL_REQUEST_DELAY_MS);
+      if (paletteRequestSeq !== themeRequestSeq) return;
+
       try {
         const palette = await extractImageTheme(artworkUrl);
         if (paletteRequestSeq !== themeRequestSeq) return;
@@ -898,8 +905,7 @@ export function createAppRuntime() {
   });
 
   $effect(() => {
-    const sourceUrl =
-      selectedAlbum?.coverDeUrl ?? selectedAlbum?.coverUrl ?? null;
+    const sourceUrl = getPreferredAlbumArtworkUrl(selectedAlbum);
     if (sourceUrl === activeAlbumStageArtworkUrl) {
       return;
     }
@@ -913,6 +919,9 @@ export function createAppRuntime() {
     }
 
     void (async () => {
+      await delay(ALBUM_VISUAL_REQUEST_DELAY_MS);
+      if (requestSeq !== artworkRequestSeq) return;
+
       try {
         const dataUrl = await getImageDataUrl(sourceUrl);
         if (requestSeq !== artworkRequestSeq) return;
@@ -1259,6 +1268,9 @@ export function createAppRuntime() {
     },
     get isLoading() {
       return isLoading;
+    },
+    get isPlayTogglePending() {
+      return playerController.isPlayTogglePending;
     },
     get progress() {
       return progress;

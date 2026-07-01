@@ -28,6 +28,7 @@
     progress: number;
     duration: number;
     isLoading?: boolean;
+    isPlayTogglePending?: boolean;
     reducedMotion?: boolean;
     isShuffled?: boolean;
     repeatMode?: RepeatMode;
@@ -64,6 +65,7 @@
     progress,
     duration,
     isLoading = false,
+    isPlayTogglePending = false,
     reducedMotion = false,
     isShuffled = false,
     repeatMode = 'all',
@@ -171,8 +173,15 @@
     repeatMode === 'one' ? labels.repeatOne : labels.repeatAll
   );
   const playerState = $derived.by(() =>
-    isLoading ? 'loading' : isPlaying ? 'playing' : isPaused ? 'paused' : 'idle'
+    isLoading || isPlayTogglePending
+      ? 'loading'
+      : isPlaying
+        ? 'playing'
+        : isPaused
+          ? 'paused'
+          : 'idle'
   );
+  const playButtonLoading = $derived(isLoading || isPlayTogglePending);
   const detailPanel = $derived.by(() =>
     lyricsActive ? 'lyrics' : playlistActive ? 'playlist' : 'none'
   );
@@ -352,7 +361,21 @@
     if (!playEl || !pauseEl) return;
     killTweens(playEl);
     killTweens(pauseEl);
-    if (isPlaying) {
+    if (playButtonLoading) {
+      gsap.to(playEl, {
+        x: 0.5,
+        scale: 0.82,
+        opacity: 0,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios',
+      });
+      gsap.to(pauseEl, {
+        scale: 0.82,
+        opacity: 0,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios',
+      });
+    } else if (isPlaying) {
       gsap.to(playEl, {
         x: 0.5,
         scale: 0.82,
@@ -418,7 +441,7 @@
     class="am-player"
     aria-label={labels.ariaControls}
     style={playerStyle}
-    data-loading={isLoading ? 'true' : 'false'}
+    data-loading={isLoading || isPlayTogglePending ? 'true' : 'false'}
     data-state={playerState}
     data-panel={detailPanel}
     data-dragging={draggingSeek ? 'true' : 'false'}
@@ -481,15 +504,31 @@
           type="button"
           class="icon-button play-button"
           class:playing={isPlaying}
-          aria-label={isPlaying
-            ? labels.ariaPause
-            : isPaused
-              ? labels.ariaResume
-              : labels.ariaPlay}
-          disabled={isLoading || !onTogglePlay}
+          aria-label={playButtonLoading
+            ? labels.statusLoading
+            : isPlaying
+              ? labels.ariaPause
+              : isPaused
+                ? labels.ariaResume
+                : labels.ariaPlay}
+          disabled={playButtonLoading || !onTogglePlay}
           onclick={() => onTogglePlay?.()}
         >
           <span class="play-glyph" aria-hidden="true">
+            {#if playButtonLoading}
+              <svg
+                class="control-icon play-icon play-icon-loading spin-icon"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  d="M12 5a7 7 0 1 1-6.3 4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                ></path>
+              </svg>
+            {/if}
             <svg
               class="control-icon play-icon play-icon-pause"
               viewBox="0 0 24 24"
@@ -1222,6 +1261,12 @@
   .play-icon-pause {
     transform: scale(0.82);
     opacity: 0;
+  }
+
+  .play-icon-loading {
+    fill: none;
+    stroke: currentColor;
+    opacity: 1;
   }
 
   .icon-button:focus-visible,

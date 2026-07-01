@@ -9,13 +9,13 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// 播放解码线程上报致命错误时使用的回调类型。
 pub type PlaybackErrorHandler = Arc<dyn Fn(String) + Send + Sync>;
-use symphonia::core::audio::SampleBuffer as SymphoniaSampleBuffer;
+use symphonia::core::audio::{SampleBuffer as SymphoniaSampleBuffer, SignalSpec};
 use symphonia::core::codecs::{
     CodecParameters, Decoder as SymphoniaDecoder, DecoderOptions, CODEC_TYPE_NULL,
 };
@@ -24,10 +24,10 @@ use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Tr
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use symphonia::core::units::Time;
+use symphonia::core::units::{Time, TimeBase};
 
 /// 描述解码后或输出端期望的音频格式。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AudioFormat {
     /// 音频通道数，至少为 1。
     pub channels: u16,
@@ -352,7 +352,8 @@ pub struct SampleBuffer {
     inner: Arc<(Mutex<SampleBufferState>, Condvar)>,
 }
 
-const MAX_BUFFER_SAMPLES: usize = 44100 * 2 * 10;
+const MAX_BUFFER_SAMPLES: usize = 192_000 * 2 * 15;
+const SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES: usize = 8192;
 
 struct SampleBufferState {
     queue: VecDeque<f32>,
@@ -375,6 +376,11 @@ impl SampleBuffer {
         }
     }
 
+    /// 返回采样缓冲区允许持有的最大样本数。
+    pub fn max_capacity_samples() -> usize {
+        MAX_BUFFER_SAMPLES
+    }
+
     /// 追加一批已解码的浮点采样。
     ///
     /// 当缓冲区已满时会阻塞等待消费者消费后再写入。
@@ -383,19 +389,41 @@ impl SampleBuffer {
             return;
         }
         let (lock, condvar) = &*self.inner;
-        let mut state = lock.lock().unwrap();
-        while state.queue.len() >= MAX_BUFFER_SAMPLES && !state.finished && state.error.is_none() {
-            let (next_state, _) = condvar
-                .wait_timeout(state, Duration::from_millis(50))
-                .unwrap();
-            state = next_state;
-        }
-        if state.finished || state.error.is_some() {
+        let mut offset = 0_usize;
+
+        while offset < samples.len() {
+            let mut state = lock.lock().unwrap();
+            while state.queue.len() >= MAX_BUFFER_SAMPLES
+                && !state.finished
+                && state.error.is_none()
+            {
+                let (next_state, _) = condvar
+                    .wait_timeout(state, Duration::from_millis(50))
+                    .unwrap();
+                state = next_state;
+            }
+
+            if state.finished || state.error.is_some() {
+                condvar.notify_all();
+                return;
+            }
+
+            let available = MAX_BUFFER_SAMPLES
+                .saturating_sub(state.queue.len())
+                .min(SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES);
+            if available == 0 {
+                continue;
+            }
+            let end = (offset + available).min(samples.len());
+            state.queue.extend(
+                samples[offset..end]
+                    .iter()
+                    .copied()
+                    .map(sanitize_pcm_sample),
+            );
+            offset = end;
             condvar.notify_all();
-            return;
         }
-        state.queue.extend(samples.iter().copied());
-        condvar.notify_all();
     }
 
     /// 标记采样缓冲区不会再写入新的数据。
@@ -410,40 +438,51 @@ impl SampleBuffer {
     pub fn fail(&self, message: impl Into<String>) {
         let (lock, condvar) = &*self.inner;
         let mut state = lock.lock().unwrap();
+        state.queue.clear();
         state.error = Some(message.into());
         state.finished = true;
         condvar.notify_all();
     }
 
-    /// 从缓冲区中弹出尽可能多的采样写入 `output`。
+    /// 从缓冲区中弹出尽可能多的完整声道帧写入 `output`。
     ///
+    /// `frame_channels` 必须是当前输出格式的声道数。方法只会消费完整帧，避免把
+    /// 不足一帧的样本弹出后静音丢弃，导致下一次回调从错误声道边界继续播放。
     /// 返回值会说明本次写入了多少采样，以及缓冲区是否已经结束或失败。
-    pub fn pop_into(&self, output: &mut [f32]) -> PopStatus {
+    #[cfg(test)]
+    pub fn pop_complete_frames_into(&self, output: &mut [f32], frame_channels: usize) -> PopStatus {
         let (lock, condvar) = &*self.inner;
         let mut state = lock.lock().unwrap();
-        let mut written = 0_usize;
+        pop_complete_frames_from_state(&mut state, condvar, output, frame_channels)
+    }
 
-        while written < output.len() {
-            match state.queue.pop_front() {
-                Some(sample) => {
-                    output[written] = sample;
-                    written += 1;
-                }
-                None => break,
+    /// 尝试从缓冲区弹出完整声道帧。
+    ///
+    /// 该方法供实时输出回调使用：如果解码线程正在持有缓冲区锁，立即返回 `None`，
+    /// 由调用方输出静音，避免把音频回调阻塞在互斥锁上。
+    pub fn try_pop_complete_frames_into(
+        &self,
+        output: &mut [f32],
+        frame_channels: usize,
+    ) -> Option<PopStatus> {
+        let (lock, condvar) = &*self.inner;
+        let mut state = match lock.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::WouldBlock) => return None,
+            Err(TryLockError::Poisoned(_)) => {
+                return Some(PopStatus {
+                    written: 0,
+                    finished: true,
+                    error: Some("Sample buffer lock poisoned".to_string()),
+                });
             }
-        }
-
-        let status = PopStatus {
-            written,
-            finished: state.finished && state.queue.is_empty(),
-            error: state.error.clone(),
         };
-
-        if written > 0 {
-            condvar.notify_all();
-        }
-
-        status
+        Some(pop_complete_frames_from_state(
+            &mut state,
+            condvar,
+            output,
+            frame_channels,
+        ))
     }
 
     /// 等待缓冲区中至少出现指定数量的采样。
@@ -475,6 +514,52 @@ impl SampleBuffer {
         }
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn hold_lock_for_test(&self, duration: Duration) {
+        let (lock, _) = &*self.inner;
+        let _state = lock.lock().unwrap();
+        thread::sleep(duration);
+    }
+}
+
+fn pop_complete_frames_from_state(
+    state: &mut SampleBufferState,
+    condvar: &Condvar,
+    output: &mut [f32],
+    frame_channels: usize,
+) -> PopStatus {
+    let mut written = 0_usize;
+    let frame_channels = frame_channels.max(1);
+    let writable_samples = output.len() - (output.len() % frame_channels);
+    let available_complete_samples = state.queue.len() - (state.queue.len() % frame_channels);
+    let target_samples = writable_samples.min(available_complete_samples);
+
+    while written < target_samples {
+        match state.queue.pop_front() {
+            Some(sample) => {
+                output[written] = sample;
+                written += 1;
+            }
+            None => break,
+        }
+    }
+
+    if written == 0 && state.finished && !state.queue.is_empty() {
+        state.queue.clear();
+    }
+
+    let status = PopStatus {
+        written,
+        finished: state.finished && state.queue.is_empty(),
+        error: state.error.clone(),
+    };
+
+    if written > 0 {
+        condvar.notify_all();
+    }
+
+    status
 }
 
 /// 一次从采样缓冲区弹出后的结果摘要。
@@ -562,7 +647,12 @@ fn spawn_decode_worker(
                 let mut converter = SampleConverter::new(source_format, target_format);
                 let mut decoded_samples: Option<SymphoniaSampleBuffer<f32>> = None;
                 let mut remaining_seek_frames = if start_position_secs > 0.0 {
-                    let frames = seek_to_time(format.as_mut(), track_id, start_position_secs)?;
+                    let frames = seek_to_time(
+                        format.as_mut(),
+                        track_id,
+                        start_position_secs,
+                        source_format.sample_rate,
+                    )?;
                     decoder.reset();
                     frames
                 } else {
@@ -597,6 +687,7 @@ fn spawn_decode_worker(
 
                     match decoder.decode(&packet) {
                         Ok(audio_buf) => {
+                            ensure_decoded_format_matches_source(audio_buf.spec(), source_format)?;
                             let required_samples =
                                 audio_buf.capacity() * audio_buf.spec().channels.count();
                             let channels = audio_buf.spec().channels.count();
@@ -649,14 +740,39 @@ fn spawn_decode_worker(
 
             if let Err(error) = result {
                 let message = format!("{error:#}");
-                error_handler(message.clone());
-                sample_buffer.fail(message);
+                sample_buffer.fail(message.clone());
+                error_handler(message);
             }
         })
         .expect("Failed to spawn audio decode worker")
 }
 
-fn seek_to_time(format: &mut dyn FormatReader, track_id: u32, seconds: f64) -> Result<u64> {
+fn ensure_decoded_format_matches_source(
+    spec: &SignalSpec,
+    source_format: AudioFormat,
+) -> Result<()> {
+    let source_format = source_format.normalized();
+    let decoded_channels = spec.channels.count() as u16;
+    anyhow::ensure!(
+        decoded_channels == source_format.channels,
+        "Decoded audio channel count changed from {} to {decoded_channels}",
+        source_format.channels
+    );
+    anyhow::ensure!(
+        spec.rate == source_format.sample_rate,
+        "Decoded audio sample rate changed from {} to {}",
+        source_format.sample_rate,
+        spec.rate
+    );
+    Ok(())
+}
+
+fn seek_to_time(
+    format: &mut dyn FormatReader,
+    track_id: u32,
+    seconds: f64,
+    sample_rate: u32,
+) -> Result<u64> {
     let seek_result = format
         .seek(
             SeekMode::Accurate,
@@ -667,9 +783,30 @@ fn seek_to_time(format: &mut dyn FormatReader, track_id: u32, seconds: f64) -> R
         )
         .context("Failed to seek audio stream")?;
 
-    Ok(seek_result
+    let timestamp_delta = seek_result
         .required_ts
-        .saturating_sub(seek_result.actual_ts))
+        .saturating_sub(seek_result.actual_ts);
+    let track = format
+        .tracks()
+        .iter()
+        .find(|track| track.id == seek_result.track_id)
+        .context("Seeked audio track is no longer available")?;
+    let time_base = track
+        .codec_params
+        .time_base
+        .context("Missing audio time base after seek")?;
+    Ok(timestamp_delta_to_frames(
+        timestamp_delta,
+        time_base,
+        sample_rate,
+    ))
+}
+
+fn timestamp_delta_to_frames(timestamp_delta: u64, time_base: TimeBase, sample_rate: u32) -> u64 {
+    let delta = time_base.calc_time(timestamp_delta);
+    let seconds = delta.seconds as f64 + delta.frac;
+
+    (seconds * f64::from(sample_rate.max(1))).round() as u64
 }
 
 fn open_audio_reader_with_retry<F>(
@@ -800,7 +937,8 @@ impl SampleConverter {
     }
 
     fn push_chunk(&mut self, samples: &[f32]) -> Vec<f32> {
-        self.pending.extend_from_slice(samples);
+        self.pending
+            .extend(samples.iter().copied().map(sanitize_pcm_sample));
         self.drain_available(false)
     }
 
@@ -956,19 +1094,32 @@ impl SampleConverter {
     ) -> f32 {
         let current = self.pending[source_frame * self.source_channels + channel];
         let next = self.pending[next_source_frame * self.source_channels + channel];
-        current + (next - current) * fraction
+        sanitize_pcm_sample(current + (next - current) * fraction)
+    }
+}
+
+fn sanitize_pcm_sample(sample: f32) -> f32 {
+    if sample.is_finite() {
+        sample.clamp(-1.0, 1.0)
+    } else {
+        0.0
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        open_audio_reader_with_retry, AudioFormat, BoxedAudioReader, Hint, SampleBuffer,
-        SampleConverter,
+        ensure_decoded_format_matches_source, open_audio_reader, open_audio_reader_with_retry,
+        timestamp_delta_to_frames, AudioFormat, BoxedAudioReader, Hint, SampleBuffer,
+        SampleConverter, SymphoniaSampleBuffer,
     };
     use std::fs::File;
     use std::io::{self, Read, Seek, SeekFrom};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::thread;
+    use std::time::Duration;
+    use symphonia::core::audio::{Channels, SignalSpec};
+    use symphonia::core::units::TimeBase;
     use tempfile::tempdir;
 
     struct FlakyReader {
@@ -1071,16 +1222,290 @@ mod tests {
     }
 
     #[test]
+    fn sample_converter_sanitizes_non_finite_and_out_of_range_samples() {
+        let mut converter = SampleConverter::new(
+            AudioFormat {
+                channels: 1,
+                sample_rate: 1,
+                duration_secs: 0.0,
+            },
+            AudioFormat {
+                channels: 1,
+                sample_rate: 1,
+                duration_secs: 0.0,
+            },
+        );
+
+        let output = converter.push_chunk(&[f32::NAN, f32::INFINITY, -2.0, 0.5]);
+
+        assert_eq!(output, vec![0.0, 0.0, -1.0, 0.5]);
+    }
+
+    #[test]
+    fn decoded_format_must_match_probed_source_format() {
+        let source = AudioFormat {
+            channels: 2,
+            sample_rate: 48_000,
+            duration_secs: 10.0,
+        };
+        let stereo = SignalSpec::new(48_000, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mono = SignalSpec::new(48_000, Channels::FRONT_LEFT);
+        let wrong_rate = SignalSpec::new(44_100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+
+        ensure_decoded_format_matches_source(&stereo, source).expect("matching format");
+
+        let channel_error =
+            ensure_decoded_format_matches_source(&mono, source).expect_err("channel drift");
+        assert!(
+            format!("{channel_error:#}").contains("Decoded audio channel count changed"),
+            "{channel_error:#}"
+        );
+
+        let rate_error =
+            ensure_decoded_format_matches_source(&wrong_rate, source).expect_err("rate drift");
+        assert!(
+            format!("{rate_error:#}").contains("Decoded audio sample rate changed"),
+            "{rate_error:#}"
+        );
+    }
+
+    #[test]
+    fn seek_timestamp_delta_is_converted_to_audio_frames() {
+        let time_base = TimeBase::new(1, 1_000);
+
+        assert_eq!(timestamp_delta_to_frames(250, time_base, 48_000), 12_000);
+    }
+
+    #[test]
     fn sample_buffer_rejects_push_after_finish() {
         let buffer = SampleBuffer::new();
         buffer.finish();
         buffer.push(&[1.0, 0.5]);
 
         let mut output = [0.0_f32; 2];
-        let status = buffer.pop_into(&mut output);
+        let status = buffer.pop_complete_frames_into(&mut output, 2);
 
         assert_eq!(status.written, 0);
         assert!(status.finished);
         assert_eq!(output, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn sample_buffer_sanitizes_samples_before_queueing() {
+        let buffer = SampleBuffer::new();
+        buffer.push(&[f32::NAN, f32::NEG_INFINITY, 1.25, -0.25]);
+
+        let mut output = [1.0_f32; 4];
+        let status = buffer.pop_complete_frames_into(&mut output, 2);
+
+        assert_eq!(status.written, 4);
+        assert_eq!(output, [0.0, 0.0, 1.0, -0.25]);
+    }
+
+    #[test]
+    fn sample_buffer_keeps_incomplete_frames_for_later_completion() {
+        let buffer = SampleBuffer::new();
+        buffer.push(&[0.25]);
+
+        let mut output = [1.0_f32; 2];
+        let status = buffer.pop_complete_frames_into(&mut output, 2);
+
+        assert_eq!(status.written, 0);
+        assert_eq!(output, [1.0, 1.0]);
+
+        buffer.push(&[-0.25]);
+        let status = buffer.pop_complete_frames_into(&mut output, 2);
+
+        assert_eq!(status.written, 2);
+        assert_eq!(output, [0.25, -0.25]);
+    }
+
+    #[test]
+    fn sample_buffer_drops_final_incomplete_frame_as_silence() {
+        let buffer = SampleBuffer::new();
+        buffer.push(&[0.25]);
+        buffer.finish();
+
+        let mut output = [1.0_f32; 2];
+        let status = buffer.pop_complete_frames_into(&mut output, 2);
+
+        assert_eq!(status.written, 0);
+        assert!(status.finished);
+        assert_eq!(output, [1.0, 1.0]);
+    }
+
+    #[test]
+    fn sample_buffer_try_pop_returns_none_when_locked() {
+        let buffer = SampleBuffer::new();
+        buffer.push(&[0.25, -0.25]);
+        let locked_buffer = buffer.clone();
+
+        let handle = thread::spawn(move || {
+            locked_buffer.hold_lock_for_test(Duration::from_millis(100));
+        });
+        thread::sleep(Duration::from_millis(10));
+
+        let mut output = [1.0_f32; 2];
+        assert!(buffer
+            .try_pop_complete_frames_into(&mut output, 2)
+            .is_none());
+        assert_eq!(output, [1.0, 1.0]);
+
+        handle.join().expect("lock holder should finish");
+        let status = buffer
+            .try_pop_complete_frames_into(&mut output, 2)
+            .expect("buffer lock should be available");
+        assert_eq!(status.written, 2);
+        assert_eq!(output, [0.25, -0.25]);
+    }
+
+    #[test]
+    fn sample_buffer_fail_discards_queued_samples() {
+        let buffer = SampleBuffer::new();
+        buffer.push(&[0.25, -0.25]);
+        buffer.fail("decode failed");
+
+        let mut output = [1.0_f32; 2];
+        let status = buffer.pop_complete_frames_into(&mut output, 2);
+
+        assert_eq!(status.written, 0);
+        assert!(status.finished);
+        assert_eq!(status.error.as_deref(), Some("decode failed"));
+        assert_eq!(output, [1.0, 1.0]);
+    }
+
+    #[test]
+    fn sample_buffer_wait_reports_buffer_error_before_stop_flag() {
+        let buffer = SampleBuffer::new();
+        let stop_flag = AtomicBool::new(true);
+        buffer.fail("decode failed");
+
+        let error = buffer
+            .wait_for_samples(1, &stop_flag)
+            .expect_err("buffer error");
+
+        assert!(format!("{error:#}").contains("decode failed"), "{error:#}");
+    }
+
+    #[test]
+    fn sample_buffer_push_respects_capacity_with_large_chunks() {
+        let buffer = SampleBuffer::new();
+        let producer = buffer.clone();
+        let total_samples = SampleBuffer::max_capacity_samples() + 512;
+        let samples = vec![0.25_f32; total_samples];
+
+        let handle = thread::spawn(move || {
+            producer.push(&samples);
+        });
+
+        let mut drained = 0_usize;
+        let mut output = vec![0.0_f32; 1024];
+        while drained < total_samples {
+            let status = buffer.pop_complete_frames_into(&mut output, 2);
+            drained += status.written;
+            if status.written == 0 {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        handle.join().expect("producer should finish");
+        assert_eq!(drained, total_samples);
+    }
+
+    #[test]
+    fn decode_24bit_wav_preserves_low_amplitude_samples() {
+        let temp_dir = tempdir().expect("tempdir");
+        let audio_path = temp_dir.path().join("decode-24bit.wav");
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 48_000,
+            bits_per_sample: 24,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&audio_path, spec).expect("wav writer");
+        writer.write_sample(0_i32).expect("sample");
+        writer.write_sample(256_i32).expect("sample");
+        writer.write_sample(-256_i32).expect("sample");
+        writer.write_sample(512_i32).expect("sample");
+        writer.finalize().expect("finalize");
+
+        let mut hint = Hint::new();
+        hint.with_extension("wav");
+
+        let reader = Box::new(File::open(&audio_path).expect("open audio file"));
+        let mut opened = open_audio_reader(reader, &hint).expect("open reader");
+        let packet = opened.format.next_packet().expect("packet");
+        let audio_buf = opened.decoder.decode(&packet).expect("decode");
+
+        let mut decoded =
+            SymphoniaSampleBuffer::<f32>::new(audio_buf.capacity() as u64, *audio_buf.spec());
+        decoded.copy_interleaved_ref(audio_buf);
+
+        let samples = decoded.samples();
+        assert_eq!(samples.len(), 4);
+        assert!(samples[0].abs() < 0.000_001);
+        assert!((samples[1] - 0.000_030_517_578).abs() < 0.000_01);
+        assert!((samples[2] + 0.000_030_517_578).abs() < 0.000_01);
+        assert!((samples[3] - 0.000_061_035_156).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn decode_manual_24bit_pcm_wav_preserves_sample_scale() {
+        let temp_dir = tempdir().expect("tempdir");
+        let audio_path = temp_dir.path().join("manual-24bit.wav");
+        std::fs::write(&audio_path, pcm24_wav_bytes(&[0, 256, -256, 512])).expect("write wav");
+
+        let mut hint = Hint::new();
+        hint.with_extension("wav");
+
+        let reader = Box::new(File::open(&audio_path).expect("open audio file"));
+        let mut opened = open_audio_reader(reader, &hint).expect("open reader");
+        let packet = opened.format.next_packet().expect("packet");
+        let audio_buf = opened.decoder.decode(&packet).expect("decode");
+
+        let mut decoded =
+            SymphoniaSampleBuffer::<f32>::new(audio_buf.capacity() as u64, *audio_buf.spec());
+        decoded.copy_interleaved_ref(audio_buf);
+
+        let samples = decoded.samples();
+        assert_eq!(samples.len(), 4);
+        assert!(samples[0].abs() < 0.000_001);
+        assert!((samples[1] - 0.000_030_517_578).abs() < 0.000_01);
+        assert!((samples[2] + 0.000_030_517_578).abs() < 0.000_01);
+        assert!((samples[3] - 0.000_061_035_156).abs() < 0.000_01);
+    }
+
+    fn pcm24_wav_bytes(samples: &[i32]) -> Vec<u8> {
+        let mut data = Vec::with_capacity(samples.len() * 3);
+        for sample in samples {
+            let raw = (*sample as u32) & 0x00ff_ffff;
+            data.extend_from_slice(&raw.to_le_bytes()[..3]);
+        }
+
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&1_u16.to_le_bytes());
+        fmt.extend_from_slice(&2_u16.to_le_bytes());
+        fmt.extend_from_slice(&48_000_u32.to_le_bytes());
+        fmt.extend_from_slice(&288_000_u32.to_le_bytes());
+        fmt.extend_from_slice(&6_u16.to_le_bytes());
+        fmt.extend_from_slice(&24_u16.to_le_bytes());
+
+        let mut body = b"WAVE".to_vec();
+        append_wav_chunk(&mut body, b"fmt ", &fmt);
+        append_wav_chunk(&mut body, b"data", &data);
+
+        let mut wav = b"RIFF".to_vec();
+        wav.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        wav.extend_from_slice(&body);
+        wav
+    }
+
+    fn append_wav_chunk(target: &mut Vec<u8>, tag: &[u8; 4], payload: &[u8]) {
+        target.extend_from_slice(tag);
+        target.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        target.extend_from_slice(payload);
+        if payload.len() % 2 == 1 {
+            target.push(0);
+        }
     }
 }

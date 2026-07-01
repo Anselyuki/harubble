@@ -3,6 +3,7 @@ mod playback;
 
 use crate::album_metadata_cache::AlbumMetadataCacheService;
 use crate::collection::CollectionService;
+use crate::command_scheduling::{self, CommandDomain};
 use crate::download_session::DownloadSessionStore;
 use crate::listening_history::ListeningHistoryService;
 use crate::local_inventory::LocalInventoryService;
@@ -10,12 +11,14 @@ use crate::local_inventory_provenance::LocalInventoryProvenanceStore;
 use crate::logging::{LogCenter, LogLevel, LogPayload};
 use crate::player::stream::PlaybackInput;
 use crate::player::AudioPlayer;
+use crate::player::{PlaybackError, PlaybackErrorCode};
 use crate::preferences::{AppPreferences, PreferencesStore};
 use crate::search::LibrarySearchService;
 use crate::startup_recovery::prepare_local_database;
 use crate::tag_editor::TagEditorService;
 use crate::tag_registry::TagRegistryService;
 use harubble_core::{DownloadManagerSnapshot, DownloadService};
+use std::future::Future;
 use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
@@ -29,6 +32,8 @@ use tokio::sync::Mutex;
 pub struct AppState {
     pub(crate) player: Arc<AudioPlayer>,
     pub(crate) api: Arc<harubble_core::ApiClient>,
+    pub(crate) playback_api: Arc<harubble_core::ApiClient>,
+    pub(crate) playback_runtime: Arc<tokio::runtime::Runtime>,
     pub(crate) download_service: Arc<Mutex<DownloadService>>,
     pub(crate) download_job_creation_lock: Arc<Mutex<()>>,
     pub(crate) preferences_write_lock: Arc<Mutex<()>>,
@@ -61,6 +66,14 @@ impl AppState {
         let log_center = Arc::new(LogCenter::new(app.clone())?);
         let player = AudioPlayer::new(app.clone()).map_err(|e| e.to_string())?;
         let api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let playback_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let playback_runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("harubble-playback")
+            .worker_threads(2)
+            .max_blocking_threads(4)
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to initialize playback runtime: {e}"))?;
         crate::migration::migrate_legacy_data(&app.path().app_data_dir().unwrap_or_default());
         let app_data_dir = app
             .path()
@@ -101,6 +114,8 @@ impl AppState {
         let state = Self {
             player: Arc::new(player),
             api: Arc::new(api),
+            playback_api: Arc::new(playback_api),
+            playback_runtime: Arc::new(playback_runtime),
             download_service,
             download_job_creation_lock: Arc::new(Mutex::new(())),
             preferences_write_lock: Arc::new(Mutex::new(())),
@@ -178,6 +193,74 @@ impl AppState {
 
     pub(crate) fn preferences_store(&self) -> Arc<PreferencesStore> {
         self.preferences_store.clone()
+    }
+
+    pub(crate) fn clear_api_response_caches(&self) {
+        self.api.clear_response_cache();
+        self.playback_api.clear_response_cache();
+    }
+
+    pub(crate) fn reset_http_clients(&self) -> Result<(), String> {
+        let app_result = self.api.reset_http_client();
+        let playback_result = self.playback_api.reset_http_client();
+
+        match (app_result, playback_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(app_error), Ok(())) => Err(format!("app HTTP client reset failed: {app_error}")),
+            (Ok(()), Err(playback_error)) => Err(format!(
+                "playback HTTP client reset failed: {playback_error}"
+            )),
+            (Err(app_error), Err(playback_error)) => Err(format!(
+                "app HTTP client reset failed: {app_error}; playback HTTP client reset failed: {playback_error}"
+            )),
+        }
+    }
+
+    fn begin_playback_transition(&self, command_name: &'static str) -> u64 {
+        command_scheduling::debug_assert_command_domain(
+            command_name,
+            CommandDomain::PlaybackTransition,
+        );
+        let request_id = self.player.supersede_playback_request();
+        self.player.supersede_loading_session();
+        request_id
+    }
+
+    pub(crate) async fn dispatch_playback_transition<F, Fut, T>(
+        &self,
+        command_name: &'static str,
+        task: F,
+    ) -> Result<T, PlaybackError>
+    where
+        F: FnOnce(Self, u64) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, PlaybackError>> + Send + 'static,
+        T: Send + 'static,
+    {
+        let request_id = self.begin_playback_transition(command_name);
+        let state = self.clone();
+        self.playback_runtime
+            .spawn(async move { task(state, request_id).await })
+            .await
+            .map_err(|error| {
+                PlaybackError::new(
+                    PlaybackErrorCode::Internal,
+                    format!("playback runtime task failed: {error}"),
+                    false,
+                    None,
+                )
+            })?
+    }
+
+    pub(crate) fn spawn_playback_transition<F, Fut>(&self, command_name: &'static str, task: F)
+    where
+        F: FnOnce(Self, u64) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let request_id = self.begin_playback_transition(command_name);
+        let state = self.clone();
+        self.playback_runtime.spawn(async move {
+            task(state, request_id).await;
+        });
     }
 
     pub(crate) async fn persist_preferences(&self, prefs: AppPreferences) -> Result<(), String> {

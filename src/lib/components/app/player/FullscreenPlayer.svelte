@@ -31,6 +31,9 @@
   const onTogglePlay = $derived(
     player.isPlaying ? player.pause : player.resume
   );
+  const playButtonLoading = $derived(
+    player.isLoading || player.isPlayTogglePending
+  );
 
   function handleDownload() {
     if (player.currentSong) {
@@ -424,10 +427,20 @@
           : player.isPaused
             ? m.player_aria_resume()
             : m.player_aria_play()}
-        disabled={player.isLoading}
+        disabled={playButtonLoading}
         onclick={() => onTogglePlay()}
       >
-        {#if player.isPlaying}
+        {#if playButtonLoading}
+          <svg class="fs-spin" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 5a7 7 0 1 1-6.3 4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+            ></path>
+          </svg>
+        {:else if player.isPlaying}
           <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
             <rect x="7.15" y="5.95" width="3.4" height="12.1" rx="1.25"></rect>
             <rect x="13.45" y="5.95" width="3.4" height="12.1" rx="1.25"></rect>

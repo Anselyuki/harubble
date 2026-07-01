@@ -22,6 +22,7 @@
   } from '@lucide/svelte';
 
   type PendingAction = 'play' | 'previous' | 'next' | 'seek';
+  type PlayToggleTarget = 'playing' | 'paused';
 
   const EMPTY_PLAYER_STATE: PlayerState = {
     sessionId: 0,
@@ -41,6 +42,7 @@
 
   let playerState = $state<PlayerState>(EMPTY_PLAYER_STATE);
   let pendingAction = $state<PendingAction | null>(null);
+  let pendingPlayTarget = $state<PlayToggleTarget | null>(null);
   let seekPreview = $state<number | null>(null);
   let mediaQuery: MediaQueryList | null = null;
 
@@ -56,7 +58,12 @@
     duration > 0 ? Math.min(1, Math.max(0, shownProgress / duration)) : 0
   );
   const canSeek = $derived(hasSong && duration > 0 && !playerState.isLoading);
-  const playLabel = $derived(playerState.isPlaying ? 'Pause' : 'Play');
+  const playButtonLoading = $derived(
+    playerState.isLoading || pendingPlayTarget !== null
+  );
+  const playLabel = $derived(
+    playButtonLoading ? 'Loading' : playerState.isPlaying ? 'Pause' : 'Play'
+  );
 
   function applySystemTheme() {
     const dark = mediaQuery?.matches ?? false;
@@ -83,19 +90,53 @@
   async function runAction<T>(key: PendingAction, action: () => Promise<T>) {
     if (pendingAction) return;
     pendingAction = key;
+    let succeeded = false;
     try {
       await action();
+      succeeded = true;
     } catch {
       // Keep the tray surface quiet; the main window handles user-facing errors.
     } finally {
+      if (key !== 'play' || !succeeded) {
+        pendingAction = null;
+        if (key === 'play') {
+          pendingPlayTarget = null;
+        }
+      }
+    }
+  }
+
+  async function refreshPlayerStateAfterPlaybackCommand() {
+    const state = await getPlayerState();
+    playerState = state;
+    clearPlayPendingIfSettled(state);
+  }
+
+  function clearPlayPendingIfSettled(state: PlayerState) {
+    if (!pendingPlayTarget) return;
+    if (state.isLoading) return;
+    if (!state.songCid || (!state.isPlaying && !state.isPaused)) {
+      pendingPlayTarget = null;
+      pendingAction = null;
+      return;
+    }
+    if (
+      (pendingPlayTarget === 'playing' && state.isPlaying) ||
+      (pendingPlayTarget === 'paused' && state.isPaused)
+    ) {
+      pendingPlayTarget = null;
       pendingAction = null;
     }
   }
 
   function togglePlayback() {
-    if (!hasSong || playerState.isLoading) return;
+    if (!hasSong || playerState.isLoading || pendingAction || pendingPlayTarget)
+      return;
+    pendingPlayTarget = playerState.isPlaying ? 'paused' : 'playing';
     void runAction('play', () =>
-      playerState.isPlaying ? pausePlayback() : resumePlayback()
+      (playerState.isPlaying ? pausePlayback() : resumePlayback()).then(
+        refreshPlayerStateAfterPlaybackCommand
+      )
     );
   }
 
@@ -142,6 +183,7 @@
           'player-state-changed',
           (event) => {
             playerState = event.payload;
+            clearPlayPendingIfSettled(event.payload);
           }
         );
         const progressUnlisten = await listen<PlayerState>(
@@ -151,8 +193,6 @@
             playerState = {
               ...playerState,
               sessionId: event.payload.sessionId,
-              isPlaying: event.payload.isPlaying,
-              isPaused: event.payload.isPaused,
               progress: event.payload.progress,
               duration: event.payload.duration,
             };
@@ -257,7 +297,7 @@
       disabled={!hasSong || playerState.isLoading || pendingAction !== null}
       onclick={togglePlayback}
     >
-      {#if playerState.isLoading || pendingAction === 'play'}
+      {#if playerState.isLoading || pendingPlayTarget !== null}
         <span class="spin">
           <Loader2 size={19} strokeWidth={1.8} />
         </span>

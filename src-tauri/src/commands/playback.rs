@@ -20,7 +20,11 @@ pub async fn play_song(
     playback_context: Option<PlaybackContext>,
 ) -> Result<PlaybackStartResult, PlaybackError> {
     state
-        .play_song_internal(song_cid, cover_url, playback_context)
+        .dispatch_playback_transition("play_song", move |state, request_id| async move {
+            state
+                .play_song_for_request(request_id, song_cid, cover_url, playback_context)
+                .await
+        })
         .await
 }
 
@@ -54,7 +58,16 @@ pub async fn seek_current_playback(
     state: State<'_, AppState>,
     position_secs: f64,
 ) -> Result<PlaybackStartResult, PlaybackError> {
-    state.seek_current_internal(position_secs).await
+    state
+        .dispatch_playback_transition(
+            "seek_current_playback",
+            move |state, request_id| async move {
+                state
+                    .seek_current_for_request(request_id, position_secs)
+                    .await
+            },
+        )
+        .await
 }
 
 /// 播放队列中的下一首歌曲。
@@ -64,7 +77,11 @@ pub async fn seek_current_playback(
 /// 该接口依赖当前会话已建立可导航的队列上下文；队列中多于一首时会循环前进，否则返回错误。
 #[tauri::command]
 pub async fn play_next(state: State<'_, AppState>) -> Result<PlaybackStartResult, PlaybackError> {
-    state.play_next_internal().await
+    state
+        .dispatch_playback_transition("play_next", move |state, request_id| async move {
+            state.play_next_for_request(request_id).await
+        })
+        .await
 }
 
 /// 播放队列中的上一首歌曲。
@@ -76,7 +93,11 @@ pub async fn play_next(state: State<'_, AppState>) -> Result<PlaybackStartResult
 pub async fn play_previous(
     state: State<'_, AppState>,
 ) -> Result<PlaybackStartResult, PlaybackError> {
-    state.play_previous_internal().await
+    state
+        .dispatch_playback_transition("play_previous", move |state, request_id| async move {
+            state.play_previous_for_request(request_id).await
+        })
+        .await
 }
 
 /// 获取当前播放器状态快照。

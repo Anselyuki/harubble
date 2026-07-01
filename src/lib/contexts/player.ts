@@ -14,6 +14,7 @@ export interface PlayerContext {
   readonly isPlaying: boolean;
   readonly isPaused: boolean;
   readonly isLoading: boolean;
+  readonly isPlayTogglePending: boolean;
   readonly hasPrevious: boolean;
   readonly hasNext: boolean;
   readonly progress: number;

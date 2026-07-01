@@ -70,6 +70,14 @@ Sidebar 精简与 Album Overview 页改版方案。涵盖移除 `AlbumSidebarSec
 
 国际化架构决策、支持语言、品牌标识规范与翻译层技术选型。
 
+#### [playback-state-machine.md](./reference/playback-state-machine.md)
+
+播放控制面、音频数据面、输出面与前端同步面的状态机设计。包含状态/事件/守卫条件、音频安全不变量、错误恢复策略和播放链路验证清单。
+
+#### [playback-command-scheduling.md](./reference/playback-command-scheduling.md)
+
+播放资源隔离与 command 调度改造建议。包含 command domain/priority 划分、PlaybackActor、资源域、降级策略、迁移阶段、外部音乐播放器架构参考和验证指标。
+
 ### process/ — 项目规定
 
 #### [release-process.md](./process/release-process.md)

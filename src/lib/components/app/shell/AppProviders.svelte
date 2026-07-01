@@ -69,6 +69,9 @@
     get isLoading() {
       return runtime.isLoading;
     },
+    get isPlayTogglePending() {
+      return runtime.isPlayTogglePending;
+    },
     get hasPrevious() {
       return runtime.playerHasPrevious;
     },

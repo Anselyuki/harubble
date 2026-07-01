@@ -43,11 +43,12 @@ const CACHE_KEY_SONG_DETAIL = 'song_detail:';
 const CACHE_KEY_SONG_LYRICS = 'song_lyrics:';
 const CACHE_KEY_IMAGE_THEME = 'image_theme:';
 const CACHE_KEY_IMAGE_DATA_URL = 'image_data_url:';
-const IMAGE_DATA_URL_CONCURRENCY_LIMIT = 4;
+const IMAGE_RESOURCE_CONCURRENCY_LIMIT = 1;
 
+const inflightImageThemeRequests = new Map<string, Promise<ThemePalette>>();
 const inflightImageDataUrlRequests = new Map<string, Promise<string>>();
-const queuedImageDataUrlRequests: (() => void)[] = [];
-let activeImageDataUrlRequestCount = 0;
+const queuedImageResourceRequests: (() => void)[] = [];
+let activeImageResourceRequestCount = 0;
 
 export class PlaybackCommandError extends Error {
   readonly code: PlaybackErrorPayload['code'];
@@ -87,27 +88,27 @@ async function invokePlayback<T>(
   }
 }
 
-function scheduleImageDataUrlRequest<T>(task: () => Promise<T>): Promise<T> {
+function scheduleImageResourceRequest<T>(task: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const run = () => {
-      activeImageDataUrlRequestCount += 1;
+      activeImageResourceRequestCount += 1;
       task()
         .then(resolve, reject)
         .finally(() => {
-          activeImageDataUrlRequestCount = Math.max(
-            activeImageDataUrlRequestCount - 1,
+          activeImageResourceRequestCount = Math.max(
+            activeImageResourceRequestCount - 1,
             0
           );
-          queuedImageDataUrlRequests.shift()?.();
+          queuedImageResourceRequests.shift()?.();
         });
     };
 
-    if (activeImageDataUrlRequestCount < IMAGE_DATA_URL_CONCURRENCY_LIMIT) {
+    if (activeImageResourceRequestCount < IMAGE_RESOURCE_CONCURRENCY_LIMIT) {
       run();
       return;
     }
 
-    queuedImageDataUrlRequests.push(run);
+    queuedImageResourceRequests.push(run);
   });
 }
 
@@ -251,14 +252,39 @@ export async function extractImageTheme(
   imageUrl: string
 ): Promise<ThemePalette> {
   const cacheKey = `${CACHE_KEY_IMAGE_THEME}${imageUrl}`;
-  const cached = await cacheManager.themes.get(cacheKey);
-  if (cached.found) {
-    return cached.data;
+  const inflight = inflightImageThemeRequests.get(cacheKey);
+  if (inflight) {
+    return inflight;
   }
 
-  const data = await invoke<ThemePalette>('extract_image_theme', { imageUrl });
-  await cacheManager.themes.set(cacheKey, data);
-  return data;
+  const request = (async () => {
+    const cached = await cacheManager.themes.get(cacheKey);
+    if (cached.found) {
+      return cached.data;
+    }
+
+    return scheduleImageResourceRequest(async () => {
+      const queuedCached = await cacheManager.themes.get(cacheKey);
+      if (queuedCached.found) {
+        return queuedCached.data;
+      }
+
+      const data = await invoke<ThemePalette>('extract_image_theme', {
+        imageUrl,
+      });
+      await cacheManager.themes.set(cacheKey, data);
+      return data;
+    });
+  })();
+  inflightImageThemeRequests.set(cacheKey, request);
+
+  try {
+    return await request;
+  } finally {
+    if (inflightImageThemeRequests.get(cacheKey) === request) {
+      inflightImageThemeRequests.delete(cacheKey);
+    }
+  }
 }
 
 export async function getImageDataUrl(imageUrl: string): Promise<string> {
@@ -274,7 +300,7 @@ export async function getImageDataUrl(imageUrl: string): Promise<string> {
       return cached.data;
     }
 
-    return scheduleImageDataUrlRequest(async () => {
+    return scheduleImageResourceRequest(async () => {
       const queuedCached = await cacheManager.covers.get(cacheKey);
       if (queuedCached.found) {
         return queuedCached.data;

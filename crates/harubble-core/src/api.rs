@@ -30,6 +30,10 @@ struct InflightApiRequest {
     fetch: SharedApiFetch,
 }
 
+struct InflightDownloadRequest {
+    fetch: SharedApiFetch,
+}
+
 enum CachedApiRequest {
     Cached(Vec<u8>),
     Inflight(Arc<InflightApiRequest>),
@@ -180,6 +184,7 @@ pub struct ApiClient {
     base_url: String,
     response_cache: Arc<Mutex<LruCache<String, Vec<u8>>>>,
     inflight_api_requests: Arc<Mutex<HashMap<String, Arc<InflightApiRequest>>>>,
+    inflight_download_requests: Arc<Mutex<HashMap<String, Arc<InflightDownloadRequest>>>>,
 }
 
 impl ApiClient {
@@ -199,6 +204,7 @@ impl ApiClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             response_cache: Arc::new(Mutex::new(LruCache::new(capacity))),
             inflight_api_requests: Arc::new(Mutex::new(HashMap::new())),
+            inflight_download_requests: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -254,6 +260,54 @@ impl ApiClient {
     fn clear_completed_response_cache(&self) {
         if let Ok(mut cache) = self.response_cache.lock() {
             cache.clear();
+        }
+    }
+
+    fn get_or_create_inflight_download_request(
+        &self,
+        cache_key: &str,
+        url: &str,
+    ) -> Arc<InflightDownloadRequest> {
+        let mut requests = self
+            .inflight_download_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if let Some(request) = requests.get(cache_key) {
+            return request.clone();
+        }
+
+        let client = ApiClient::clone(self);
+        let url = url.to_string();
+        let fetch = async move {
+            client
+                .fetch_streamed_bytes(&url, |_, _| {})
+                .await
+                .map(Arc::new)
+                .map_err(|e| e.to_string())
+        }
+        .boxed()
+        .shared();
+        let request = Arc::new(InflightDownloadRequest { fetch });
+        requests.insert(cache_key.to_string(), request.clone());
+        request
+    }
+
+    fn finish_inflight_download_request(
+        &self,
+        cache_key: &str,
+        request: &Arc<InflightDownloadRequest>,
+    ) {
+        let mut requests = self
+            .inflight_download_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if requests
+            .get(cache_key)
+            .is_some_and(|current| Arc::ptr_eq(current, request))
+        {
+            requests.remove(cache_key);
         }
     }
 
@@ -490,6 +544,9 @@ impl ApiClient {
         if let Ok(mut requests) = self.inflight_api_requests.lock() {
             requests.clear();
         }
+        if let Ok(mut requests) = self.inflight_download_requests.lock() {
+            requests.clear();
+        }
         self.clear_completed_response_cache();
     }
 
@@ -682,6 +739,32 @@ impl ApiClient {
         let bytes = self.fetch_streamed_bytes(url, on_progress).await?;
         self.write_cached_bytes(cache_key, &bytes);
         Ok(bytes)
+    }
+
+    /// 下载完整字节内容，并让同一 URL 的并发调用共享同一个网络请求。
+    ///
+    /// 适用于封面、主题提取等没有逐块进度展示的展示资源，避免专辑切换时同一图片
+    /// 被多个界面增强任务重复下载。需要精确进度回调的下载任务应继续使用
+    /// [`ApiClient::download_bytes`]。
+    pub async fn download_bytes_coalesced(&self, url: &str) -> Result<Vec<u8>> {
+        crate::url_validator::validate_download_url(url)?;
+
+        let cache_key = Self::cache_key("GET", url);
+        if let Some(bytes) = self.read_cached_bytes(&cache_key) {
+            return Ok(bytes);
+        }
+
+        let request = self.get_or_create_inflight_download_request(&cache_key, url);
+        let bytes = match request.fetch.clone().await {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                self.finish_inflight_download_request(&cache_key, &request);
+                return Err(anyhow::anyhow!(message));
+            }
+        };
+        self.finish_inflight_download_request(&cache_key, &request);
+        self.write_cached_bytes(cache_key, &bytes);
+        Ok(bytes.as_ref().clone())
     }
 
     /// 下载文本内容，并自动移除 UTF-8 BOM。
