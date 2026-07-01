@@ -617,6 +617,7 @@ mod tests {
             "commands/playback.rs",
             "network_monitor.rs",
             "player/controller.rs",
+            "playback_load_gate.rs",
         ];
 
         assert_identifier_is_limited_to(&root, "playback_api", &allowed);

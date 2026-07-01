@@ -9,6 +9,7 @@ use crate::listening_history::ListeningHistoryService;
 use crate::local_inventory::LocalInventoryService;
 use crate::local_inventory_provenance::LocalInventoryProvenanceStore;
 use crate::logging::{LogCenter, LogLevel, LogPayload};
+use crate::playback_load_gate::PlaybackLoadGate;
 use crate::player::stream::PlaybackInput;
 use crate::player::AudioPlayer;
 use crate::player::{PlaybackError, PlaybackErrorCode};
@@ -20,8 +21,9 @@ use crate::tag_registry::TagRegistryService;
 use harubble_core::{DownloadManagerSnapshot, DownloadService};
 use std::future::Future;
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 use tauri::{Emitter, Manager};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 
 /// 应用运行期间共享的后端状态容器。
 ///
@@ -34,6 +36,8 @@ pub struct AppState {
     pub(crate) api: Arc<harubble_core::ApiClient>,
     pub(crate) playback_api: Arc<harubble_core::ApiClient>,
     pub(crate) playback_runtime: Arc<tokio::runtime::Runtime>,
+    pub(crate) playback_load_gate: PlaybackLoadGate,
+    pub(crate) visual_aux_lock: Arc<Mutex<()>>,
     pub(crate) download_service: Arc<Mutex<DownloadService>>,
     pub(crate) download_job_creation_lock: Arc<Mutex<()>>,
     pub(crate) preferences_write_lock: Arc<Mutex<()>>,
@@ -116,6 +120,8 @@ impl AppState {
             api: Arc::new(api),
             playback_api: Arc::new(playback_api),
             playback_runtime: Arc::new(playback_runtime),
+            playback_load_gate: PlaybackLoadGate::new(),
+            visual_aux_lock: Arc::new(Mutex::new(())),
             download_service,
             download_job_creation_lock: Arc::new(Mutex::new(())),
             preferences_write_lock: Arc::new(Mutex::new(())),
@@ -226,6 +232,31 @@ impl AppState {
         request_id
     }
 
+    pub(crate) fn is_playback_load_gate_active(&self) -> bool {
+        self.playback_load_gate.is_active()
+    }
+
+    pub(crate) async fn wait_for_playback_load_gate(&self, settle_delay: Duration) {
+        self.playback_load_gate
+            .wait_until_inactive_with_settle(settle_delay)
+            .await;
+    }
+
+    pub(crate) async fn enter_visual_aux(&self, command_name: &'static str) -> MutexGuard<'_, ()> {
+        const VISUAL_AUX_PLAYBACK_SETTLE_DELAY: Duration = Duration::from_millis(350);
+
+        command_scheduling::debug_assert_command_domain(command_name, CommandDomain::VisualAux);
+
+        loop {
+            self.wait_for_playback_load_gate(VISUAL_AUX_PLAYBACK_SETTLE_DELAY)
+                .await;
+            let guard = self.visual_aux_lock.lock().await;
+            if !self.is_playback_load_gate_active() {
+                return guard;
+            }
+        }
+    }
+
     pub(crate) async fn dispatch_playback_transition<F, Fut, T>(
         &self,
         command_name: &'static str,
@@ -237,9 +268,14 @@ impl AppState {
         T: Send + 'static,
     {
         let request_id = self.begin_playback_transition(command_name);
+        let load_ticket = self.playback_load_gate.enter();
         let state = self.clone();
         self.playback_runtime
-            .spawn(async move { task(state, request_id).await })
+            .spawn(async move {
+                let result = task(state, request_id).await;
+                drop(load_ticket);
+                result
+            })
             .await
             .map_err(|error| {
                 PlaybackError::new(
@@ -257,9 +293,11 @@ impl AppState {
         Fut: Future<Output = ()> + Send + 'static,
     {
         let request_id = self.begin_playback_transition(command_name);
+        let load_ticket = self.playback_load_gate.enter();
         let state = self.clone();
         self.playback_runtime.spawn(async move {
             task(state, request_id).await;
+            drop(load_ticket);
         });
     }
 
@@ -354,8 +392,13 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
     let api = state.api.clone();
     let cache = state.album_metadata_cache.clone();
     let log_center = state.log_center.clone();
+    let state_for_gate = state.clone();
 
     tauri::async_runtime::spawn(async move {
+        state_for_gate
+            .wait_for_playback_load_gate(Duration::from_millis(250))
+            .await;
+
         let albums = match api.get_albums().await {
             Ok(albums) => albums,
             Err(e) => {
@@ -488,6 +531,10 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
     let state = state.clone();
 
     tauri::async_runtime::spawn(async move {
+        state
+            .wait_for_playback_load_gate(Duration::from_millis(250))
+            .await;
+
         let updated = async {
             let response_bytes = load_tag_registry_bytes(&state).await?;
             let new_registry: crate::tag_registry::TagRegistry =

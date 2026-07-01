@@ -35,14 +35,17 @@ Harubble 应采用 **Command Domain + 独立资源域 + 降级策略**，而不�
 - 系统媒体控制的 next/previous/seek 已通过同一个 playback transition dispatcher 调度。
 - 新 playback transition 提交时会先 supersede 旧播放启动 request；若旧会话仍处于 `Loading`，会让其 stop flag 立即失效，避免旧下载/probe/初始缓冲继续占用播放资源。
 - 播放启动期间的歌曲详情、音频下载、缓存准备、格式探测、初始缓冲等待已进入播放资源域。
-- 封面 data URL、主题色提取已在前端串行/合并，下载执行循环在播放器 `Loading` 时不会主动领取新任务。
+- `PlaybackLoadGate` 已在 playback transition 提交时激活，并用 ticket 防止旧启动任务释放新启动窗口。
+- 封面 data URL、主题色提取已在前端串行/合并，后端 image/theme/lyrics command 也已通过 VisualAux 锁串行，并在播放启动 gate 活跃时退让。
+- 下载执行循环、本地库存扫描、搜索索引重建、belong 预热和 tag registry 同步在领取新后台工作前会等待播放启动 gate；已运行的下载/扫描不被强行中断。
+- 收听历史记录已从播放启动主路径移到后台 side effect，失败只写日志，不阻塞 `play_song` 成功返回。
 - CPAL 回调已经避免等待 `SampleBuffer` 或 `PlayerState` 锁；拿不到锁时只静音或跳过进度写入。
 
 仍需要继续收敛的风险：
 
 - `dispatch_playback_transition` 仍是轻量 dispatcher，不是完整 actor；它已经统一 request 创建和 supersede，但还没有独立 inbox、队列观测和 side-effect 调度。
-- 普通 UI、图片、歌词、下载、库存扫描、日志和偏好保存缺少统一的“播放 Loading 时如何退让”的策略入口。
-- `playback_api` 已隔离音频下载，但图片/下载任务仍共享普通 `api`；切换专辑时普通资源争抢被缓解，但还没有在架构上完全显式化。
+- 普通 UI 和偏好保存仍不被 gate 阻塞；它们只能使用普通资源域，后续需要继续避免长时间同步写入影响交互。
+- `playback_api` 已隔离音频下载，但图片/下载任务仍共享普通 `api`；切换专辑时普通资源争抢已通过 gate/串行化缓解，Phase 4 仍应拆出 `image_api` 与 `download_api`。
 
 ## Command Domains
 
@@ -177,12 +180,13 @@ ResourceRegistry
 
 `PlaybackLoadGate` 是跨 domain 的退让信号，不是互斥锁。
 
-建议实现：
+当前落地：
 
-- `AudioPlayer` 状态进入 `Loading` 时发布 gate active。
-- `VisualAux` 进入 gate 后延迟 300-800ms，再检查 album/song 是否仍是当前目标；过期则取消。
+- playback transition 提交时发布 gate active；ticket drop 时释放，旧 ticket 不能释放更新的 gate。
+- `VisualAux` 进入 gate 后延迟约 350ms，再通过后端 `visual_aux_lock` 串行执行。
+- album/song 过期结果丢弃仍由前端请求序号与缓存 key 负责；后端目前只保证不并发抢资源。
 - `BackgroundIo` 在领取新 job/task 前等待 gate inactive；已在运行的下载不硬停，但进度事件继续节流。
-- `PlaybackSideEffect` 默认在 gate inactive 或 `Playing` 后执行。
+- `PlaybackSideEffect` 默认在后台执行，不阻塞播放成功返回。
 - `InteractiveUi` 不被 gate 阻塞，但只能使用普通资源域。
 
 这比“全局暂停其他任务”更稳，因为不会让 UI 卡死，也不会强杀已经打开的文件/网络连接。
@@ -242,10 +246,10 @@ ResourceRegistry
 
 ### Phase 3: Resource Gate And Aux Queues
 
-- 引入 `PlaybackLoadGate`。
-- 后端 image/theme/lyrics command 增加 gate 检查和过期结果丢弃。
-- 将前端已有的 image 串行/合并策略保留为第一道保护，后端再做第二道保护。
-- 下载 worker、inventory scan、cache warmup 统一接入 background executor。
+- 已引入 `PlaybackLoadGate`，并接入 playback transition dispatcher。
+- 已为后端 image/theme/lyrics command 增加 gate 检查与后端串行锁；过期结果丢弃仍由前端请求序号负责。
+- 已保留前端 image 串行/合并策略作为第一道保护，后端 gate/锁作为第二道保护。
+- 已让下载 worker、inventory scan、搜索索引重建、belong/tag 预热在启动新工作前等待 gate inactive。
 
 ### Phase 4: Split More Clients
 

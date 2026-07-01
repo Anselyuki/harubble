@@ -238,7 +238,13 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async fn wait_for_playback_startup_to_settle(state: &AppState) {
-    while state.player.get_state().is_loading {
+    loop {
+        state
+            .wait_for_playback_load_gate(PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL)
+            .await;
+        if !state.player.get_state().is_loading {
+            return;
+        }
         tokio::time::sleep(PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL).await;
     }
 }

@@ -86,31 +86,14 @@ impl AppState {
 
         match result {
             Ok(duration) => {
-                let listening_event = harubble_core::ListeningEvent {
+                self.spawn_listening_history_record(harubble_core::ListeningEvent {
                     song_cid: song_cid.clone(),
                     song_name: song_detail.name.clone(),
                     album_cid: song_detail.album_cid.clone(),
                     album_name: String::new(),
                     cover_url: cover_url.clone(),
                     artists: song_detail.artists.clone(),
-                };
-                let listening_history = self.listening_history.clone();
-                let record_result =
-                    tokio::task::spawn_blocking(move || listening_history.record(&listening_event))
-                        .await
-                        .map_err(|error| error.to_string())
-                        .and_then(|result| result);
-                if let Err(e) = record_result {
-                    self.log_center.record(
-                        LogPayload::new(
-                            LogLevel::Warn,
-                            "listening-history",
-                            "listening_history.record_failed",
-                            "Failed to record listening history",
-                        )
-                        .details(e),
-                    );
-                }
+                });
                 Ok(PlaybackStartResult::new(duration, session_id))
             }
             Err(error) => {
@@ -427,6 +410,31 @@ impl AppState {
         self.playback_runtime.handle().spawn_blocking(move || {
             let _ = std::fs::remove_file(&pending_marker);
             let _ = std::fs::remove_file(&cache_path);
+        });
+    }
+
+    fn spawn_listening_history_record(&self, listening_event: harubble_core::ListeningEvent) {
+        let listening_history = self.listening_history.clone();
+        let log_center = self.log_center.clone();
+
+        tauri::async_runtime::spawn(async move {
+            let record_result =
+                tokio::task::spawn_blocking(move || listening_history.record(&listening_event))
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| result);
+
+            if let Err(e) = record_result {
+                log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "listening-history",
+                        "listening_history.record_failed",
+                        "Failed to record listening history",
+                    )
+                    .details(e),
+                );
+            }
         });
     }
 

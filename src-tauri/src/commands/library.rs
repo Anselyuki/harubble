@@ -104,6 +104,8 @@ pub async fn get_song_lyrics(
     state: State<'_, AppState>,
     cid: String,
 ) -> Result<Option<String>, String> {
+    let _visual_guard = state.enter_visual_aux("get_song_lyrics").await;
+
     let song_detail = state
         .api
         .get_song_detail(&cid)
@@ -133,6 +135,7 @@ pub async fn extract_image_theme(
     image_url: String,
 ) -> Result<theme::ThemePalette, String> {
     harubble_core::validate_download_url(&image_url).map_err(|e| e.to_string())?;
+    let _visual_guard = state.enter_visual_aux("extract_image_theme").await;
 
     let bytes = state
         .api
@@ -165,6 +168,7 @@ pub async fn get_image_data_url(
     image_url: String,
 ) -> Result<String, String> {
     harubble_core::validate_download_url(&image_url).map_err(|e| e.to_string())?;
+    let _visual_guard = state.enter_visual_aux("get_image_data_url").await;
 
     let bytes = state
         .api

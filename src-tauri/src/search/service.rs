@@ -13,6 +13,7 @@ use harubble_core::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -187,6 +188,10 @@ impl LibrarySearchService {
 
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
+            state
+                .wait_for_playback_load_gate(Duration::from_millis(250))
+                .await;
+
             let generation = service.start_rebuild(&inventory).await;
             let snapshot_result = build_library_search_snapshot(
                 state.api.clone(),

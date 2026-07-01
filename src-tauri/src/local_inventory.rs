@@ -14,7 +14,7 @@ use harubble_core::{
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use time::format_description::well_known::Iso8601;
 use time::OffsetDateTime;
@@ -217,6 +217,10 @@ pub fn spawn_inventory_scan(
     verification_mode: Option<VerificationMode>,
 ) {
     tauri::async_runtime::spawn(async move {
+        state
+            .wait_for_playback_load_gate(Duration::from_millis(250))
+            .await;
+
         let mode = match verification_mode {
             Some(mode) => mode,
             None => state.local_inventory_service.verification_mode().await,
