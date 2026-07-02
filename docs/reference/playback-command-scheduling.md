@@ -1,16 +1,16 @@
 # Playback Command Scheduling
 
-> 播放资源隔离与 command 调度改造建议。本文回答“是否需要给播放单独分配资源、是否要细分 command 作用域、是否只靠优先级就够”的架构问题；状态机和音频安全不变量见 [playback-state-machine.md](./playback-state-machine.md)。
+> 播放资源隔离与 command 调度当前实现。本文记录播放资源域、command 作用域、优先级、退让策略与可观测性；状态机和音频安全不变量见 [playback-state-machine.md](./playback-state-machine.md)。
 
 ## Decision
 
 Harubble 应采用 **Command Domain + 独立资源域 + 降级策略**，而不是把所有任务放在同一个 runtime 后只增加 priority 字段。
 
-推荐结论：
+当前结论：
 
 1. 播放仍然留在同一应用进程内；CPAL 输出回调由音频后端调度，不依赖 Tauri async runtime。
-2. 播放启动、切歌、seek、音频流下载、probe、初始缓冲必须走专用 `playback_api` 与 `harubble-playback` runtime。
-3. 下一步应引入 `CommandRouter` 和 `PlaybackActor`，让 command 先声明作用域、优先级、取消策略和资源域，再进入对应 executor。
+2. 播放启动、切歌、seek、音频流下载、probe、初始缓冲走专用 `playback_api`、`PlaybackActor` 与 `harubble-playback` runtime。
+3. command 作用域、优先级与取消策略由 `src-tauri/src/command_scheduling.rs` 的静态 registry 声明，并由测试覆盖 Tauri command 与内部后台入口。
 4. priority 只用于同一作用域内的局部排序；真正保护音频的是资源域隔离、可取消、可降级和实时回调不阻塞。
 5. 单独进程暂不作为首选。它能隔离崩溃，但不能天然解决网络、磁盘和输出设备争抢，还会引入 IPC、状态同步和媒体控制复杂度。
 
@@ -26,152 +26,108 @@ Harubble 应采用 **Command Domain + 独立资源域 + 降级策略**，而不�
 
 ## Current State
 
-当前已经具备第一层隔离，并已开始落地调度域：
+当前实现：
 
 - `AppState` 内有普通 `api`、专用 `playback_api`、视觉辅助 `image_api` 和下载 `download_api`。
 - `AppState` 内有专用 `harubble-playback` runtime，当前配置为 2 个 worker threads 和 4 个 blocking threads。
 - `src-tauri/src/command_scheduling.rs` 已声明 command domain、priority 和 cancel policy，并用测试覆盖 Tauri command 注册表。
-- `play_song`、`seek_current_playback`、`play_next`、`play_previous` 已通过 `dispatch_playback_transition` 调度。
-- 系统媒体控制的 next/previous/seek 已通过同一个 playback transition dispatcher 调度。
-- 新 playback transition 提交时会先 supersede 旧播放启动 request；若旧会话仍处于 `Loading`，会让其 stop flag 立即失效，避免旧下载/probe/初始缓冲继续占用播放资源。
+- `play_song`、`seek_current_playback`、`play_next`、`play_previous` 已通过 `PlaybackActor` inbox 调度。
+- 系统媒体控制的 next/previous/seek 已通过同一个 `PlaybackActor` 调度。
+- 新 playback transition 被 actor 领取时会先 supersede 旧播放启动 request；若旧会话仍处于 `Loading`，会让其 stop flag 立即失效，避免旧下载/probe/初始缓冲继续占用播放资源。
 - 播放启动期间的歌曲详情、音频下载、缓存准备、格式探测、初始缓冲等待已进入播放资源域。
 - `PlaybackLoadGate` 已在 playback transition 提交时激活，并用 ticket 防止旧启动任务释放新启动窗口。
 - 封面 data URL、主题色提取已在前端串行/合并，后端 image/theme/lyrics command 也已通过 VisualAux 锁串行，并在播放启动 gate 活跃时退让。
 - 下载执行循环、本地库存扫描、搜索索引重建、belong 预热和 tag registry 同步在领取新后台工作前会等待播放启动 gate；已运行的下载/扫描不被强行中断。
-- 收听历史记录已从播放启动主路径移到后台 side effect，失败只写日志，不阻塞 `play_song` 成功返回。
-- CPAL 回调已经避免等待 `SampleBuffer` 或 `PlayerState` 锁；拿不到锁时只静音或跳过进度写入。
+- 收听历史记录已从播放启动主路径移到 `PlaybackSideEffect` 后台入口，失败只写日志，不阻塞 `play_song` 成功返回。
+- playback transition、playback startup、playback side effect、VisualAux 已记录 `command.domain`、`command.priority`、`command.queue_wait_ms`、`command.run_ms`、`playback.session_id`、`playback.request_id`、`playback.loading_ms` 和 supersede 状态；VisualAux 与 BackgroundIo 退让路径已记录 `resource_gate.wait_ms`。
+- CPAL 回调已经避免等待 `SampleBuffer` 或 `PlayerState` 锁；拿不到锁时只静音或跳过进度写入，并通过 monitor 线程聚合记录 `audio.callback_silence_due_to_lock` 与 `audio.callback_underrun_frames`。
 
 仍需要继续收敛的风险：
 
-- `dispatch_playback_transition` 仍是轻量 dispatcher，不是完整 actor；它已经统一 request 创建和 supersede，但还没有独立 inbox、队列观测和 side-effect 调度。
 - 普通 UI 和偏好保存仍不被 gate 阻塞；它们只能使用普通资源域，后续需要继续避免长时间同步写入影响交互。
 - `image_api` / `download_api` 已隔离普通 UI client；`image_api` 使用更短超时与小资源上限，`download_api` 使用独立连接池配置。
 
 ## Command Domains
 
-所有 Tauri command 和后台入口都应归入以下 domain。每个 domain 声明 executor、优先级、可取消性和播放 Loading 时的策略。
+所有 Tauri command 和内部后台入口都在 `COMMAND_SPECS` 中声明 domain、priority 和 cancel policy。当前 registry 使用以下 domain。
 
-| Domain               | Priority | Examples                                                        | Executor                                    | Loading policy                                              |
-| -------------------- | -------- | --------------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------- |
-| `RealtimeAudio`      | P0       | CPAL output callback                                            | OS/audio backend thread                     | 永不等待业务锁；失败只静音、跳过进度或停止当前 session      |
-| `PlaybackControl`    | P1       | pause, resume, stop, toggle, volume, get state                  | 直接调用 `AudioPlayer` 的短路径             | 允许执行，但不得做网络/磁盘重活                             |
-| `PlaybackTransition` | P1       | play song, next, previous, seek commit                          | `PlaybackActor` on `harubble-playback`      | 可抢占旧启动；同类请求 latest-wins                          |
-| `PlaybackStartupIo`  | P1       | song detail, audio stream, cache prepare, probe, initial buffer | `playback_api` + playback blocking pool     | 只服务当前 playback ticket；旧 ticket 立即 supersede/cancel |
-| `PlaybackSideEffect` | P2       | listening history, scrobble, media metadata artwork refresh     | side-effect/background executor             | 延后到 `Playing` 后，不阻塞播放成功返回                     |
-| `InteractiveUi`      | P3       | albums, album detail, search, preferences, logs, tags           | app runtime + ordinary `api`                | 允许执行，但不得使用播放资源域                              |
-| `VisualAux`          | P4       | image data URL, theme extraction, lyrics                        | visual queue, concurrency 1                 | `Loading` 时延迟、合并、取消过期 album 请求                 |
-| `BackgroundIo`       | P5       | download worker, inventory scan, metadata scan, cache warmup    | background executor + ordinary/download API | `Loading` 时不启动新任务；已启动任务只走常规取消/背压       |
-| `Maintenance`        | P2/P3    | clear cache, reset HTTP client, recovery                        | router fan-out                              | 必须显式声明是否影响 playback client；默认避开播放启动窗口  |
+| Domain               | Priority labels                         | Examples                                                               | Executor / resource                                 | Loading policy                                     |
+| -------------------- | --------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------- |
+| `PlaybackControl`    | `Playback`                              | pause, resume, volume, get state                                       | 直接调用 `AudioPlayer` 的短路径                     | 允许执行，但不得做网络/磁盘重活                    |
+| `PlaybackTransition` | `Playback`                              | play song, next, previous, seek commit                                 | `PlaybackActor` on `harubble-playback`              | 新 transition 会 supersede 旧启动                  |
+| `PlaybackSideEffect` | `CriticalSideEffect`                    | record / clear listening history                                       | app runtime side-effect helper                      | 不阻塞播放成功返回                                 |
+| `InteractiveUi`      | `Interactive`                           | albums, search, preferences, logs, tags, collections, download list    | app runtime + ordinary `api`                        | 不被 gate 阻塞，但不得使用播放资源域               |
+| `VisualAux`          | `Visual`                                | image data URL, theme extraction, lyrics                               | `image_api` + backend `visual_aux_lock`             | `Loading` 时等待 gate，并串行执行                  |
+| `BackgroundIo`       | `Background` 或交互取消用 `Interactive` | download create/cancel/retry, download loop, inventory, search, warmup | background tasks + ordinary `api` 或 `download_api` | 领取新后台工作前等待 gate；已启动任务不硬停        |
+| `Maintenance`        | `CriticalSideEffect`                    | clear audio cache, clear response cache, reset HTTP clients            | app/playback/image/download 四个资源域的 fan-out    | 按命令语义执行；`clear_audio_cache` 会先停止播放器 |
 
-优先级含义：
+优先级标签含义：
 
-- P0 不进入 async 调度队列。
-- P1 只给播放控制和播放启动使用。
-- P2 可以影响播放环境，但必须短、可解释、可观测。
-- P3-P5 都是可退让任务，不能反向等待播放域。
+- `Playback`：播放控制和播放 transition。
+- `CriticalSideEffect`：维护入口或播放相关副作用，必须短、可解释、可观测。
+- `Interactive`：用户交互入口，不能反向等待播放域。
+- `Visual`：可退让的视觉辅助任务。
+- `Background`：下载、扫描、搜索索引和预热等后台任务。
 
-## Proposed Architecture
+CPAL 输出回调不进入 `COMMAND_SPECS`；它通过音频后端线程运行，并在指标中记录 `command.domain = "RealtimeAudio"`、`command.priority = "Realtime"`。
+
+## Architecture
 
 ```text
 Frontend / media keys / lifecycle
   -> Tauri command shim
-  -> CommandRouter
        -> RealtimeAudio: CPAL callback path, no async wait
        -> PlaybackControl: direct short AudioPlayer operation
-       -> PlaybackActor: play/seek/next/previous, latest-wins
-       -> VisualQueue: artwork/theme/lyrics, serialized and cancellable
-       -> BackgroundQueue: downloads/inventory/cache warmup
+       -> PlaybackActor: play/seek/next/previous, unbounded inbox on harubble-playback
+       -> VisualAux: image/theme/lyrics through image_api, playback gate + backend serial lock
+       -> BackgroundIo: downloads/inventory/search/tag warmup through background gate
        -> AppRuntime: normal UI/data commands
 ```
 
-### CommandRouter
+### Command Registry
 
-`CommandRouter` 是后端统一入口，不需要改变对外 Tauri command 名称。每个 command shim 只负责解析入参并调用 router。
+`src-tauri/src/command_scheduling.rs` 是当前 command 调度真相来源。它维护 `COMMAND_SPECS` 静态表，把每个 Tauri command 和内部后台入口映射到 `CommandDomain`、`CommandPriority` 与 `CancelPolicy`。
 
-建议结构：
+当前 registry 还通过测试约束三类资源域：
 
-```rust
-enum CommandDomain {
-    PlaybackControl,
-    PlaybackTransition,
-    PlaybackStartupIo,
-    PlaybackSideEffect,
-    InteractiveUi,
-    VisualAux,
-    BackgroundIo,
-    Maintenance,
-}
-
-enum CommandPriority {
-    Realtime,
-    Playback,
-    CriticalSideEffect,
-    Interactive,
-    Visual,
-    Background,
-}
-
-enum CancelPolicy {
-    NeverCancel,
-    LatestWins { key: &'static str },
-    SupersedePlaybackSession,
-    Cooperative,
-}
-
-struct CommandSpec {
-    name: &'static str,
-    domain: CommandDomain,
-    priority: CommandPriority,
-    cancel_policy: CancelPolicy,
-}
-```
-
-第一阶段可以不用做复杂宏，只要把 command registry 做成静态表，并加测试保证每个 `#[tauri::command]` 都有归属即可。
+- `playback_api`、`playback_runtime` 和 `PlaybackActor` 只能出现在播放路径、媒体控制、网络重置、播放 gate 与 actor 内部。
+- `image_api` 只能用于 library 视觉辅助、通知封面、网络重置和 `AppState` 初始化。
+- `download_api` 只能用于下载 command、下载桥接、网络重置和 `AppState` 初始化。
 
 ### PlaybackActor
 
 `PlaybackActor` 负责把 play/next/previous/seek 串成一个明确的播放控制流。
 
-建议规则：
+当前规则：
 
-- `PlaySelection`、`Next`、`Previous` 抢占旧的 `PlaySelection` / `Seek`。
-- 高频 seek 只保留最后一次提交；拖拽过程中的 preview 不进后端。
-- actor 为每次启动创建 `PlaybackTicket`，包含 `request_id`、预期 `session_id`、取消 token、开始时间和 intent。
-- 所有 metadata/audio/probe/buffer 子任务都必须携带 ticket；ticket 失效后立即停止写缓存、停止等待初始缓冲，并返回 `Superseded`。
-- actor 只编排播放；CPAL callback、decode worker 内部实时路径仍遵守状态机文档中的锁规则。
-
-示意：
+- `play_song`、`seek_current_playback`、`play_next`、`play_previous` 和系统媒体 next/previous/seek 统一提交到 actor inbox。
+- actor 在领取消息时调用 `begin_playback_transition`，推进 request id，并在旧会话仍处于 `Loading` 时让旧 stop flag 立即失效。
+- 每个 actor job 持有一个 `PlaybackLoadGate` ticket；job 完成后释放 ticket，避免旧启动窗口误释放新窗口。
+- 具体播放启动流程仍由 `AppState` helper 执行，并用 `request_id`、`session_id`、`stop_flag` 和 gate ticket 完成 supersede 与取消保护。
+- actor 记录 `command.queue_wait_ms`、`command.queue_depth`、`command.run_ms`、`playback.request_id` 与 `playback.ticket_superseded`。
 
 ```text
 PlaybackActor inbox
-  high: Stop, PlaySelection, Next, Previous
-  normal: SeekCommit
-  low: PreloadCandidate
-
-on command:
-  cancel previous startup ticket if superseded
-  begin_playback_request
-  begin_loading_session
-  prepare input/probe/buffer with ticket
-  open output stream
-  emit Playing or fail/superseded
+  -> begin_playback_transition
+  -> enter PlaybackLoadGate
+  -> run AppState playback helper
+  -> drop gate ticket
+  -> record playback.transition_completed metrics
 ```
 
-### ResourceRegistry
+### Resource Layout
 
-把当前散落在 `AppState` 上的 runtime/client 收敛为一个资源注册表，减少误用。
-
-目标形态：
+当前没有单独的 `ResourceRegistry` 类型；资源注册表由 `AppState` 字段和 `command_scheduling.rs` 的静态测试共同承担。
 
 ```text
-ResourceRegistry
-  api.app          -> library/search/preferences/logging
-  api.playback     -> song detail + audio stream for active playback
-  api.image        -> cover/theme/lyrics, coalesced and low priority
-  api.download     -> download worker, large transfers
-  runtime.playback -> playback actor + startup async work
-  runtime.blocking_playback -> probe/open/cache cleanup with small cap
-  runtime.background -> download write, inventory scan, history side effect
+AppState
+  api              -> library/search/preferences/logging/tag/collection
+  playback_api     -> song detail + audio stream for active playback
+  image_api        -> cover/theme/lyrics/notification artwork, low priority
+  download_api     -> download job preparation + large transfers
+  playback_runtime -> PlaybackActor + playback startup async/blocking work
+  playback_gate    -> cross-domain startup backpressure signal
+  visual_aux_lock  -> backend serialization for image/theme/lyrics
 ```
 
 当前已拆出四个 API client，并用静态测试限制资源域误用：
@@ -179,7 +135,7 @@ ResourceRegistry
 - `api`：普通 UI、首页、tag、搜索索引和轻量数据读取。
 - `playback_api`：播放启动、音频流下载、probe 前置数据。
 - `image_api`：封面 data URL、主题色、歌词、通知封面临时缓存；短超时、小资源上限。
-- `download_api`：下载任务准备、专辑封面落盘、歌词侧车、音频大文件下载；独立连接池配置。
+- `download_api`：下载任务准备、专辑封面落盘、歌词侧车和音频大文件下载；独立连接池配置。
 
 ### PlaybackLoadGate
 
@@ -187,87 +143,89 @@ ResourceRegistry
 
 当前落地：
 
-- playback transition 提交时发布 gate active；ticket drop 时释放，旧 ticket 不能释放更新的 gate。
+- `PlaybackActor` 领取 playback transition 后发布 gate active；actor job drop ticket 时释放，旧 ticket 不能释放更新的 gate。
 - `VisualAux` 进入 gate 后延迟约 350ms，再通过后端 `visual_aux_lock` 串行执行。
 - album/song 过期结果丢弃仍由前端请求序号与缓存 key 负责；后端目前只保证不并发抢资源。
 - `BackgroundIo` 在领取新 job/task 前等待 gate inactive；已在运行的下载不硬停，但进度事件继续节流。
-- `PlaybackSideEffect` 默认在后台执行，不阻塞播放成功返回。
+- `PlaybackSideEffect` 在后台执行，不阻塞播放成功返回。
 - `InteractiveUi` 不被 gate 阻塞，但只能使用普通资源域。
 
 这比“全局暂停其他任务”更稳，因为不会让 UI 卡死，也不会强杀已经打开的文件/网络连接。
 
 ## Command Mapping
 
-当前 command 建议归属如下。
+当前 command 归属如下。
 
-| Command / entry                                                      | Domain                                          | Notes                                                        |
-| -------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------ |
-| `play_song`                                                          | `PlaybackTransition`                            | 进入 `PlaybackActor`，supersede 旧启动                       |
-| `seek_current_playback`                                              | `PlaybackTransition`                            | 高频输入前端节流；后端 latest-wins                           |
-| `play_next`, `play_previous`                                         | `PlaybackTransition`                            | media key 与 UI 共用同一路径                                 |
-| system media next/previous/seek                                      | `PlaybackTransition`                            | 不直接 spawn 任意 async task，统一 dispatch                  |
-| `pause_playback`, `resume_playback`                                  | `PlaybackControl`                               | 短路径，不做网络/磁盘                                        |
-| `get_player_state`                                                   | `PlaybackControl`                               | 只读快照                                                     |
-| `set_playback_volume`                                                | `PlaybackControl` + `PlaybackSideEffect`        | 音量立即生效；偏好持久化可 side-effect 化                    |
-| `get_albums`, `get_album_detail`, `get_song_detail`, search/homepage | `InteractiveUi`                                 | 普通 `api`，不得进入 playback runtime                        |
-| `get_song_lyrics`                                                    | `VisualAux`                                     | 播放 Loading 时延后，结果必须按 song/session 校验            |
-| `get_image_data_url`, `extract_image_theme`                          | `VisualAux`                                     | concurrency 1、in-flight dedupe、album switch cancel         |
-| download create/list/cancel/retry                                    | `InteractiveUi` command + `BackgroundIo` worker | command 只改队列；worker 受 gate 约束                        |
-| download execution loop                                              | `BackgroundIo`                                  | Loading 时不领取新 job/task                                  |
-| inventory scan / audio metadata scan                                 | `BackgroundIo`                                  | 可暂停或降低并发                                             |
-| cache clear / HTTP reset                                             | `Maintenance`                                   | 必须声明是否影响 playback client，并避开非必要的播放启动窗口 |
-| listening history record                                             | `PlaybackSideEffect`                            | 不应阻塞 `play_song` 成功返回                                |
+| Command / entry                                                      | Domain                            | Notes                                                         |
+| -------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------- |
+| `play_song`                                                          | `PlaybackTransition`              | 进入 `PlaybackActor`，supersede 旧启动                        |
+| `seek_current_playback`                                              | `PlaybackTransition`              | 高频输入前端节流；后端 latest-wins                            |
+| `play_next`, `play_previous`                                         | `PlaybackTransition`              | media key 与 UI 共用同一路径                                  |
+| system media next/previous/seek                                      | `PlaybackTransition`              | 不直接 spawn 任意 async task，统一 dispatch                   |
+| `pause_playback`, `resume_playback`                                  | `PlaybackControl`                 | 短路径，不做网络/磁盘                                         |
+| `get_player_state`                                                   | `PlaybackControl`                 | 只读快照                                                      |
+| `set_playback_volume`                                                | `PlaybackControl`                 | 音量立即生效；偏好持久化仍走普通偏好写入锁                    |
+| `get_albums`, `get_album_detail`, `get_song_detail`, search/homepage | `InteractiveUi`                   | 普通 `api`，不得进入 playback runtime                         |
+| `get_song_lyrics`                                                    | `VisualAux`                       | 播放 Loading 时延后；通过 `image_api` 执行                    |
+| `get_image_data_url`, `extract_image_theme`                          | `VisualAux`                       | 后端 `visual_aux_lock` 串行；过期结果由前端请求序号丢弃       |
+| download create/list/cancel/retry                                    | `BackgroundIo` 或 `InteractiveUi` | 创建/取消/重试/清理为 BackgroundIo；list/get 为 InteractiveUi |
+| download execution loop                                              | `BackgroundIo`                    | Loading 时不领取新 job/task                                   |
+| inventory scan / audio metadata scan                                 | `BackgroundIo`                    | 新扫描在 gate active 时等待；取消为交互优先级                 |
+| search rebuild / belong warmup / tag registry sync                   | `BackgroundIo`                    | 启动新后台工作前等待 gate inactive                            |
+| cache clear / HTTP reset                                             | `Maintenance`                     | fan-out 到 app/playback/image/download 四个资源域             |
+| listening history record                                             | `PlaybackSideEffect`              | 不应阻塞 `play_song` 成功返回                                 |
 
 ## Degradation Rules
 
 播放启动或切换专辑时，低优先级 domain 的行为必须可预测。
 
-| Situation                | Required behavior                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------------ |
-| 用户快速切换 album       | 旧 album 的 image/theme/lyrics 请求取消或结果丢弃；新 album 请求串行开始                               |
-| 用户快速 next/previous   | 旧 playback ticket superseded；旧下载/probe/buffer 等待尽快停止                                        |
-| seek 拖拽中              | 前端本地 preview；后端只接收最终 seek commit                                                           |
-| 下载队列正准备开始下一首 | 若播放器 `Loading`，等待 gate inactive                                                                 |
-| 下载任务已经在传输       | 不硬杀；继续常规取消/背压，进度事件节流                                                                |
-| 日志/偏好/历史写入       | 不占用 playback runtime；必要时延后                                                                    |
-| HTTP reset               | 普通 client 可立即 reset；playback client 若正在 Loading，除非用户明确修复网络，否则延后到当前启动结束 |
-| 输出回调拿不到锁         | 输出静音或跳过状态写入；不得等待                                                                       |
+| Situation                        | Required behavior                                                             |
+| -------------------------------- | ----------------------------------------------------------------------------- |
+| 用户快速切换 album               | 旧 album 的 image/theme/lyrics 结果由前端请求序号丢弃；新请求经后端锁串行执行 |
+| 用户快速 next/previous           | 新 transition supersede 旧 request；旧下载/probe/buffer 等待尽快停止          |
+| seek 拖拽中                      | 前端本地 preview；后端只接收最终 seek commit                                  |
+| 下载队列正准备开始下一首         | 若播放器 `Loading`，等待 gate inactive                                        |
+| 下载任务已经在传输               | 不硬杀；继续常规取消/背压，进度事件节流                                       |
+| inventory/search/tag 预热启动    | 启动前等待 gate inactive                                                      |
+| 日志/偏好/历史写入               | 不占用 playback runtime；历史记录进入 `PlaybackSideEffect`                    |
+| HTTP reset / response cache 清理 | 立即 fan-out 到 app/playback/image/download 四个资源域                        |
+| 输出回调拿不到锁                 | 输出静音或跳过状态写入；不得等待                                              |
 
-## Migration Plan
+## Implementation Status
 
-### Phase 1: Command Registry
+### Command Registry
 
-- 新增 `CommandSpec` 静态表。
-- 为现有 Tauri command 标注 domain/priority/cancel policy。
-- 增加测试：每个 command 必须有 spec；`playback_api` 只允许播放启动路径使用；`playback_runtime` 只允许播放路径使用。
+- 已新增 `CommandSpec` 静态表。
+- 已为现有 Tauri command 和内部后台入口标注 domain/priority/cancel policy。
+- 已增加测试：每个 command 必须有 spec；`playback_api`、`playback_runtime`、`PlaybackActor`、`image_api` 和 `download_api` 只能在允许的模块中出现。
 - 文档 gate：修改 command 时必须同步本文件或 registry。
 
-### Phase 2: PlaybackActor
+### PlaybackActor
 
-- 用 actor 替代 `run_on_playback_runtime` 直接 spawn 的 play/seek/next/previous。
-- media controls 也 dispatch 到 actor。
-- 引入 `PlaybackTicket`，把 request/session/cancel/intent 传入 song detail、download stream、probe 和 initial buffer。
-- 将 listening history 从播放启动主路径移到 `PlaybackSideEffect`。
+- 已用 `PlaybackActor` inbox 替代 play/seek/next/previous 的直接 spawn；command shim 继续通过 `dispatch_playback_transition` 保持对外签名稳定。
+- media controls 的 next/previous/seek 已 dispatch 到同一个 actor。
+- 已用 `request_id`、`session_id`、`stop_flag` 和 `PlaybackLoadGate` ticket 约束 song detail、download stream、probe 和 initial buffer；后续如需要更强观测，可再收敛为显式 `PlaybackTicket` 结构。
+- listening history 已从播放启动主路径移到 `PlaybackSideEffect`，并记录 side-effect queue/run 指标。
 
-### Phase 3: Resource Gate And Aux Queues
+### Resource Gate And Aux Queues
 
-- 已引入 `PlaybackLoadGate`，并接入 playback transition dispatcher。
-- 已为后端 image/theme/lyrics command 增加 gate 检查与后端串行锁；过期结果丢弃仍由前端请求序号负责。
+- 已引入 `PlaybackLoadGate`，并接入 `PlaybackActor`。
+- 已为后端 image/theme/lyrics command 增加 gate 检查与后端串行锁，并记录 VisualAux queue/run/gate 指标；过期结果丢弃仍由前端请求序号负责。
 - 已保留前端 image 串行/合并策略作为第一道保护，后端 gate/锁作为第二道保护。
-- 已让下载 worker、inventory scan、搜索索引重建、belong/tag 预热在启动新工作前等待 gate inactive。
+- 已让下载 worker、inventory scan、搜索索引重建、belong/tag 预热在启动新工作前等待 gate inactive，并在实际等待 gate 时记录 BackgroundIo gate 指标。
 
-### Phase 4: Split More Clients
+### Split Clients
 
 - 已在 `api` / `playback_api` 之外增加 `image_api` 和 `download_api`。
 - 已将 image/theme/lyrics/通知封面切到 `image_api`。
 - 已将下载任务准备、下载执行循环、专辑封面落盘、歌词侧车和音频大文件下载切到 `download_api`。
 - 已让 `reset_http_client` 和 `clear_response_cache` fan-out 到 app/playback/image/download 四个资源域。
 - 已为 `image_api` 配置短超时和小资源大小限制；已为 `download_api` 配置独立连接池参数。
-- 待继续：按 domain 补结构化日志字段，必要时再为 download worker 增加显式并发令牌。
+- 已为 playback transition、playback side effect、VisualAux 和 BackgroundIo gate 等待补结构化日志字段；待继续：必要时再为 download worker 增加显式并发令牌。
 
-### Phase 5: Optional OS/Process Isolation
+### Optional OS/Process Isolation
 
-只有在 Phase 1-4 后仍有明确证据显示 WebView 或后台任务会让音频 callback 错过 deadline，才考虑更重的隔离：
+只有在当前资源隔离、gate 和 actor 方案仍无法保护音频 callback deadline 时，才考虑更重的隔离：
 
 - macOS/Windows/Linux 的线程优先级或音频工作组能力需要平台分别实现，不能作为跨平台默认方案。
 - 单独播放进程适合隔离崩溃或第三方播放后端，但会增加 IPC、媒体键、状态同步、缓存句柄和错误恢复复杂度。
@@ -277,9 +235,11 @@ ResourceRegistry
 
 ### Static Checks
 
-- command registry 覆盖全部 Tauri command。
+- command registry 覆盖全部 Tauri command 和内部调度入口。
 - 非播放模块不能引用 `playback_api`。
 - 非播放模块不能引用 `playback_runtime` 或 `PlaybackActor` 内部 handle。
+- 非视觉辅助模块不能引用 `image_api`。
+- 非下载模块不能引用 `download_api`。
 - 播放启动路径不能引用普通 `api` 拉取歌曲详情或音频流。
 - `RealtimeAudio` 路径不得出现 blocking lock、await 或 channel send wait。
 
@@ -294,19 +254,22 @@ ResourceRegistry
 
 ### Runtime Metrics
 
-建议新增结构化日志字段：
+已为 playback transition、playback startup、playback side effect、VisualAux、BackgroundIo gate 等待以及 RealtimeAudio 指标按适用域落地以下结构化日志字段：
 
 - `command.domain`
 - `command.priority`
 - `command.queue_wait_ms`
 - `command.run_ms`
-- `playback.session_id`
+- `resource_gate.wait_ms`
 - `playback.request_id`
+- `playback.session_id`
 - `playback.ticket_superseded`
 - `playback.loading_ms`
+- `command.queue_depth`
 - `audio.callback_silence_due_to_lock`
 - `audio.callback_underrun_frames`
-- `resource_gate.wait_ms`
+
+本文件规划的调度与运行时观测项已完成；后续新增 command 或资源域时，继续先更新 registry、资源域约束和本节指标清单。
 
 验收目标：
 

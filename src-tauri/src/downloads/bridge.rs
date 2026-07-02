@@ -240,7 +240,10 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
 async fn wait_for_playback_startup_to_settle(state: &AppState) {
     loop {
         state
-            .wait_for_playback_load_gate(PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL)
+            .wait_for_background_io_gate(
+                "download_execution_loop",
+                PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL,
+            )
             .await;
         if !state.player.get_state().is_loading {
             return;

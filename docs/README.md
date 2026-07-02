@@ -76,7 +76,7 @@ Sidebar 精简与 Album Overview 页改版方案。涵盖移除 `AlbumSidebarSec
 
 #### [playback-command-scheduling.md](./reference/playback-command-scheduling.md)
 
-播放资源隔离与 command 调度改造建议。包含 command domain/priority 划分、PlaybackActor、资源域、降级策略、迁移阶段、外部音乐播放器架构参考和验证指标。
+播放资源隔离与 command 调度当前实现。包含 command domain/priority 划分、PlaybackActor、资源域、PlaybackLoadGate、降级策略、外部音乐播放器架构参考和验证指标。
 
 ### process/ — 项目规定
 

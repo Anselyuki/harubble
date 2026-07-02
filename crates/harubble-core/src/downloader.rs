@@ -5,8 +5,8 @@
 
 use crate::api::{AlbumDetail, ApiClient, SongDetail};
 use crate::audio::{
-    detect_image_mime, encode_cover_as_jpeg, sanitize_filename, save_audio, tag_flac, AudioFormat,
-    FlacMetadata, OutputFormat,
+    detect_image_mime, encode_cover_as_jpeg, ensure_available_space, sanitize_filename, save_audio,
+    tag_flac, write_file_atomically, AudioFormat, FlacMetadata, OutputFormat,
 };
 use crate::download::model::DownloadTaskStatus;
 use anyhow::{Context, Result};
@@ -180,7 +180,7 @@ fn build_processing_fingerprint(
 
 fn write_lyric_sidecar(audio_path: &Path, lyric_text: &str) -> Result<PathBuf> {
     let lyric_path = lyric_sidecar_path(audio_path);
-    std::fs::write(&lyric_path, lyric_text.as_bytes())
+    write_file_atomically(&lyric_path, lyric_text.as_bytes())
         .with_context(|| format!("Failed to write lyric sidecar {}", lyric_path.display()))?;
     Ok(lyric_path)
 }
@@ -271,7 +271,7 @@ pub fn write_album_cover_bytes(album_dir: &Path, cover_bytes: &[u8]) -> Result<P
     let extension = cover_extension_from_mime(mime);
     let cover_path = album_dir.join(format!("cover.{extension}"));
 
-    std::fs::write(&cover_path, cover_bytes)
+    write_file_atomically(&cover_path, cover_bytes)
         .with_context(|| format!("Failed to write album cover {}", cover_path.display()))?;
 
     Ok(cover_path)
@@ -479,6 +479,8 @@ pub fn write_payload_to_disk(
         );
     }
 
+    ensure_write_payload_space(payload)?;
+
     let out_path = save_audio(
         &payload.audio_bytes,
         &payload.output_dir,
@@ -519,6 +521,17 @@ pub fn write_payload_to_disk(
     }
 
     Ok(out_path)
+}
+
+fn ensure_write_payload_space(payload: &WritePayload) -> Result<()> {
+    let lyric_bytes = payload
+        .lyric_text
+        .as_ref()
+        .map(|text| text.len() as u64)
+        .unwrap_or(0);
+    let required_bytes = (payload.audio_bytes.len() as u64).saturating_add(lyric_bytes);
+    std::fs::create_dir_all(&payload.output_dir)?;
+    ensure_available_space(&payload.output_dir, required_bytes)
 }
 
 /// 根据歌曲、专辑信息与可选封面字节构造拥有型 FLAC 元数据。

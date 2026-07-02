@@ -7,9 +7,11 @@ use crate::player::PlaybackContext;
 use crate::player::PlaybackQueueEntry;
 use crate::player::{PlaybackError, PlaybackErrorCode, PlaybackStartResult};
 use anyhow::{Context, Result};
+use serde_json::json;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::AsyncWriteExt;
 
 use super::{normalize_seek_position, AppState, PreparedPlaybackInput};
@@ -46,6 +48,7 @@ impl AppState {
         playback_context: Option<PlaybackContext>,
         start_intent: PlaybackStartIntent,
     ) -> Result<PlaybackStartResult, PlaybackError> {
+        self.ensure_playback_request_active(request_id, None)?;
         let song_detail = self.get_playback_song_detail(&song_cid, None).await?;
         self.ensure_playback_request_active(request_id, None)?;
 
@@ -59,6 +62,7 @@ impl AppState {
             },
         );
 
+        let loading_started_at = Instant::now();
         let session_id = self
             .player
             .begin_loading_session(
@@ -86,6 +90,13 @@ impl AppState {
 
         match result {
             Ok(duration) => {
+                self.spawn_playback_startup_metric(
+                    request_id,
+                    session_id,
+                    loading_started_at,
+                    "playing",
+                    false,
+                );
                 self.spawn_listening_history_record(harubble_core::ListeningEvent {
                     song_cid: song_cid.clone(),
                     song_name: song_detail.name.clone(),
@@ -97,8 +108,21 @@ impl AppState {
                 Ok(PlaybackStartResult::new(duration, session_id))
             }
             Err(error) => {
+                let playback_error = classify_playback_error(error, Some(session_id));
+                let ticket_superseded = playback_error.code == PlaybackErrorCode::Superseded;
                 self.player.fail_session(session_id);
-                Err(classify_playback_error(error, Some(session_id)))
+                self.spawn_playback_startup_metric(
+                    request_id,
+                    session_id,
+                    loading_started_at,
+                    if ticket_superseded {
+                        "superseded"
+                    } else {
+                        "failed"
+                    },
+                    ticket_superseded,
+                );
+                Err(playback_error)
             }
         }
     }
@@ -108,6 +132,7 @@ impl AppState {
         request_id: u64,
         position_secs: f64,
     ) -> Result<PlaybackStartResult, PlaybackError> {
+        self.ensure_playback_request_active(request_id, None)?;
         let current_state = self.player.get_state();
         let song_cid = current_state.song_cid.clone().ok_or_else(|| {
             playback_error(
@@ -140,6 +165,7 @@ impl AppState {
             .await?;
         self.ensure_playback_request_active(request_id, Some(current_state.session_id))?;
 
+        let loading_started_at = Instant::now();
         let session_id = self
             .player
             .begin_loading_session(
@@ -174,10 +200,32 @@ impl AppState {
         .await;
 
         match result {
-            Ok(duration) => Ok(PlaybackStartResult::new(duration, session_id)),
+            Ok(duration) => {
+                self.spawn_playback_startup_metric(
+                    request_id,
+                    session_id,
+                    loading_started_at,
+                    "playing",
+                    false,
+                );
+                Ok(PlaybackStartResult::new(duration, session_id))
+            }
             Err(error) => {
+                let playback_error = classify_playback_error(error, Some(session_id));
+                let ticket_superseded = playback_error.code == PlaybackErrorCode::Superseded;
                 self.player.fail_session(session_id);
-                Err(classify_playback_error(error, Some(session_id)))
+                self.spawn_playback_startup_metric(
+                    request_id,
+                    session_id,
+                    loading_started_at,
+                    if ticket_superseded {
+                        "superseded"
+                    } else {
+                        "failed"
+                    },
+                    ticket_superseded,
+                );
+                Err(playback_error)
             }
         }
     }
@@ -413,11 +461,39 @@ impl AppState {
         });
     }
 
-    fn spawn_listening_history_record(&self, listening_event: harubble_core::ListeningEvent) {
-        let listening_history = self.listening_history.clone();
+    fn spawn_playback_startup_metric(
+        &self,
+        request_id: u64,
+        session_id: u64,
+        loading_started_at: Instant,
+        outcome: &'static str,
+        ticket_superseded: bool,
+    ) {
         let log_center = self.log_center.clone();
-
+        let loading_ms = loading_started_at.elapsed().as_millis();
         tauri::async_runtime::spawn(async move {
+            log_center.record(
+                LogPayload::new(
+                    LogLevel::Debug,
+                    "playback",
+                    "playback.startup_completed",
+                    "Playback startup completed",
+                )
+                .context(json!({
+                    "playback.request_id": request_id,
+                    "playback.session_id": session_id,
+                    "playback.loading_ms": loading_ms,
+                    "playback.startup_outcome": outcome,
+                    "playback.ticket_superseded": ticket_superseded,
+                })),
+            );
+        });
+    }
+
+    fn spawn_listening_history_record(&self, listening_event: harubble_core::ListeningEvent) {
+        self.spawn_playback_side_effect("record_listening_history", move |state| async move {
+            let listening_history = state.listening_history.clone();
+            let log_center = state.log_center.clone();
             let record_result =
                 tokio::task::spawn_blocking(move || listening_history.record(&listening_event))
                     .await
@@ -530,6 +606,9 @@ impl AppState {
                         }
                         if !total_len_set.load(Ordering::Relaxed) {
                             if let Some(total) = total {
+                                if let Some(parent) = handle.path().parent() {
+                                    harubble_core::ensure_available_space(parent, total)?;
+                                }
                                 handle.set_expected_total_len(total);
                                 total_len_set.store(true, Ordering::Relaxed);
                             }

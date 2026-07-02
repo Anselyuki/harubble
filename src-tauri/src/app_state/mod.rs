@@ -9,19 +9,21 @@ use crate::listening_history::ListeningHistoryService;
 use crate::local_inventory::LocalInventoryService;
 use crate::local_inventory_provenance::LocalInventoryProvenanceStore;
 use crate::logging::{LogCenter, LogLevel, LogPayload};
+use crate::playback_actor::{start_playback_actor, PlaybackActor};
 use crate::playback_load_gate::PlaybackLoadGate;
 use crate::player::stream::PlaybackInput;
 use crate::player::AudioPlayer;
-use crate::player::{PlaybackError, PlaybackErrorCode};
+use crate::player::PlaybackError;
 use crate::preferences::{AppPreferences, PreferencesStore};
 use crate::search::LibrarySearchService;
 use crate::startup_recovery::prepare_local_database;
 use crate::tag_editor::TagEditorService;
 use crate::tag_registry::TagRegistryService;
 use harubble_core::{DownloadManagerSnapshot, DownloadService};
+use serde_json::json;
 use std::future::Future;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -38,6 +40,7 @@ pub struct AppState {
     pub(crate) image_api: Arc<harubble_core::ApiClient>,
     pub(crate) download_api: Arc<harubble_core::ApiClient>,
     pub(crate) playback_runtime: Arc<tokio::runtime::Runtime>,
+    pub(crate) playback_actor: PlaybackActor,
     pub(crate) playback_load_gate: PlaybackLoadGate,
     pub(crate) visual_aux_lock: Arc<Mutex<()>>,
     pub(crate) download_service: Arc<Mutex<DownloadService>>,
@@ -82,6 +85,7 @@ impl AppState {
             .enable_all()
             .build()
             .map_err(|e| format!("failed to initialize playback runtime: {e}"))?;
+        let (playback_actor, playback_actor_inbox) = PlaybackActor::new();
         crate::migration::migrate_legacy_data(&app.path().app_data_dir().unwrap_or_default());
         let app_data_dir = app
             .path()
@@ -126,6 +130,7 @@ impl AppState {
             image_api: Arc::new(image_api),
             download_api: Arc::new(download_api),
             playback_runtime: Arc::new(playback_runtime),
+            playback_actor,
             playback_load_gate: PlaybackLoadGate::new(),
             visual_aux_lock: Arc::new(Mutex::new(())),
             download_service,
@@ -145,6 +150,7 @@ impl AppState {
             collection,
         };
         state.player.set_volume_silent(state.preferences().volume);
+        start_playback_actor(Arc::clone(&state.playback_runtime), playback_actor_inbox);
         if loaded_download_session.should_persist {
             state.persist_download_snapshot(&loaded_download_session.snapshot);
         }
@@ -237,7 +243,7 @@ impl AppState {
         }
     }
 
-    fn begin_playback_transition(&self, command_name: &'static str) -> u64 {
+    pub(crate) fn begin_playback_transition(&self, command_name: &'static str) -> u64 {
         command_scheduling::debug_assert_command_domain(
             command_name,
             CommandDomain::PlaybackTransition,
@@ -257,19 +263,70 @@ impl AppState {
             .await;
     }
 
-    pub(crate) async fn enter_visual_aux(&self, command_name: &'static str) -> MutexGuard<'_, ()> {
+    pub(crate) async fn wait_for_background_io_gate(
+        &self,
+        command_name: &'static str,
+        settle_delay: Duration,
+    ) {
+        command_scheduling::debug_assert_command_domain(command_name, CommandDomain::BackgroundIo);
+        let was_active = self.is_playback_load_gate_active();
+        let started_at = Instant::now();
+        self.wait_for_playback_load_gate(settle_delay).await;
+        let resource_gate_wait_ms = started_at.elapsed().as_millis();
+        if was_active || resource_gate_wait_ms >= settle_delay.as_millis() {
+            record_background_io_gate_metrics(
+                Arc::clone(&self.log_center),
+                command_name,
+                resource_gate_wait_ms,
+            );
+        }
+    }
+
+    async fn enter_visual_aux(&self, command_name: &'static str) -> (MutexGuard<'_, ()>, u128) {
         const VISUAL_AUX_PLAYBACK_SETTLE_DELAY: Duration = Duration::from_millis(350);
 
         command_scheduling::debug_assert_command_domain(command_name, CommandDomain::VisualAux);
 
+        let mut resource_gate_wait_ms = 0_u128;
         loop {
+            let gate_wait_started_at = Instant::now();
             self.wait_for_playback_load_gate(VISUAL_AUX_PLAYBACK_SETTLE_DELAY)
                 .await;
+            resource_gate_wait_ms =
+                resource_gate_wait_ms.saturating_add(gate_wait_started_at.elapsed().as_millis());
             let guard = self.visual_aux_lock.lock().await;
             if !self.is_playback_load_gate_active() {
-                return guard;
+                return (guard, resource_gate_wait_ms);
             }
         }
+    }
+
+    pub(crate) async fn dispatch_visual_aux<F, Fut, T>(
+        &self,
+        command_name: &'static str,
+        task: F,
+    ) -> T
+    where
+        F: FnOnce(Self) -> Fut,
+        Fut: Future<Output = T>,
+    {
+        let submitted_at = Instant::now();
+        let (visual_guard, resource_gate_wait_ms) = self.enter_visual_aux(command_name).await;
+        let queue_wait_ms = submitted_at.elapsed().as_millis();
+        let state = self.clone();
+        let log_center = Arc::clone(&self.log_center);
+        let started_at = Instant::now();
+        let result = task(state).await;
+        let run_ms = started_at.elapsed().as_millis();
+        drop(visual_guard);
+        record_visual_aux_metrics(
+            log_center,
+            command_name,
+            queue_wait_ms,
+            run_ms,
+            resource_gate_wait_ms,
+        );
+        result
     }
 
     pub(crate) async fn dispatch_playback_transition<F, Fut, T>(
@@ -282,24 +339,9 @@ impl AppState {
         Fut: Future<Output = Result<T, PlaybackError>> + Send + 'static,
         T: Send + 'static,
     {
-        let request_id = self.begin_playback_transition(command_name);
-        let load_ticket = self.playback_load_gate.enter();
-        let state = self.clone();
-        self.playback_runtime
-            .spawn(async move {
-                let result = task(state, request_id).await;
-                drop(load_ticket);
-                result
-            })
+        self.playback_actor
+            .dispatch(self.clone(), command_name, task)
             .await
-            .map_err(|error| {
-                PlaybackError::new(
-                    PlaybackErrorCode::Internal,
-                    format!("playback runtime task failed: {error}"),
-                    false,
-                    None,
-                )
-            })?
     }
 
     pub(crate) fn spawn_playback_transition<F, Fut>(&self, command_name: &'static str, task: F)
@@ -307,12 +349,63 @@ impl AppState {
         F: FnOnce(Self, u64) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let request_id = self.begin_playback_transition(command_name);
-        let load_ticket = self.playback_load_gate.enter();
+        if let Err(error) = self.playback_actor.spawn(self.clone(), command_name, task) {
+            self.log_center.record(
+                LogPayload::new(
+                    LogLevel::Error,
+                    "playback",
+                    "playback.transition_schedule_failed",
+                    "Failed to schedule playback transition",
+                )
+                .details(error.to_string()),
+            );
+        }
+    }
+
+    pub(crate) async fn dispatch_playback_side_effect<F, Fut, T>(
+        &self,
+        command_name: &'static str,
+        task: F,
+    ) -> T
+    where
+        F: FnOnce(Self) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        command_scheduling::debug_assert_command_domain(
+            command_name,
+            CommandDomain::PlaybackSideEffect,
+        );
+        let submitted_at = Instant::now();
         let state = self.clone();
-        self.playback_runtime.spawn(async move {
-            task(state, request_id).await;
-            drop(load_ticket);
+        let log_center = Arc::clone(&self.log_center);
+        let started_at = Instant::now();
+        let queue_wait_ms = submitted_at.elapsed().as_millis();
+        let result = task(state).await;
+        let run_ms = started_at.elapsed().as_millis();
+        record_playback_side_effect_metrics(log_center, command_name, queue_wait_ms, run_ms);
+        result
+    }
+
+    pub(crate) fn spawn_playback_side_effect<F, Fut>(&self, command_name: &'static str, task: F)
+    where
+        F: FnOnce(Self) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        command_scheduling::debug_assert_command_domain(
+            command_name,
+            CommandDomain::PlaybackSideEffect,
+        );
+        let submitted_at = Instant::now();
+        let state = self.clone();
+        let log_center = Arc::clone(&self.log_center);
+
+        tauri::async_runtime::spawn(async move {
+            let started_at = Instant::now();
+            let queue_wait_ms = submitted_at.elapsed().as_millis();
+            task(state).await;
+            let run_ms = started_at.elapsed().as_millis();
+            record_playback_side_effect_metrics(log_center, command_name, queue_wait_ms, run_ms);
         });
     }
 
@@ -411,7 +504,7 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
 
     tauri::async_runtime::spawn(async move {
         state_for_gate
-            .wait_for_playback_load_gate(Duration::from_millis(250))
+            .wait_for_background_io_gate("belong_warmup", Duration::from_millis(250))
             .await;
 
         let albums = match api.get_albums().await {
@@ -537,6 +630,81 @@ async fn load_tag_registry_bytes(state: &AppState) -> anyhow::Result<Vec<u8>> {
         .await
 }
 
+fn record_background_io_gate_metrics(
+    log_center: Arc<LogCenter>,
+    command_name: &'static str,
+    resource_gate_wait_ms: u128,
+) {
+    if let Some(spec) = command_scheduling::command_spec(command_name) {
+        log_center.record(
+            LogPayload::new(
+                LogLevel::Debug,
+                "playback",
+                "playback.background_gate_wait_completed",
+                "Background I/O waited for playback loading gate",
+            )
+            .context(json!({
+                "command.name": command_name,
+                "command.domain": spec.domain.as_label(),
+                "command.priority": spec.priority.as_label(),
+                "resource_gate.wait_ms": resource_gate_wait_ms,
+            })),
+        );
+    }
+}
+
+fn record_visual_aux_metrics(
+    log_center: Arc<LogCenter>,
+    command_name: &'static str,
+    queue_wait_ms: u128,
+    run_ms: u128,
+    resource_gate_wait_ms: u128,
+) {
+    if let Some(spec) = command_scheduling::command_spec(command_name) {
+        log_center.record(
+            LogPayload::new(
+                LogLevel::Debug,
+                "playback",
+                "playback.visual_aux_completed",
+                "Playback visual auxiliary command completed",
+            )
+            .context(json!({
+                "command.name": command_name,
+                "command.domain": spec.domain.as_label(),
+                "command.priority": spec.priority.as_label(),
+                "command.queue_wait_ms": queue_wait_ms,
+                "command.run_ms": run_ms,
+                "resource_gate.wait_ms": resource_gate_wait_ms,
+            })),
+        );
+    }
+}
+
+fn record_playback_side_effect_metrics(
+    log_center: Arc<LogCenter>,
+    command_name: &'static str,
+    queue_wait_ms: u128,
+    run_ms: u128,
+) {
+    if let Some(spec) = command_scheduling::command_spec(command_name) {
+        log_center.record(
+            LogPayload::new(
+                LogLevel::Debug,
+                "playback",
+                "playback.side_effect_completed",
+                "Playback side-effect command completed",
+            )
+            .context(json!({
+                "command.name": command_name,
+                "command.domain": spec.domain.as_label(),
+                "command.priority": spec.priority.as_label(),
+                "command.queue_wait_ms": queue_wait_ms,
+                "command.run_ms": run_ms,
+            })),
+        );
+    }
+}
+
 /// 启动 tag registry 远程同步后台任务。
 ///
 /// 在应用启动后异步从远程拉取最新 tag JSON，与本地版本比对后按需替换。
@@ -547,7 +715,7 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
 
     tauri::async_runtime::spawn(async move {
         state
-            .wait_for_playback_load_gate(Duration::from_millis(250))
+            .wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250))
             .await;
 
         let updated = async {

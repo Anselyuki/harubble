@@ -8,7 +8,13 @@ use flacenc::component::BitRepr;
 use flacenc::error::Verify;
 use image::codecs::jpeg::JpegEncoder;
 use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// 根据原始音频字节识别音频格式。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -163,7 +169,7 @@ pub fn save_audio(
     base_name: &str,
     output_format: OutputFormat,
 ) -> Result<PathBuf> {
-    std::fs::create_dir_all(out_dir)?;
+    fs::create_dir_all(out_dir)?;
     let detected = AudioFormat::detect(data);
     let safe_name = sanitize_filename(base_name);
 
@@ -173,6 +179,7 @@ pub fn save_audio(
     };
 
     let out_path = out_dir.join(format!("{safe_name}.{out_ext}"));
+    ensure_available_space(out_dir, data.len() as u64)?;
 
     if detected == AudioFormat::Wav && output_format == OutputFormat::Flac {
         let cursor = std::io::Cursor::new(data);
@@ -200,12 +207,103 @@ pub fn save_audio(
             .write(&mut sink)
             .map_err(|e| anyhow::anyhow!("FLAC write failed: {:?}", e))?;
 
-        std::fs::write(&out_path, sink.as_slice()).context("Failed to write FLAC file")?;
+        write_file_atomically(&out_path, sink.as_slice()).context("Failed to write FLAC file")?;
     } else {
-        std::fs::write(&out_path, data).context("Failed to write audio file")?;
+        write_file_atomically(&out_path, data).context("Failed to write audio file")?;
     }
 
     Ok(out_path)
+}
+
+/// 确认指定目录所在文件系统至少还有给定字节数的可用空间。
+///
+/// 入参 `dir` 必须位于目标写入所在文件系统；`required_bytes` 为即将写入的保守估计大小。
+/// 返回 `Ok(())` 表示当前观测到的可用空间足够，返回错误表示无法查询空间或可用空间不足。
+/// 该检查不是强一致保证，调用方仍必须处理后续实际写入过程中的 IO 错误。
+pub fn ensure_available_space(dir: &Path, required_bytes: u64) -> Result<()> {
+    let available = fs2::available_space(dir)
+        .with_context(|| format!("Failed to query available disk space for {}", dir.display()))?;
+    anyhow::ensure!(
+        available >= required_bytes,
+        "Insufficient disk space: required {required_bytes} bytes, available {available} bytes"
+    );
+    Ok(())
+}
+
+/// 将字节先写入同目录临时文件，成功同步后再替换最终路径。
+///
+/// 该方法用于避免磁盘满、进程崩溃或写入中断时在最终文件名下留下半截音频文件。
+/// 临时文件与最终文件位于同一目录，因此最终 `rename` 不会跨文件系统。
+pub fn write_file_atomically(path: &Path, data: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    ensure_available_space(parent, data.len() as u64)?;
+
+    let temp_path = unique_temp_path(path);
+    let write_result = (|| -> Result<()> {
+        let mut temp = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .with_context(|| format!("Failed to create temp file {}", temp_path.display()))?;
+        temp.write_all(data)
+            .with_context(|| format!("Failed to write temp file {}", temp_path.display()))?;
+        temp.sync_all()
+            .with_context(|| format!("Failed to sync temp file {}", temp_path.display()))?;
+        drop(temp);
+        replace_with_temp(&temp_path, path)
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    write_result
+}
+
+fn replace_with_temp(temp_path: &Path, final_path: &Path) -> Result<()> {
+    match fs::rename(temp_path, final_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            fs::remove_file(final_path).with_context(|| {
+                format!("Failed to replace existing file {}", final_path.display())
+            })?;
+            fs::rename(temp_path, final_path).with_context(|| {
+                format!(
+                    "Failed to move temp file {} to {}",
+                    temp_path.display(),
+                    final_path.display()
+                )
+            })
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "Failed to move temp file {} to {}",
+                temp_path.display(),
+                final_path.display()
+            )
+        }),
+    }
+}
+
+fn unique_temp_path(path: &Path) -> PathBuf {
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("harubble-audio");
+
+    path.with_file_name(format!(
+        ".{file_name}.{}.{}.part",
+        std::process::id(),
+        timestamp.saturating_add(counter as u128)
+    ))
 }
 
 /// 根据图片魔数推断 MIME 类型。
@@ -269,9 +367,48 @@ pub fn encode_cover_as_jpeg(data: &[u8]) -> Result<Vec<u8>> {
 /// 为已写出的 FLAC 文件写入标签与封面元数据。
 ///
 /// 入参 `path` 为目标 FLAC 文件路径，`metadata` 描述要写入的文本标签与封面。
-/// 该接口会覆盖已有的前封面块与对应标签字段，因此调用方应在文件内容稳定后再
-/// 执行，避免后续写盘覆盖标签结果。
+/// 该接口会覆盖已有的前封面块与对应标签字段。写入会先在同目录临时文件上完成，
+/// 再替换最终文件，避免磁盘满或标签写入中断时破坏已存在的音频文件。
 pub fn tag_flac(path: &Path, metadata: &FlacMetadata<'_>) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let original = fs::read(path)
+        .with_context(|| format!("Failed to read FLAC before tagging: {}", path.display()))?;
+    ensure_available_space(parent, original.len() as u64)?;
+
+    let temp_path = unique_temp_path(path);
+    let tag_result = (|| -> Result<()> {
+        let mut temp = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .with_context(|| format!("Failed to create temp FLAC {}", temp_path.display()))?;
+        temp.write_all(&original)
+            .with_context(|| format!("Failed to copy FLAC to temp file {}", temp_path.display()))?;
+        temp.sync_all()
+            .with_context(|| format!("Failed to sync temp FLAC {}", temp_path.display()))?;
+        drop(temp);
+
+        apply_flac_tags(&temp_path, metadata)?;
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&temp_path)
+            .with_context(|| format!("Failed to reopen tagged FLAC {}", temp_path.display()))?
+            .sync_all()
+            .with_context(|| format!("Failed to sync tagged FLAC {}", temp_path.display()))?;
+        replace_with_temp(&temp_path, path)
+    })();
+
+    if tag_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    tag_result
+}
+
+fn apply_flac_tags(path: &Path, metadata: &FlacMetadata<'_>) -> Result<()> {
     let mut tag = metaflac::Tag::read_from_path(path)
         .with_context(|| format!("Failed to open FLAC for tagging: {}", path.display()))?;
 
@@ -334,4 +471,75 @@ pub fn tag_flac(path: &Path, metadata: &FlacMetadata<'_>) -> Result<()> {
     tag.save()
         .with_context(|| format!("Failed to save FLAC tags: {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tag_flac, write_file_atomically, FlacMetadata};
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn atomic_write_replaces_existing_file() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("song.wav");
+        fs::write(&path, b"old").expect("old file");
+
+        write_file_atomically(&path, b"new audio").expect("atomic write");
+
+        assert_eq!(fs::read(&path).expect("final file"), b"new audio");
+        let temp_entries = fs::read_dir(dir.path())
+            .expect("read tempdir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".part"))
+            .count();
+        assert_eq!(temp_entries, 0);
+    }
+
+    #[test]
+    fn atomic_write_removes_temp_file_when_replace_fails() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("not-a-file");
+        fs::create_dir(&path).expect("directory target");
+
+        let error = write_file_atomically(&path, b"new audio").expect_err("replace should fail");
+        assert!(
+            format!("{error:#}").contains("Failed to move temp file")
+                || format!("{error:#}").contains("Failed to replace existing file"),
+            "{error:#}"
+        );
+        assert_no_part_files(dir.path());
+    }
+
+    #[test]
+    fn tag_flac_failure_keeps_original_file_and_removes_temp_file() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("song.flac");
+        fs::write(&path, b"not a flac").expect("invalid flac fixture");
+
+        let metadata = FlacMetadata {
+            title: "title",
+            artists: &[],
+            album: "album",
+            album_artists: &[],
+            track_number: None,
+            total_tracks: None,
+            disc_number: None,
+            total_discs: None,
+            cover: None,
+        };
+        tag_flac(&path, &metadata).expect_err("invalid FLAC should fail tagging");
+
+        assert_eq!(fs::read(&path).expect("final file"), b"not a flac");
+        assert_no_part_files(dir.path());
+    }
+
+    fn assert_no_part_files(dir: &std::path::Path) {
+        let temp_entries = fs::read_dir(dir)
+            .expect("read tempdir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".part"))
+            .count();
+        assert_eq!(temp_entries, 0);
+    }
 }

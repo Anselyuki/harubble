@@ -3,7 +3,10 @@
 //! 该模块负责选择可用输出设备与格式、创建音频输出流，并把播放器解码后的样本缓冲
 //! 推送到系统音频设备，供桌面端实际发声使用。
 
-use crate::player::backend::{OutputFormat, OutputSampleFormat, PlaybackBackend};
+use crate::player::backend::{
+    AudioCallbackMetrics, AudioMetricsHandler, AudioUnderrunHandler, OutputFormat,
+    OutputSampleFormat, PlaybackBackend,
+};
 use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -14,7 +17,7 @@ use cpal::{
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn choose_negotiated_output_config(
     device: &cpal::Device,
@@ -238,6 +241,31 @@ fn sample_rate_distance(config: &SupportedStreamConfigRange, source_rate: u32) -
     clamp_sample_rate(config, source_rate).abs_diff(source_rate)
 }
 
+#[derive(Default)]
+struct CallbackMetricCounters {
+    silence_due_to_lock: AtomicU64,
+    underrun_frames: AtomicU64,
+}
+
+impl CallbackMetricCounters {
+    fn record_silence_due_to_lock(&self) {
+        self.silence_due_to_lock.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_underrun_frames(&self, frames: u64) {
+        if frames > 0 {
+            self.underrun_frames.fetch_add(frames, Ordering::Relaxed);
+        }
+    }
+
+    fn drain(&self) -> AudioCallbackMetrics {
+        AudioCallbackMetrics {
+            silence_due_to_lock: self.silence_due_to_lock.swap(0, Ordering::Relaxed),
+            underrun_frames: self.underrun_frames.swap(0, Ordering::Relaxed),
+        }
+    }
+}
+
 pub struct CpalBackend {
     stream: Option<Stream>,
     samples: Option<SampleBuffer>,
@@ -280,6 +308,8 @@ impl PlaybackBackend for CpalBackend {
         progress_callback: Arc<dyn Fn(f64, f64) + Send + Sync>,
         finish_callback: Arc<dyn Fn() + Send + Sync>,
         error_handler: PlaybackErrorHandler,
+        metrics_handler: AudioMetricsHandler,
+        underrun_handler: AudioUnderrunHandler,
     ) -> Result<()> {
         self.stop()?;
 
@@ -297,152 +327,41 @@ impl PlaybackBackend for CpalBackend {
         let frames_rendered = Arc::new(AtomicU64::new(0));
         let finish_fired = Arc::new(AtomicBool::new(false));
         let buffer_error_reported = Arc::new(AtomicBool::new(false));
+        let callback_metrics = Arc::new(CallbackMetricCounters::default());
+        let underrun_requested = Arc::new(AtomicBool::new(false));
+
+        macro_rules! build_stream_for_sample {
+            ($sample_type:ty) => {
+                build_stream::<$sample_type>(
+                    &device,
+                    &stream_config,
+                    samples.clone(),
+                    Arc::clone(&stop_flag),
+                    Arc::clone(&volume),
+                    Arc::clone(&frames_rendered),
+                    Arc::clone(&finish_fired),
+                    Arc::clone(&buffer_error_reported),
+                    Arc::clone(&error_handler),
+                    Arc::clone(&callback_metrics),
+                    Arc::clone(&underrun_requested),
+                    output_channels,
+                )?
+            };
+        }
 
         let stream = match config.sample_format() {
-            SampleFormat::F32 => build_stream::<f32>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::F64 => build_stream::<f64>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::I8 => build_stream::<i8>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::I16 => build_stream::<i16>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::I24 => build_stream::<I24>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::I32 => build_stream::<i32>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::I64 => build_stream::<i64>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::U8 => build_stream::<u8>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::U16 => build_stream::<u16>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::U24 => build_stream::<U24>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::U32 => build_stream::<u32>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
-            SampleFormat::U64 => build_stream::<u64>(
-                &device,
-                &stream_config,
-                samples.clone(),
-                Arc::clone(&stop_flag),
-                Arc::clone(&volume),
-                Arc::clone(&frames_rendered),
-                Arc::clone(&finish_fired),
-                Arc::clone(&buffer_error_reported),
-                Arc::clone(&error_handler),
-                output_channels,
-            )?,
+            SampleFormat::F32 => build_stream_for_sample!(f32),
+            SampleFormat::F64 => build_stream_for_sample!(f64),
+            SampleFormat::I8 => build_stream_for_sample!(i8),
+            SampleFormat::I16 => build_stream_for_sample!(i16),
+            SampleFormat::I24 => build_stream_for_sample!(I24),
+            SampleFormat::I32 => build_stream_for_sample!(i32),
+            SampleFormat::I64 => build_stream_for_sample!(i64),
+            SampleFormat::U8 => build_stream_for_sample!(u8),
+            SampleFormat::U16 => build_stream_for_sample!(u16),
+            SampleFormat::U24 => build_stream_for_sample!(U24),
+            SampleFormat::U32 => build_stream_for_sample!(u32),
+            SampleFormat::U64 => build_stream_for_sample!(u64),
             sample_format => anyhow::bail!("Unsupported output sample format {sample_format}"),
         };
 
@@ -454,6 +373,10 @@ impl PlaybackBackend for CpalBackend {
             finish_callback,
             output_rate,
             total_duration,
+            callback_metrics,
+            metrics_handler,
+            underrun_requested,
+            underrun_handler,
         );
 
         stream.play().context("Failed to start output stream")?;
@@ -496,6 +419,8 @@ fn build_stream<T>(
     finish_fired: Arc<AtomicBool>,
     buffer_error_reported: Arc<AtomicBool>,
     error_handler: PlaybackErrorHandler,
+    callback_metrics: Arc<CallbackMetricCounters>,
+    underrun_requested: Arc<AtomicBool>,
     output_channels: u16,
 ) -> Result<Stream>
 where
@@ -509,7 +434,7 @@ where
         .build_output_stream(
             config,
             move |data: &mut [T], _| {
-                write_output_data(
+                write_output_data_with_metrics(
                     data,
                     &samples,
                     &stop_flag,
@@ -518,6 +443,8 @@ where
                     &finish_fired,
                     &buffer_error_reported,
                     &error_handler,
+                    &callback_metrics,
+                    &underrun_requested,
                     channels,
                     &mut scratch,
                 );
@@ -530,6 +457,7 @@ where
         .context("Failed to build output stream")
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn write_output_data<T>(
     data: &mut [T],
@@ -540,6 +468,41 @@ fn write_output_data<T>(
     finish_fired: &AtomicBool,
     buffer_error_reported: &AtomicBool,
     error_handler: &PlaybackErrorHandler,
+    channels: usize,
+    scratch: &mut Vec<f32>,
+) where
+    T: Sample + FromSample<f32>,
+{
+    let callback_metrics = CallbackMetricCounters::default();
+    let underrun_requested = AtomicBool::new(false);
+    write_output_data_with_metrics(
+        data,
+        samples,
+        stop_flag,
+        volume,
+        frames_rendered,
+        finish_fired,
+        buffer_error_reported,
+        error_handler,
+        &callback_metrics,
+        &underrun_requested,
+        channels,
+        scratch,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_output_data_with_metrics<T>(
+    data: &mut [T],
+    samples: &SampleBuffer,
+    stop_flag: &AtomicBool,
+    volume: &AtomicU64,
+    frames_rendered: &AtomicU64,
+    finish_fired: &AtomicBool,
+    buffer_error_reported: &AtomicBool,
+    error_handler: &PlaybackErrorHandler,
+    callback_metrics: &CallbackMetricCounters,
+    underrun_requested: &AtomicBool,
     channels: usize,
     scratch: &mut Vec<f32>,
 ) where
@@ -556,8 +519,9 @@ fn write_output_data<T>(
     let output = &mut scratch[..data.len()];
     output.fill(0.0);
 
-    let Some(status) = samples.try_pop_complete_frames_into(output, channels) else {
+    let Some(status) = samples.try_pop_realtime_frames_into(output, channels) else {
         data.fill(T::EQUILIBRIUM);
+        callback_metrics.record_silence_due_to_lock();
         return;
     };
     if let Some(error) = status.error {
@@ -573,7 +537,15 @@ fn write_output_data<T>(
         *target = T::from_sample(sanitize_output_sample(sample * gain));
     }
 
-    frames_rendered.fetch_add((status.written / channels.max(1)) as u64, Ordering::Relaxed);
+    let channels = channels.max(1);
+    frames_rendered.fetch_add((status.written / channels) as u64, Ordering::Relaxed);
+
+    let writable_samples = data.len() - (data.len() % channels);
+    if status.written < writable_samples && !status.finished {
+        callback_metrics
+            .record_underrun_frames(((writable_samples - status.written) / channels) as u64);
+        underrun_requested.store(true, Ordering::SeqCst);
+    }
 
     if status.finished {
         finish_fired.store(true, Ordering::SeqCst);
@@ -605,16 +577,36 @@ fn spawn_stream_monitor(
     finish_callback: Arc<dyn Fn() + Send + Sync>,
     output_rate: u32,
     total_duration: f64,
+    callback_metrics: Arc<CallbackMetricCounters>,
+    metrics_handler: AudioMetricsHandler,
+    underrun_requested: Arc<AtomicBool>,
+    underrun_handler: AudioUnderrunHandler,
 ) {
     let _ = thread::Builder::new()
         .name("player-output-monitor".into())
         .spawn(move || {
-            while !stop_flag.load(Ordering::SeqCst) {
+            let mut next_metrics_report_at = Instant::now() + Duration::from_secs(1);
+            loop {
+                if stop_flag.load(Ordering::SeqCst) {
+                    report_callback_metrics(&callback_metrics, &metrics_handler);
+                    break;
+                }
+
                 let progress =
                     frames_rendered.load(Ordering::Relaxed) as f64 / f64::from(output_rate.max(1));
                 progress_callback(progress.min(total_duration.max(progress)), total_duration);
 
+                if underrun_requested.swap(false, Ordering::SeqCst) {
+                    underrun_handler();
+                }
+
+                if Instant::now() >= next_metrics_report_at {
+                    report_callback_metrics(&callback_metrics, &metrics_handler);
+                    next_metrics_report_at = Instant::now() + Duration::from_secs(1);
+                }
+
                 if finish_fired.load(Ordering::SeqCst) {
+                    report_callback_metrics(&callback_metrics, &metrics_handler);
                     finish_callback();
                     break;
                 }
@@ -624,13 +616,24 @@ fn spawn_stream_monitor(
         });
 }
 
+fn report_callback_metrics(
+    callback_metrics: &CallbackMetricCounters,
+    metrics_handler: &AudioMetricsHandler,
+) {
+    let metrics = callback_metrics.drain();
+    if metrics.silence_due_to_lock > 0 || metrics.underrun_frames > 0 {
+        metrics_handler(metrics);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         choose_exact_output_config_from_default, choose_exact_output_config_from_ranges,
-        choose_output_config_from_ranges, write_output_data,
+        choose_output_config_from_ranges, write_output_data, write_output_data_with_metrics,
+        CallbackMetricCounters,
     };
-    use crate::player::backend::{OutputFormat, OutputSampleFormat};
+    use crate::player::backend::{AudioCallbackMetrics, OutputFormat, OutputSampleFormat};
     use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
     use cpal::{SampleFormat, SupportedBufferSize};
     use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -955,7 +958,7 @@ mod tests {
     }
 
     #[test]
-    fn f32_output_preserves_partial_buffered_samples() {
+    fn f32_output_silences_underfilled_callback_without_consuming_samples() {
         let samples = SampleBuffer::new();
         samples.push(&[0.25, -0.5]);
         let stop_flag = AtomicBool::new(false);
@@ -984,10 +987,10 @@ mod tests {
             &mut scratch,
         );
 
-        assert_eq!(output, [0.25, -0.5, 0.0, 0.0]);
+        assert_eq!(output, [0.0, 0.0, 0.0, 0.0]);
         assert_eq!(
             frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
-            1
+            0
         );
 
         samples.push(&[0.75, -0.75]);
@@ -1004,7 +1007,7 @@ mod tests {
             &mut scratch,
         );
 
-        assert_eq!(output, [0.75, -0.75, 0.0, 0.0]);
+        assert_eq!(output, [0.25, -0.5, 0.75, -0.75]);
         assert_eq!(
             frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
             2
@@ -1239,6 +1242,115 @@ mod tests {
 
         assert_eq!(output, [0.0, 0.0, 0.0, 0.0]);
         assert_eq!(errors.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn f32_output_counts_underrun_frames_when_buffer_underfills_callback() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25, -0.5]);
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let errors = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let error_sink = Arc::clone(&errors);
+        let error_handler: PlaybackErrorHandler = Arc::new(move |message: String| {
+            error_sink.lock().unwrap().push(message);
+        });
+        let mut scratch = Vec::new();
+        let mut output = [1.0_f32; 4];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+        );
+
+        assert_eq!(output, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            callback_metrics.drain(),
+            AudioCallbackMetrics {
+                silence_due_to_lock: 0,
+                underrun_frames: 2,
+            }
+        );
+        assert!(underrun_requested.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(errors.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn f32_output_counts_lock_silence_without_counting_underrun() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25, -0.5]);
+        let locked_samples = samples.clone();
+        let handle = std::thread::spawn(move || {
+            locked_samples.hold_lock_for_test(std::time::Duration::from_millis(100));
+        });
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let errors = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let error_sink = Arc::clone(&errors);
+        let error_handler: PlaybackErrorHandler = Arc::new(move |message: String| {
+            error_sink.lock().unwrap().push(message);
+        });
+        let mut scratch = Vec::new();
+        let mut output = [1.0_f32; 4];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+        );
+
+        assert_eq!(output, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            callback_metrics.drain(),
+            AudioCallbackMetrics {
+                silence_due_to_lock: 1,
+                underrun_frames: 0,
+            }
+        );
+        assert!(!underrun_requested.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert!(!finish_fired.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(errors.lock().unwrap().is_empty());
+
+        handle.join().expect("lock holder should finish");
     }
 
     #[test]

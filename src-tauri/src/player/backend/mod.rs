@@ -36,6 +36,21 @@ pub struct OutputFormat {
     pub device_identity: String,
 }
 
+/// 音频实时回调路径的聚合指标。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AudioCallbackMetrics {
+    /// 输出回调因为拿不到样本缓冲锁而静音的次数。
+    pub silence_due_to_lock: u64,
+    /// 输出回调因可播放样本不足而补静音的帧数。
+    pub underrun_frames: u64,
+}
+
+/// 音频实时回调指标的上报回调。
+pub type AudioMetricsHandler = Arc<dyn Fn(AudioCallbackMetrics) + Send + Sync>;
+
+/// 输出回调检测到播放缓冲不足时的快速通知回调。
+pub type AudioUnderrunHandler = Arc<dyn Fn() + Send + Sync>;
+
 /// 音频播放后端抽象。
 pub trait PlaybackBackend: Send {
     /// 根据源格式协商后端实际接受的输出格式。
@@ -52,6 +67,8 @@ pub trait PlaybackBackend: Send {
         progress_callback: Arc<dyn Fn(f64, f64) + Send + Sync>,
         finish_callback: Arc<dyn Fn() + Send + Sync>,
         error_handler: PlaybackErrorHandler,
+        metrics_handler: AudioMetricsHandler,
+        underrun_handler: AudioUnderrunHandler,
     ) -> Result<()>;
 
     /// 暂停播放。

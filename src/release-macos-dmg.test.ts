@@ -9,7 +9,7 @@ describe('macOS DMG postprocess assets', () => {
     expect(readme).toContain(
       'xattr -dr com.apple.quarantine /Applications/Harubble.app'
     );
-    expect(readme).toContain('Harubble for macOS is not notarized yet');
+    expect(readme).toContain('not code signed or notarized');
     expect(readme).toContain('Harubble macOS 安装说明');
     expect(readme).toContain('Harubble macOS Installation Guide');
     expect(readme).toContain('请先阅读本文件');

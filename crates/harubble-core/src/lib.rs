@@ -54,7 +54,9 @@ pub mod url_validator;
 /// 上游数据访问相关的公共类型与客户端入口。
 pub use api::{Album, AlbumDetail, ApiClient, SongDetail, SongEntry, TagEntry};
 /// 音频格式识别、落盘与 FLAC 标签写入相关的公共工具。
-pub use audio::{save_audio, tag_flac, AudioFormat, OutputFormat};
+pub use audio::{
+    ensure_available_space, save_audio, tag_flac, write_file_atomically, AudioFormat, OutputFormat,
+};
 /// 下载领域模型、快照与事件载荷。
 pub use download::model::{
     CreateDownloadJobRequest, DownloadErrorCode, DownloadErrorInfo, DownloadJobKind,

@@ -202,6 +202,12 @@ impl LogPayload {
         self.details = Some(value.into());
         self
     }
+
+    /// 设置结构化上下文字段。
+    pub(crate) fn context(mut self, value: Value) -> Self {
+        self.context = Some(value);
+        self
+    }
 }
 
 #[derive(Debug)]

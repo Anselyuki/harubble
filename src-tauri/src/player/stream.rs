@@ -277,7 +277,10 @@ impl Read for GrowingFileReader {
         let (lock, condvar) = &*self.state;
         let mut state = lock.lock().unwrap();
 
-        while self.position >= state.available_len && !state.complete && state.error.is_none() {
+        while state.error.is_none()
+            && !state.complete
+            && state.available_len.saturating_sub(self.position) < buf.len() as u64
+        {
             if self
                 .stop_flag
                 .as_ref()
@@ -453,17 +456,40 @@ impl SampleBuffer {
     pub fn pop_complete_frames_into(&self, output: &mut [f32], frame_channels: usize) -> PopStatus {
         let (lock, condvar) = &*self.inner;
         let mut state = lock.lock().unwrap();
-        pop_complete_frames_from_state(&mut state, condvar, output, frame_channels)
+        pop_complete_frames_from_state(&mut state, condvar, output, frame_channels, false)
     }
 
     /// 尝试从缓冲区弹出完整声道帧。
     ///
     /// 该方法供实时输出回调使用：如果解码线程正在持有缓冲区锁，立即返回 `None`，
     /// 由调用方输出静音，避免把音频回调阻塞在互斥锁上。
+    #[cfg(test)]
     pub fn try_pop_complete_frames_into(
         &self,
         output: &mut [f32],
         frame_channels: usize,
+    ) -> Option<PopStatus> {
+        self.try_pop_frames_into(output, frame_channels, false)
+    }
+
+    /// 尝试弹出一整个实时输出 callback 所需的完整声道帧。
+    ///
+    /// 如果缓冲区当前不足以填满本次 callback，且生产端尚未结束，该方法不会消费已有尾部样本，
+    /// 而是返回 `written = 0`。调用方可据此输出整段静音并触发重新缓冲，避免“半段音频 + 半段静音”
+    /// 的硬切边界造成爆音。
+    pub fn try_pop_realtime_frames_into(
+        &self,
+        output: &mut [f32],
+        frame_channels: usize,
+    ) -> Option<PopStatus> {
+        self.try_pop_frames_into(output, frame_channels, true)
+    }
+
+    fn try_pop_frames_into(
+        &self,
+        output: &mut [f32],
+        frame_channels: usize,
+        require_full_callback: bool,
     ) -> Option<PopStatus> {
         let (lock, condvar) = &*self.inner;
         let mut state = match lock.try_lock() {
@@ -482,6 +508,7 @@ impl SampleBuffer {
             condvar,
             output,
             frame_channels,
+            require_full_callback,
         ))
     }
 
@@ -489,6 +516,20 @@ impl SampleBuffer {
     ///
     /// 当缓冲区报错、播放被停止，或流结束时仍没有任何可播放采样时返回错误。
     pub fn wait_for_samples(&self, minimum_samples: usize, stop_flag: &AtomicBool) -> Result<()> {
+        match self.wait_for_samples_or_end(minimum_samples, stop_flag)? {
+            SampleWaitOutcome::Ready => Ok(()),
+            SampleWaitOutcome::Ended => {
+                anyhow::bail!("Audio stream ended before playback could start")
+            }
+        }
+    }
+
+    /// 等待缓冲区中至少出现指定数量的采样，或等待生产端自然结束。
+    pub fn wait_for_samples_or_end(
+        &self,
+        minimum_samples: usize,
+        stop_flag: &AtomicBool,
+    ) -> Result<SampleWaitOutcome> {
         let (lock, condvar) = &*self.inner;
         let mut state = lock.lock().unwrap();
 
@@ -510,9 +551,9 @@ impl SampleBuffer {
             anyhow::bail!("Playback stopped");
         }
         if state.finished && state.queue.is_empty() {
-            anyhow::bail!("Audio stream ended before playback could start");
+            return Ok(SampleWaitOutcome::Ended);
         }
-        Ok(())
+        Ok(SampleWaitOutcome::Ready)
     }
 
     #[cfg(test)]
@@ -528,11 +569,21 @@ fn pop_complete_frames_from_state(
     condvar: &Condvar,
     output: &mut [f32],
     frame_channels: usize,
+    require_full_callback: bool,
 ) -> PopStatus {
     let mut written = 0_usize;
     let frame_channels = frame_channels.max(1);
     let writable_samples = output.len() - (output.len() % frame_channels);
     let available_complete_samples = state.queue.len() - (state.queue.len() % frame_channels);
+
+    if require_full_callback && !state.finished && available_complete_samples < writable_samples {
+        return PopStatus {
+            written: 0,
+            finished: false,
+            error: state.error.clone(),
+        };
+    }
+
     let target_samples = writable_samples.min(available_complete_samples);
 
     while written < target_samples {
@@ -560,6 +611,15 @@ fn pop_complete_frames_from_state(
     }
 
     status
+}
+
+/// 等待采样缓冲区填充时的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleWaitOutcome {
+    /// 已经达到调用方要求的最小采样数，或仍有可播放尾部采样。
+    Ready,
+    /// 生产端已自然结束且缓冲区已空。
+    Ended,
 }
 
 /// 一次从采样缓冲区弹出后的结果摘要。
@@ -1110,11 +1170,11 @@ fn sanitize_pcm_sample(sample: f32) -> f32 {
 mod tests {
     use super::{
         ensure_decoded_format_matches_source, open_audio_reader, open_audio_reader_with_retry,
-        timestamp_delta_to_frames, AudioFormat, BoxedAudioReader, Hint, SampleBuffer,
-        SampleConverter, SymphoniaSampleBuffer,
+        timestamp_delta_to_frames, AudioFormat, BoxedAudioReader, GrowingFileHandle, Hint,
+        SampleBuffer, SampleConverter, SampleWaitOutcome, SymphoniaSampleBuffer,
     };
     use std::fs::File;
-    use std::io::{self, Read, Seek, SeekFrom};
+    use std::io::{self, Read, Seek, SeekFrom, Write};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread;
     use std::time::Duration;
@@ -1156,6 +1216,37 @@ mod tests {
             self.maybe_fail()?;
             self.inner.seek(position)
         }
+    }
+
+    #[test]
+    fn growing_file_reader_waits_for_requested_read_size_before_completion() {
+        let temp_dir = tempdir().expect("tempdir");
+        let audio_path = temp_dir.path().join("growing-read.bin");
+        let (handle, mut writer) = GrowingFileHandle::new(audio_path).expect("growing file");
+        writer.write_all(b"abcde").expect("first chunk");
+        writer.flush().expect("flush first chunk");
+        handle.publish_available_len(5);
+
+        let mut reader = handle.open_reader(None).expect("reader");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader_thread = thread::spawn(move || {
+            let mut buf = [0_u8; 10];
+            let read = reader.read(&mut buf).expect("read should complete");
+            tx.send((read, buf)).expect("send read result");
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(80)).is_err());
+
+        writer.write_all(b"fghij").expect("second chunk");
+        writer.flush().expect("flush second chunk");
+        handle.publish_available_len(10);
+
+        let (read, buf) = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reader should finish once requested bytes are available");
+        assert_eq!(read, 10);
+        assert_eq!(&buf, b"abcdefghij");
+        reader_thread.join().expect("reader thread");
     }
 
     #[test]
@@ -1372,6 +1463,19 @@ mod tests {
         assert!(status.finished);
         assert_eq!(status.error.as_deref(), Some("decode failed"));
         assert_eq!(output, [1.0, 1.0]);
+    }
+
+    #[test]
+    fn sample_buffer_wait_can_report_natural_end() {
+        let buffer = SampleBuffer::new();
+        let stop_flag = AtomicBool::new(false);
+        buffer.finish();
+
+        let outcome = buffer
+            .wait_for_samples_or_end(1, &stop_flag)
+            .expect("natural end should be reported");
+
+        assert_eq!(outcome, SampleWaitOutcome::Ended);
     }
 
     #[test]

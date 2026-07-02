@@ -135,10 +135,14 @@ pub async fn get_recent_history(
 /// 该接口会删除所有历史记录，操作不可逆；调用方应在执行前向用户确认。
 #[tauri::command]
 pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, String> {
-    let history = state.listening_history.clone();
-    tokio::task::spawn_blocking(move || history.clear())
+    state
+        .dispatch_playback_side_effect("clear_listening_history", |state| async move {
+            let history = state.listening_history.clone();
+            tokio::task::spawn_blocking(move || history.clear())
+                .await
+                .map_err(|e| e.to_string())?
+        })
         .await
-        .map_err(|e| e.to_string())?
 }
 
 /// 获取首页状态仪表盘聚合数据。

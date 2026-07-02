@@ -126,8 +126,9 @@ PR 阶段不会执行以下行为：
 
 - `macos_intel` 对应 Intel Mac
 - `macos_apple_silicon` 对应 Apple Silicon Mac
+- macOS 当前发布的是未签名、未公证的 DMG；workflow 会在 DMG 内加入 `README-macOS.txt` 和 Applications 快捷方式，但不会执行 codesign 或 notarization
 - Windows 当前发布的是依赖系统 `WebView2` 运行时的精简便携 `.exe`，不是 NSIS 安装包
-- Linux 当前发布的是 AppImage 格式，自包含运行时，用户无需额外安装系统依赖即可运行；构建环境为 Ubuntu 22.04，要求 glibc 2.35+
+- Linux 当前发布的是 AppImage 格式；构建环境为 Ubuntu 22.04，要求 glibc 2.35+，但发布包尚未经过完整测试，用户反馈应优先收敛到 Issues
 
 ## 推荐用法
 
@@ -164,5 +165,5 @@ PR 阶段不会执行以下行为：
 
 - 不要在 PR 阶段期待生成 Release；PR 只做检查和测试。
 - `Release-As:` 建议保留原样书写，避免与 workflow 解析规则不一致。
-- 如果指定的版本号已经存在同名 GitHub Release，发布会失败。
+- 如果指定的版本号已经存在同名 GitHub Release，发布会继续上传当前矩阵产物，并使用 `gh release upload --clobber` 覆盖同名 asset。
 - 如果未来要恢复 Windows 安装包发布策略，需要同时更新 workflow 和 README 中对 Windows 产物的说明。

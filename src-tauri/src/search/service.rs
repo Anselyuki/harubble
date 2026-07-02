@@ -189,7 +189,7 @@ impl LibrarySearchService {
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
             state
-                .wait_for_playback_load_gate(Duration::from_millis(250))
+                .wait_for_background_io_gate("library_search_rebuild", Duration::from_millis(250))
                 .await;
 
             let generation = service.start_rebuild(&inventory).await;

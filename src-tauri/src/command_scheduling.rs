@@ -1,6 +1,6 @@
-//! Tauri command 调度域声明。
+//! Command 与后台入口调度域声明。
 //!
-//! 该模块把 command 的作用域、优先级和取消策略显式化，避免播放相关入口在后续维护中
+//! 该模块把 Tauri command 和内部后台入口的作用域、优先级和取消策略显式化，避免播放相关入口在后续维护中
 //! 被误接到普通 runtime / API client，或让普通后台任务反向占用播放资源域。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,6 +14,20 @@ pub(crate) enum CommandDomain {
     Maintenance,
 }
 
+impl CommandDomain {
+    pub(crate) const fn as_label(self) -> &'static str {
+        match self {
+            Self::PlaybackControl => "PlaybackControl",
+            Self::PlaybackTransition => "PlaybackTransition",
+            Self::PlaybackSideEffect => "PlaybackSideEffect",
+            Self::InteractiveUi => "InteractiveUi",
+            Self::VisualAux => "VisualAux",
+            Self::BackgroundIo => "BackgroundIo",
+            Self::Maintenance => "Maintenance",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CommandPriority {
     Playback,
@@ -21,6 +35,18 @@ pub(crate) enum CommandPriority {
     Interactive,
     Visual,
     Background,
+}
+
+impl CommandPriority {
+    pub(crate) const fn as_label(self) -> &'static str {
+        match self {
+            Self::Playback => "Playback",
+            Self::CriticalSideEffect => "CriticalSideEffect",
+            Self::Interactive => "Interactive",
+            Self::Visual => "Visual",
+            Self::Background => "Background",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -442,6 +468,42 @@ pub(crate) const COMMAND_SPECS: &[CommandSpec] = &[
         CommandPriority::CriticalSideEffect,
         CancelPolicy::Cooperative,
     ),
+    spec(
+        "record_listening_history",
+        CommandDomain::PlaybackSideEffect,
+        CommandPriority::CriticalSideEffect,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "download_execution_loop",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "local_inventory_scan",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "library_search_rebuild",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "belong_warmup",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "tag_registry_sync",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
 ];
 
 const fn spec(
@@ -545,6 +607,15 @@ mod tests {
         "import_tag_editor_registry",
     ];
 
+    const INTERNAL_SCHEDULED_ENTRIES: &[&str] = &[
+        "record_listening_history",
+        "download_execution_loop",
+        "local_inventory_scan",
+        "library_search_rebuild",
+        "belong_warmup",
+        "tag_registry_sync",
+    ];
+
     #[test]
     fn command_registry_covers_all_tauri_commands() {
         let mut seen = HashSet::new();
@@ -565,11 +636,39 @@ mod tests {
 
         for spec in COMMAND_SPECS {
             assert!(
-                REGISTERED_TAURI_COMMANDS.contains(&spec.name),
-                "scheduling spec {} is not registered with Tauri",
+                REGISTERED_TAURI_COMMANDS.contains(&spec.name)
+                    || INTERNAL_SCHEDULED_ENTRIES.contains(&spec.name),
+                "scheduling spec {} is neither registered with Tauri nor declared as an internal entry",
                 spec.name
             );
         }
+    }
+
+    #[test]
+    fn internal_scheduled_entries_have_specs() {
+        for entry in INTERNAL_SCHEDULED_ENTRIES {
+            assert!(
+                command_spec(entry).is_some(),
+                "missing scheduling spec for internal entry {entry}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_metric_labels_are_stable() {
+        assert_eq!(
+            CommandDomain::PlaybackTransition.as_label(),
+            "PlaybackTransition"
+        );
+        assert_eq!(
+            CommandDomain::PlaybackSideEffect.as_label(),
+            "PlaybackSideEffect"
+        );
+        assert_eq!(CommandPriority::Playback.as_label(), "Playback");
+        assert_eq!(
+            CommandPriority::CriticalSideEffect.as_label(),
+            "CriticalSideEffect"
+        );
     }
 
     #[test]
@@ -587,6 +686,30 @@ mod tests {
                 spec.cancel_policy,
                 CancelPolicy::SupersedePlaybackSession | CancelPolicy::LatestWins
             ));
+        }
+    }
+
+    #[test]
+    fn playback_side_effect_entries_use_side_effect_domain() {
+        let spec = command_spec("record_listening_history").expect("spec");
+        assert_eq!(spec.domain, CommandDomain::PlaybackSideEffect);
+        assert_eq!(spec.priority, CommandPriority::CriticalSideEffect);
+        assert_eq!(spec.cancel_policy, CancelPolicy::Cooperative);
+    }
+
+    #[test]
+    fn background_internal_entries_use_background_domain() {
+        for name in [
+            "download_execution_loop",
+            "local_inventory_scan",
+            "library_search_rebuild",
+            "belong_warmup",
+            "tag_registry_sync",
+        ] {
+            let spec = command_spec(name).expect("spec");
+            assert_eq!(spec.domain, CommandDomain::BackgroundIo);
+            assert_eq!(spec.priority, CommandPriority::Background);
+            assert_eq!(spec.cancel_policy, CancelPolicy::Cooperative);
         }
     }
 
@@ -616,12 +739,14 @@ mod tests {
             "app_state/media_controls.rs",
             "commands/playback.rs",
             "network_monitor.rs",
+            "playback_actor.rs",
             "player/controller.rs",
             "playback_load_gate.rs",
         ];
 
         assert_identifier_is_limited_to(&root, "playback_api", &playback_allowed);
         assert_identifier_is_limited_to(&root, "playback_runtime", &playback_allowed);
+        assert_identifier_is_limited_to(&root, "PlaybackActor", &playback_allowed);
 
         let image_allowed = [
             "app_state/mod.rs",

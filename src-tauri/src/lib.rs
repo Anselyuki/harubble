@@ -49,6 +49,7 @@ mod logging;
 mod migration;
 mod network_monitor;
 mod notification;
+mod playback_actor;
 mod playback_load_gate;
 mod player;
 mod preferences;

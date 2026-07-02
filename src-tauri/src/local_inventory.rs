@@ -218,7 +218,7 @@ pub fn spawn_inventory_scan(
 ) {
     tauri::async_runtime::spawn(async move {
         state
-            .wait_for_playback_load_gate(Duration::from_millis(250))
+            .wait_for_background_io_gate("local_inventory_scan", Duration::from_millis(250))
             .await;
 
         let mode = match verification_mode {
