@@ -123,6 +123,9 @@
     get muted() {
       return runtime.playerController.muted;
     },
+    get playbackFormat() {
+      return runtime.playbackFormat;
+    },
     pause: () => {
       void runtime.playerController.pause();
     },

@@ -275,6 +275,9 @@ impl AppState {
         );
 
         let output_format = self.player.negotiate_output_format(source_format)?;
+        self.player
+            .set_playback_format(session_id, source_format, &output_format);
+        self.record_playback_format_selection(session_id, source_format, &output_format);
         let start_position_secs =
             normalize_seek_position(start_position_secs, source_format.duration_secs);
         let sample_buffer = SampleBuffer::new();
@@ -682,6 +685,36 @@ impl AppState {
         Ok(())
     }
 
+    fn record_playback_format_selection(
+        &self,
+        session_id: u64,
+        source_format: AudioFormat,
+        output_format: &OutputFormat,
+    ) {
+        self.log_center.record(
+            crate::logging::LogPayload::new(
+                crate::logging::LogLevel::Debug,
+                "player",
+                "audio.format_selected",
+                "Audio playback format selected",
+            )
+            .context(json!({
+                "playback.session_id": session_id,
+                "audio.source.sample_rate": source_format.sample_rate,
+                "audio.source.channels": source_format.channels,
+                "audio.source.bits_per_sample": source_format.bits_per_sample,
+                "audio.source.duration_secs": source_format.duration_secs,
+                "audio.output.sample_rate": output_format.audio_format.sample_rate,
+                "audio.output.channels": output_format.audio_format.channels,
+                "audio.output.bits_per_sample": output_format.audio_format.bits_per_sample,
+                "audio.output.sample_format": output_format.sample_format.as_str(),
+                "audio.output.device_identity": output_format.device_identity,
+                "audio.resampling.enabled": source_format.sample_rate != output_format.audio_format.sample_rate,
+                "audio.channel_remix.enabled": source_format.channels != output_format.audio_format.channels,
+            })),
+        );
+    }
+
     fn start_prepared_playback(
         &self,
         session_id: u64,
@@ -872,6 +905,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 180.0,
+            bits_per_sample: None,
         };
 
         assert_eq!(
@@ -894,6 +928,7 @@ mod tests {
             channels: 2,
             sample_rate: 768_000,
             duration_secs: 180.0,
+            bits_per_sample: None,
         };
 
         assert_eq!(

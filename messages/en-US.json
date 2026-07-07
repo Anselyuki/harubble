@@ -397,5 +397,17 @@
   "tag_editor_edit_add": "Save & Add",
   "tag_editor_no_results": "No results",
   "tag_editor_songs_tagged_count": "{count}/{total} tagged",
-  "tag_editor_close": "Close"
+  "tag_editor_close": "Close",
+  "player_format_popover_title": "Playback Info",
+  "player_format_section_source": "Source",
+  "player_format_section_output": "Output",
+  "player_format_label_sample_rate": "Sample Rate",
+  "player_format_label_bit_depth": "Bit Depth",
+  "player_format_label_channels": "Channels",
+  "player_format_label_bitrate": "Bitrate",
+  "player_format_label_sample_format": "Sample Format",
+  "player_format_label_resampling": "Resampling",
+  "player_format_label_channel_remix": "Channel Remix",
+  "player_format_flag_yes": "Yes",
+  "player_format_flag_no": "No"
 }

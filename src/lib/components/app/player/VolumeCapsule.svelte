@@ -120,6 +120,7 @@
 
   function handleMouseEnter() {
     collapseTimer.cancel();
+    if (!open) onopen?.();
   }
 
   function handleIconClick() {
@@ -151,7 +152,7 @@
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
-  <WaveGlassPanel {open} />
+  <WaveGlassPanel open={open && isDragging} />
 
   <div
     class="volume-wrapper"
@@ -198,8 +199,6 @@
       aria-expanded={open}
       onclick={handleIconClick}
       ondblclick={() => onToggleMute?.()}
-      onpointerenter={() => animator.hoverIconIn()}
-      onpointerleave={() => animator.hoverIconOut()}
     >
       <svg class="capsule-icon" viewBox="0 0 24 24" aria-hidden="true">
         {#if volumeIcon === 'muted'}

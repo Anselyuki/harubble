@@ -188,6 +188,7 @@
         {downloadDisabled}
         volume={player.volume}
         muted={player.muted}
+        playbackFormat={player.playbackFormat}
         onVolumeChange={player.setVolume}
         onToggleMute={player.toggleMute}
         reducedMotion={shell.prefersReducedMotion}

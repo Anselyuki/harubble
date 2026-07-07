@@ -25,6 +25,37 @@ pub enum OutputSampleFormat {
     U64,
 }
 
+impl OutputSampleFormat {
+    /// 返回该输出样本格式对应的容器位深。
+    pub(crate) fn bits_per_sample(self) -> u16 {
+        match self {
+            Self::F32 | Self::I32 | Self::U32 => 32,
+            Self::F64 | Self::I64 | Self::U64 => 64,
+            Self::I8 | Self::U8 => 8,
+            Self::I16 | Self::U16 => 16,
+            Self::I24 | Self::U24 => 24,
+        }
+    }
+
+    /// 返回用于日志与诊断展示的稳定样本格式名称。
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I24 => "i24",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U24 => "u24",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
+        }
+    }
+}
+
 /// 播放后端协商出的完整输出格式。
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutputFormat {

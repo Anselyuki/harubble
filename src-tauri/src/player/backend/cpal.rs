@@ -19,6 +19,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+const OUTPUT_SMOOTHING_FRAMES: usize = 64;
+
 fn choose_negotiated_output_config(
     device: &cpal::Device,
     audio_format: AudioFormat,
@@ -214,6 +216,18 @@ fn output_sample_format(format: SampleFormat) -> Option<OutputSampleFormat> {
     }
 }
 
+fn output_dither_lsb(format: SampleFormat) -> f32 {
+    match format {
+        SampleFormat::F32 | SampleFormat::F64 => 0.0,
+        SampleFormat::I8 | SampleFormat::U8 => 1.0 / 128.0,
+        SampleFormat::I16 | SampleFormat::U16 => 1.0 / 32_768.0,
+        SampleFormat::I24 | SampleFormat::U24 => 1.0 / 8_388_608.0,
+        SampleFormat::I32 | SampleFormat::U32 => 1.0 / 2_147_483_648.0,
+        SampleFormat::I64 | SampleFormat::U64 => 1.0 / 9_223_372_036_854_775_808.0,
+        _ => 0.0,
+    }
+}
+
 fn cpal_sample_format(format: OutputSampleFormat) -> SampleFormat {
     match format {
         OutputSampleFormat::F32 => SampleFormat::F32,
@@ -287,14 +301,16 @@ impl PlaybackBackend for CpalBackend {
             .default_output_device()
             .context("No default output device available")?;
         let config = choose_negotiated_output_config(&device, source_format)?;
+        let sample_format = output_sample_format(config.sample_format())
+            .context("Unsupported output sample format")?;
         Ok(OutputFormat {
-            audio_format: AudioFormat {
-                channels: config.channels(),
-                sample_rate: config.sample_rate(),
-                duration_secs: source_format.duration_secs,
-            },
-            sample_format: output_sample_format(config.sample_format())
-                .context("Unsupported output sample format")?,
+            audio_format: AudioFormat::with_bits_per_sample(
+                config.channels(),
+                config.sample_rate(),
+                source_format.duration_secs,
+                Some(sample_format.bits_per_sample()),
+            ),
+            sample_format,
             device_identity: output_device_identity(&device)?,
         })
     }
@@ -345,6 +361,7 @@ impl PlaybackBackend for CpalBackend {
                     Arc::clone(&callback_metrics),
                     Arc::clone(&underrun_requested),
                     output_channels,
+                    output_dither_lsb(config.sample_format()),
                 )?
             };
         }
@@ -422,12 +439,15 @@ fn build_stream<T>(
     callback_metrics: Arc<CallbackMetricCounters>,
     underrun_requested: Arc<AtomicBool>,
     output_channels: u16,
+    dither_lsb: f32,
 ) -> Result<Stream>
 where
     T: Sample + SizedSample + FromSample<f32>,
 {
     let channels = usize::from(output_channels.max(1));
     let mut scratch = Vec::<f32>::new();
+    let mut smoother = OutputSmoother::new(channels);
+    let mut dither = TpdfDither::new(dither_lsb);
     let error_handler_for_stream = Arc::clone(&error_handler);
 
     device
@@ -447,6 +467,8 @@ where
                     &underrun_requested,
                     channels,
                     &mut scratch,
+                    &mut smoother,
+                    &mut dither,
                 );
             },
             move |err| {
@@ -455,6 +477,151 @@ where
             None,
         )
         .context("Failed to build output stream")
+}
+
+struct OutputSmoother {
+    channels: usize,
+    gain: f32,
+    last_frame: Vec<f32>,
+}
+
+impl OutputSmoother {
+    fn new(channels: usize) -> Self {
+        let channels = channels.max(1);
+        Self {
+            channels,
+            gain: 0.0,
+            last_frame: vec![0.0; channels],
+        }
+    }
+
+    #[cfg(test)]
+    fn primed(channels: usize) -> Self {
+        let channels = channels.max(1);
+        Self {
+            channels,
+            gain: 1.0,
+            last_frame: vec![0.0; channels],
+        }
+    }
+
+    fn smooth_audio(&mut self, output: &mut [f32], written_samples: usize, channels: usize) {
+        self.ensure_channels(channels);
+        let writable_samples = written_samples.min(output.len());
+        if writable_samples == 0 {
+            self.smooth_silence(output, channels);
+            return;
+        }
+
+        let channels = channels.max(1);
+        let frames = writable_samples / channels;
+        for frame in 0..frames {
+            self.gain = step_toward(self.gain, 1.0);
+            let base = frame * channels;
+            for channel in 0..channels {
+                output[base + channel] *= self.gain;
+            }
+        }
+        self.capture_last_frame(&output[..writable_samples], channels);
+
+        if writable_samples < output.len() {
+            self.smooth_silence(&mut output[writable_samples..], channels);
+        }
+    }
+
+    fn smooth_silence(&mut self, output: &mut [f32], channels: usize) {
+        self.ensure_channels(channels);
+        let channels = channels.max(1);
+        output.fill(0.0);
+        let frames = output.len() / channels;
+        for frame in 0..frames {
+            self.gain = step_toward(self.gain, 0.0);
+            let base = frame * channels;
+            for channel in 0..channels {
+                output[base + channel] = self.last_frame[channel] * self.gain;
+            }
+        }
+        if self.gain <= f32::EPSILON {
+            self.last_frame.fill(0.0);
+            self.gain = 0.0;
+        }
+    }
+
+    fn ensure_channels(&mut self, channels: usize) {
+        let channels = channels.max(1);
+        if self.channels != channels {
+            self.channels = channels;
+            self.last_frame.resize(channels, 0.0);
+            self.gain = self.gain.clamp(0.0, 1.0);
+        }
+    }
+
+    fn capture_last_frame(&mut self, output: &[f32], channels: usize) {
+        let channels = channels.max(1);
+        if output.len() < channels {
+            return;
+        }
+        let start = output.len() - channels;
+        self.last_frame[..channels].copy_from_slice(&output[start..start + channels]);
+    }
+}
+
+fn step_toward(current: f32, target: f32) -> f32 {
+    let step = 1.0 / OUTPUT_SMOOTHING_FRAMES as f32;
+    if current < target {
+        (current + step).min(target)
+    } else {
+        (current - step).max(target)
+    }
+}
+
+struct TpdfDither {
+    lsb: f32,
+    state: u64,
+}
+
+impl TpdfDither {
+    fn new(lsb: f32) -> Self {
+        Self {
+            lsb: lsb.max(0.0),
+            state: 0x8a5c_91d2_4f3e_7b60,
+        }
+    }
+
+    #[cfg(test)]
+    fn disabled() -> Self {
+        Self::new(0.0)
+    }
+
+    fn next(&mut self) -> f32 {
+        if self.lsb == 0.0 {
+            return 0.0;
+        }
+        (self.next_unit() - self.next_unit()) * self.lsb
+    }
+
+    fn next_unit(&mut self) -> f32 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 7;
+        self.state ^= self.state << 17;
+        let value = (self.state >> 40) as u32;
+        value as f32 / 16_777_216.0
+    }
+}
+
+fn write_smoothed_silence<T>(
+    data: &mut [T],
+    output: &mut [f32],
+    channels: usize,
+    smoother: &mut OutputSmoother,
+    output_gain: f32,
+) where
+    T: Sample + FromSample<f32>,
+{
+    smoother.smooth_silence(output, channels);
+    for (target, sample) in data.iter_mut().zip(output.iter().copied()) {
+        *target = T::from_sample(sanitize_output_sample(sample * output_gain));
+    }
 }
 
 #[cfg(test)]
@@ -475,6 +642,8 @@ fn write_output_data<T>(
 {
     let callback_metrics = CallbackMetricCounters::default();
     let underrun_requested = AtomicBool::new(false);
+    let mut smoother = OutputSmoother::primed(channels.max(1));
+    let mut dither = TpdfDither::disabled();
     write_output_data_with_metrics(
         data,
         samples,
@@ -488,6 +657,8 @@ fn write_output_data<T>(
         &underrun_requested,
         channels,
         scratch,
+        &mut smoother,
+        &mut dither,
     );
 }
 
@@ -505,6 +676,8 @@ fn write_output_data_with_metrics<T>(
     underrun_requested: &AtomicBool,
     channels: usize,
     scratch: &mut Vec<f32>,
+    smoother: &mut OutputSmoother,
+    dither: &mut TpdfDither,
 ) where
     T: Sample + FromSample<f32>,
 {
@@ -519,22 +692,26 @@ fn write_output_data_with_metrics<T>(
     let output = &mut scratch[..data.len()];
     output.fill(0.0);
 
+    let gain = output_gain(volume);
+
     let Some(status) = samples.try_pop_realtime_frames_into(output, channels) else {
-        data.fill(T::EQUILIBRIUM);
+        write_smoothed_silence(data, output, channels, smoother, gain);
         callback_metrics.record_silence_due_to_lock();
         return;
     };
     if let Some(error) = status.error {
-        data.fill(T::EQUILIBRIUM);
+        write_smoothed_silence(data, output, channels, smoother, gain);
         if !buffer_error_reported.swap(true, Ordering::SeqCst) {
             error_handler(error);
         }
         return;
     }
 
-    let gain = output_gain(volume);
+    smoother.smooth_audio(output, status.written, channels);
+
     for (target, sample) in data.iter_mut().zip(output.iter().copied()) {
-        *target = T::from_sample(sanitize_output_sample(sample * gain));
+        let dithered = sample * gain + dither.next();
+        *target = T::from_sample(sanitize_output_sample(dithered));
     }
 
     let channels = channels.max(1);
@@ -630,8 +807,8 @@ fn report_callback_metrics(
 mod tests {
     use super::{
         choose_exact_output_config_from_default, choose_exact_output_config_from_ranges,
-        choose_output_config_from_ranges, write_output_data, write_output_data_with_metrics,
-        CallbackMetricCounters,
+        choose_output_config_from_ranges, output_dither_lsb, write_output_data,
+        write_output_data_with_metrics, CallbackMetricCounters, OutputSmoother, TpdfDither,
     };
     use crate::player::backend::{AudioCallbackMetrics, OutputFormat, OutputSampleFormat};
     use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
@@ -679,6 +856,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let default = exact_config(2, 44_100, SampleFormat::F32);
         let configs = vec![config(2, 48_000, 48_000, SampleFormat::F32)];
@@ -697,6 +875,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let default = exact_config(2, 44_100, SampleFormat::F32);
         let configs = vec![config(2, 96_000, 96_000, SampleFormat::F32)];
@@ -715,6 +894,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let default = exact_config(2, 44_100, SampleFormat::DsdU8);
         let configs = vec![config(2, 48_000, 48_000, SampleFormat::F32)];
@@ -733,6 +913,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let default = exact_config(2, 48_000, SampleFormat::I24);
         let configs = vec![config(2, 96_000, 96_000, SampleFormat::F32)];
@@ -751,6 +932,7 @@ mod tests {
             channels: 2,
             sample_rate: 44_100,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let configs = vec![config(2, 48_000, 48_000, SampleFormat::F32)];
 
@@ -764,6 +946,7 @@ mod tests {
                 channels: 2,
                 sample_rate: 48_000,
                 duration_secs: 0.0,
+                bits_per_sample: None,
             },
             sample_format: OutputSampleFormat::F32,
             device_identity: "test-device".into(),
@@ -780,6 +963,7 @@ mod tests {
                 channels: 2,
                 sample_rate: 48_000,
                 duration_secs: 0.0,
+                bits_per_sample: None,
             },
             sample_format: OutputSampleFormat::I24,
             device_identity: "test-device".into(),
@@ -802,6 +986,7 @@ mod tests {
                 channels: 2,
                 sample_rate: 48_000,
                 duration_secs: 0.0,
+                bits_per_sample: None,
             },
             sample_format: OutputSampleFormat::F32,
             device_identity: "test-device".into(),
@@ -823,6 +1008,7 @@ mod tests {
                 channels: 2,
                 sample_rate: 48_000,
                 duration_secs: 0.0,
+                bits_per_sample: None,
             },
             sample_format: OutputSampleFormat::F32,
             device_identity: "test-device".into(),
@@ -833,11 +1019,27 @@ mod tests {
     }
 
     #[test]
+    fn integer_output_formats_enable_tpdf_dither() {
+        assert_eq!(output_dither_lsb(SampleFormat::F32), 0.0);
+        assert_eq!(output_dither_lsb(SampleFormat::F64), 0.0);
+        assert!(output_dither_lsb(SampleFormat::I16) > 0.0);
+        assert!(output_dither_lsb(SampleFormat::I24) < output_dither_lsb(SampleFormat::I16));
+
+        let lsb = output_dither_lsb(SampleFormat::I16);
+        let mut dither = TpdfDither::new(lsb);
+        for _ in 0..128 {
+            let sample = dither.next();
+            assert!((-lsb..=lsb).contains(&sample));
+        }
+    }
+
+    #[test]
     fn output_config_prefers_f32_for_exact_matches() {
         let source = AudioFormat {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let configs = vec![
             config(2, 44_100, 96_000, SampleFormat::I32),
@@ -857,6 +1059,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let configs = vec![
             config(2, 44_100, 96_000, SampleFormat::I32),
@@ -876,6 +1079,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
 
         let error = choose_output_config_from_ranges(None, &[], source).expect_err("config");
@@ -892,6 +1096,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let configs = vec![config(2, 96_000, 192_000, SampleFormat::F32)];
 
@@ -907,6 +1112,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 0.0,
+            bits_per_sample: None,
         };
         let configs = vec![
             config(1, 48_000, 48_000, SampleFormat::F32),
@@ -1261,6 +1467,8 @@ mod tests {
             error_sink.lock().unwrap().push(message);
         });
         let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::new(2);
+        let mut dither = TpdfDither::disabled();
         let mut output = [1.0_f32; 4];
 
         write_output_data_with_metrics(
@@ -1276,6 +1484,8 @@ mod tests {
             &underrun_requested,
             2,
             &mut scratch,
+            &mut smoother,
+            &mut dither,
         );
 
         assert_eq!(output, [0.0, 0.0, 0.0, 0.0]);
@@ -1295,9 +1505,50 @@ mod tests {
     }
 
     #[test]
-    fn f32_output_counts_lock_silence_without_counting_underrun() {
+    fn f32_output_fades_in_new_stream_from_silence() {
         let samples = SampleBuffer::new();
-        samples.push(&[0.25, -0.5]);
+        samples.push(&[1.0, -1.0, 1.0, -1.0]);
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_: String| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::new(2);
+        let mut dither = TpdfDither::disabled();
+        let mut output = [0.0_f32; 4];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert_eq!(output, [1.0 / 64.0, -1.0 / 64.0, 2.0 / 64.0, -2.0 / 64.0]);
+        assert_eq!(
+            frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
+            2
+        );
+    }
+
+    #[test]
+    fn f32_output_reads_ring_buffer_without_lock_silence() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25, -0.5, 0.75, -1.0]);
         let locked_samples = samples.clone();
         let handle = std::thread::spawn(move || {
             locked_samples.hold_lock_for_test(std::time::Duration::from_millis(100));
@@ -1317,6 +1568,8 @@ mod tests {
             error_sink.lock().unwrap().push(message);
         });
         let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::primed(2);
+        let mut dither = TpdfDither::disabled();
         let mut output = [1.0_f32; 4];
 
         write_output_data_with_metrics(
@@ -1332,69 +1585,24 @@ mod tests {
             &underrun_requested,
             2,
             &mut scratch,
+            &mut smoother,
+            &mut dither,
         );
 
-        assert_eq!(output, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(output, [0.25, -0.5, 0.75, -1.0]);
         assert_eq!(
             callback_metrics.drain(),
             AudioCallbackMetrics {
-                silence_due_to_lock: 1,
+                silence_due_to_lock: 0,
                 underrun_frames: 0,
             }
         );
+        assert_eq!(
+            frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
+            2
+        );
+        assert!(!finish_fired.load(std::sync::atomic::Ordering::SeqCst));
         assert!(!underrun_requested.load(std::sync::atomic::Ordering::SeqCst));
-        assert_eq!(
-            frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
-            0
-        );
-        assert!(!finish_fired.load(std::sync::atomic::Ordering::SeqCst));
-        assert!(errors.lock().unwrap().is_empty());
-
-        handle.join().expect("lock holder should finish");
-    }
-
-    #[test]
-    fn f32_output_silences_when_sample_buffer_is_locked() {
-        let samples = SampleBuffer::new();
-        samples.push(&[0.25, -0.5]);
-        let locked_samples = samples.clone();
-        let handle = std::thread::spawn(move || {
-            locked_samples.hold_lock_for_test(std::time::Duration::from_millis(100));
-        });
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        let stop_flag = AtomicBool::new(false);
-        let volume = AtomicU64::new(1.0_f64.to_bits());
-        let frames_rendered = AtomicU64::new(0);
-        let finish_fired = AtomicBool::new(false);
-        let buffer_error_reported = AtomicBool::new(false);
-        let errors = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let error_sink = Arc::clone(&errors);
-        let error_handler: PlaybackErrorHandler = Arc::new(move |message: String| {
-            error_sink.lock().unwrap().push(message);
-        });
-        let mut scratch = Vec::new();
-        let mut output = [1.0_f32; 4];
-
-        write_output_data(
-            &mut output,
-            &samples,
-            &stop_flag,
-            &volume,
-            &frames_rendered,
-            &finish_fired,
-            &buffer_error_reported,
-            &error_handler,
-            2,
-            &mut scratch,
-        );
-
-        assert_eq!(output, [0.0, 0.0, 0.0, 0.0]);
-        assert_eq!(
-            frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
-            0
-        );
-        assert!(!finish_fired.load(std::sync::atomic::Ordering::SeqCst));
         assert!(errors.lock().unwrap().is_empty());
 
         handle.join().expect("lock holder should finish");

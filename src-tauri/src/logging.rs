@@ -295,9 +295,15 @@ impl LogCenter {
             source: payload.source,
         };
 
-        let session_path = self.state.lock().unwrap().session_path.clone();
-        append_json_line(&session_path, &record)
-            .with_context(|| format!("failed to append session log {}", session_path.display()))?;
+        {
+            let state = self.state.lock().unwrap();
+            append_json_line(&state.session_path, &record).with_context(|| {
+                format!(
+                    "failed to append session log {}",
+                    state.session_path.display()
+                )
+            })?;
+        }
 
         if matches!(record.frontend_exposure, FrontendExposure::EventOnly) {
             let event = AppErrorEvent {
@@ -318,32 +324,29 @@ impl LogCenter {
     }
 
     pub(crate) fn flush_session_to_persistent(&self, threshold: LogLevel) -> Result<()> {
-        let (session_path, persistent_path) = {
-            let mut state = self.state.lock().unwrap();
-            if state.flushed {
-                return Ok(());
-            }
-            state.flushed = true;
-            (state.session_path.clone(), state.persistent_path.clone())
-        };
+        let mut state = self.state.lock().unwrap();
+        if state.flushed {
+            return Ok(());
+        }
+        state.flushed = true;
 
-        let records = read_records(&session_path)?;
+        let records = read_records(&state.session_path)?;
         let selected = records
             .into_iter()
             .filter(|record| record.level >= threshold)
             .collect::<Vec<_>>();
 
         if !selected.is_empty() {
-            if let Some(parent) = persistent_path.parent() {
+            if let Some(parent) = state.persistent_path.parent() {
                 fs::create_dir_all(parent)?;
             }
             for record in &selected {
-                append_json_line(&persistent_path, record)?;
+                append_json_line(&state.persistent_path, record)?;
             }
         }
 
-        if session_path.exists() {
-            fs::remove_file(&session_path)?;
+        if state.session_path.exists() {
+            fs::remove_file(&state.session_path)?;
         }
         Ok(())
     }
@@ -389,14 +392,17 @@ impl LogCenter {
             .into_iter()
             .skip(offset)
             .take(limit)
-            .map(|record| LogViewerRecord {
-                id: record.id,
-                ts: record.ts,
-                level: record.level,
-                domain: record.domain,
-                code: record.code,
-                message: record.user_message.unwrap_or(record.message),
-                details: None,
+            .map(|record| {
+                let details = log_viewer_details(&record);
+                LogViewerRecord {
+                    id: record.id,
+                    ts: record.ts,
+                    level: record.level,
+                    domain: record.domain,
+                    code: record.code,
+                    message: record.user_message.unwrap_or(record.message),
+                    details,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -435,10 +441,25 @@ fn read_records(path: &Path) -> Result<Vec<LogRecord>> {
         if line.trim().is_empty() {
             continue;
         }
-        let record = serde_json::from_str::<LogRecord>(&line)?;
-        records.push(record);
+        if let Ok(record) = serde_json::from_str::<LogRecord>(&line) {
+            records.push(record);
+        }
     }
     Ok(records)
+}
+
+fn log_viewer_details(record: &LogRecord) -> Option<String> {
+    match (&record.details, &record.context) {
+        (Some(details), Some(context)) => Some(format!(
+            "{details}\n{}",
+            serde_json::to_string_pretty(context).unwrap_or_else(|_| context.to_string())
+        )),
+        (Some(details), None) => Some(details.clone()),
+        (None, Some(context)) => {
+            Some(serde_json::to_string_pretty(context).unwrap_or_else(|_| context.to_string()))
+        }
+        (None, None) => None,
+    }
 }
 
 fn iso_timestamp_now() -> String {
@@ -457,8 +478,9 @@ fn next_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_json_line, read_records, FrontendExposure, LogLevel};
+    use super::{append_json_line, log_viewer_details, read_records, FrontendExposure, LogLevel};
     use serde_json::json;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -487,6 +509,49 @@ mod tests {
         let records = read_records(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].domain, "player");
+    }
+
+    #[test]
+    fn skips_malformed_jsonl_lines_when_reading_records() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                "broken line\n",
+                r#"{"id":"1","ts":"2026-01-01T00:00:00Z","level":"warn","domain":"player","code":"player.failed","message":"Player failed","userMessage":null,"details":null,"context":null,"frontendExposure":"none","causeChain":[],"sessionId":"session","source":"backend"}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+
+        let records = read_records(&path).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].code, "player.failed");
+    }
+
+    #[test]
+    fn log_viewer_details_include_context_json() {
+        let record = super::LogRecord {
+            id: "1".to_string(),
+            ts: "2026-01-01T00:00:00Z".to_string(),
+            level: LogLevel::Debug,
+            domain: "audio".to_string(),
+            code: "audio.callback_metrics".to_string(),
+            message: "Audio callback metrics".to_string(),
+            user_message: None,
+            details: Some("detail".to_string()),
+            context: Some(json!({"audio.callback_underrun_frames": 2})),
+            frontend_exposure: FrontendExposure::None,
+            cause_chain: Vec::new(),
+            session_id: "session".to_string(),
+            source: "backend".to_string(),
+        };
+
+        let details = log_viewer_details(&record).unwrap();
+        assert!(details.contains("detail"));
+        assert!(details.contains("audio.callback_underrun_frames"));
+        assert!(details.contains('2'));
     }
 
     #[test]

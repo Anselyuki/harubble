@@ -10,7 +10,7 @@ use crate::player::events::{
     emit_ended, emit_progress, emit_progress_snapshot, emit_state, PlaybackEndedEvent,
 };
 use crate::player::media::MediaSession;
-use crate::player::state::PlayerState;
+use crate::player::state::{PlaybackFormatState, PlayerState};
 use crate::player::stream::{AudioFormat, SampleBuffer, SampleWaitOutcome};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -264,6 +264,7 @@ impl AudioPlayer {
             state.progress = initial_progress;
             state.duration = initial_duration;
             state.volume = volume;
+            state.playback_format = None;
             state.has_previous = has_previous;
             state.has_next = has_next;
         }
@@ -281,6 +282,33 @@ impl AudioPlayer {
             .lock()
             .unwrap()
             .negotiate_output_format(source_format)
+    }
+
+    /// 更新当前会话的输入与输出音频格式摘要。
+    pub fn set_playback_format(
+        &self,
+        session_id: u64,
+        source_format: AudioFormat,
+        output_format: &OutputFormat,
+    ) {
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.session_id != session_id {
+                return;
+            }
+            state.playback_format = Some(PlaybackFormatState {
+                source_sample_rate: source_format.sample_rate,
+                source_channels: source_format.channels,
+                source_bits_per_sample: source_format.bits_per_sample,
+                output_sample_rate: output_format.audio_format.sample_rate,
+                output_channels: output_format.audio_format.channels,
+                output_bits_per_sample: output_format.audio_format.bits_per_sample,
+                output_sample_format: output_format.sample_format.as_str().to_string(),
+                resampling: source_format.sample_rate != output_format.audio_format.sample_rate,
+                channel_remix: source_format.channels != output_format.audio_format.channels,
+            });
+        }
+        emit_state_and_sync(&self.app, &self.state, &self.media_session);
     }
 
     /// 启动当前会话的流式播放并返回最终时长。
@@ -1171,6 +1199,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 60.0,
+            bits_per_sample: None,
         };
         assert_eq!(rebuffer_target_samples(stereo_48k), 288_000);
 
@@ -1178,6 +1207,7 @@ mod tests {
             channels: 2,
             sample_rate: 768_000,
             duration_secs: 60.0,
+            bits_per_sample: None,
         };
         assert_eq!(
             rebuffer_target_samples(high_rate),

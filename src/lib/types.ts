@@ -289,6 +289,19 @@ export interface CreateDownloadJobRequest {
   options: DownloadOptions;
 }
 
+export interface PlaybackFormatState {
+  sourceSampleRate: number;
+  sourceChannels: number;
+  sourceBitsPerSample: number | null;
+  sourceBitrateKbps?: number | null;
+  outputSampleRate: number;
+  outputChannels: number;
+  outputBitsPerSample: number | null;
+  outputSampleFormat: string;
+  resampling: boolean;
+  channelRemix: boolean;
+}
+
 export interface PlayerState {
   sessionId: number;
   songCid: string | null;
@@ -303,6 +316,7 @@ export interface PlayerState {
   progress: number;
   duration: number;
   volume: number;
+  playbackFormat: PlaybackFormatState | null;
 }
 
 export interface PlaybackStartResult {

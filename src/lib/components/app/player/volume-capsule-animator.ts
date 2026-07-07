@@ -13,8 +13,6 @@ interface CapsuleAnimator {
   collapse(onComplete: () => void): void;
   showBadge(): void;
   hideBadge(): void;
-  hoverIconIn(): void;
-  hoverIconOut(): void;
   destroy(): void;
 }
 
@@ -75,8 +73,6 @@ export function createCapsuleAnimator(
         ease: 'ios-spring',
         onComplete,
       });
-
-      showBadgeInternal(refs);
     },
 
     collapse(onComplete: () => void) {
@@ -112,29 +108,6 @@ export function createCapsuleAnimator(
 
     hideBadge() {
       hideBadgeInternal(getRefs());
-    },
-
-    hoverIconIn() {
-      const { iconBtn } = getRefs();
-      if (!iconBtn) return;
-      gsap.to(iconBtn, {
-        color: 'var(--icon-active)',
-        backgroundColor:
-          'var(--player-control-hover-bg, rgba(var(--album-accent-rgb), 0.1))',
-        duration: getMotionDuration(MOTION.FAST),
-        ease: 'ios-out',
-      });
-    },
-
-    hoverIconOut() {
-      const { iconBtn } = getRefs();
-      if (!iconBtn) return;
-      gsap.to(iconBtn, {
-        color: 'var(--icon-default)',
-        backgroundColor: 'transparent',
-        duration: getMotionDuration(MOTION.FAST),
-        ease: 'ios-in',
-      });
     },
 
     destroy() {

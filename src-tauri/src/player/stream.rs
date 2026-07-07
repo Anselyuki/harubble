@@ -4,12 +4,15 @@
 //! 在解码侧与播放后端之间传递 PCM 数据。
 
 use anyhow::{Context, Result};
-use std::collections::VecDeque;
+use crossbeam_queue::ArrayQueue;
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, TryLockError};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -35,9 +38,27 @@ pub struct AudioFormat {
     pub sample_rate: u32,
     /// 音频总时长，单位为秒。
     pub duration_secs: f64,
+    /// 源或输出 PCM 位深；未知时为 `None`。
+    pub bits_per_sample: Option<u16>,
 }
 
 impl AudioFormat {
+    /// 创建音频格式描述，并带上已知 PCM 位深。
+    pub fn with_bits_per_sample(
+        channels: u16,
+        sample_rate: u32,
+        duration_secs: f64,
+        bits_per_sample: Option<u16>,
+    ) -> Self {
+        Self {
+            channels,
+            sample_rate,
+            duration_secs,
+            bits_per_sample,
+        }
+        .normalized()
+    }
+
     /// 返回经过最小值归一化后的音频格式。
     ///
     /// 该方法会将通道数和采样率修正到至少为 `1`，并把时长裁剪到不小于 `0.0`。
@@ -46,6 +67,7 @@ impl AudioFormat {
             channels: self.channels.max(1),
             sample_rate: self.sample_rate.max(1),
             duration_secs: self.duration_secs.max(0.0),
+            bits_per_sample: self.bits_per_sample,
         }
     }
 }
@@ -352,30 +374,33 @@ impl Seek for GrowingFileReader {
 /// 解码线程与输出线程之间共享的采样缓冲区。
 #[derive(Clone)]
 pub struct SampleBuffer {
-    inner: Arc<(Mutex<SampleBufferState>, Condvar)>,
+    inner: Arc<SampleBufferInner>,
 }
 
 const MAX_BUFFER_SAMPLES: usize = 192_000 * 2 * 15;
-const SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES: usize = 8192;
+const SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES: usize = 1024;
 
-struct SampleBufferState {
-    queue: VecDeque<f32>,
-    finished: bool,
-    error: Option<String>,
+struct SampleBufferInner {
+    queue: ArrayQueue<f32>,
+    finished: AtomicBool,
+    error_flag: AtomicBool,
+    error: Mutex<Option<String>>,
+    wait_lock: Mutex<()>,
+    condvar: Condvar,
 }
 
 impl SampleBuffer {
     /// 创建一个空的采样缓冲区。
     pub fn new() -> Self {
         Self {
-            inner: Arc::new((
-                Mutex::new(SampleBufferState {
-                    queue: VecDeque::new(),
-                    finished: false,
-                    error: None,
-                }),
-                Condvar::new(),
-            )),
+            inner: Arc::new(SampleBufferInner {
+                queue: ArrayQueue::new(MAX_BUFFER_SAMPLES),
+                finished: AtomicBool::new(false),
+                error_flag: AtomicBool::new(false),
+                error: Mutex::new(None),
+                wait_lock: Mutex::new(()),
+                condvar: Condvar::new(),
+            }),
         }
     }
 
@@ -391,60 +416,51 @@ impl SampleBuffer {
         if samples.is_empty() {
             return;
         }
-        let (lock, condvar) = &*self.inner;
         let mut offset = 0_usize;
 
         while offset < samples.len() {
-            let mut state = lock.lock().unwrap();
-            while state.queue.len() >= MAX_BUFFER_SAMPLES
-                && !state.finished
-                && state.error.is_none()
+            while self.inner.queue.is_full()
+                && !self.inner.finished.load(Ordering::Acquire)
+                && !self.inner.error_flag.load(Ordering::Acquire)
             {
-                let (next_state, _) = condvar
-                    .wait_timeout(state, Duration::from_millis(50))
+                let guard = self.inner.wait_lock.lock().unwrap();
+                let _ = self
+                    .inner
+                    .condvar
+                    .wait_timeout(guard, Duration::from_millis(50))
                     .unwrap();
-                state = next_state;
             }
 
-            if state.finished || state.error.is_some() {
-                condvar.notify_all();
+            if self.inner.finished.load(Ordering::Acquire)
+                || self.inner.error_flag.load(Ordering::Acquire)
+            {
+                self.inner.condvar.notify_all();
                 return;
             }
 
-            let available = MAX_BUFFER_SAMPLES
-                .saturating_sub(state.queue.len())
-                .min(SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES);
-            if available == 0 {
-                continue;
+            let end = (offset + SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES).min(samples.len());
+            while offset < end {
+                match self.inner.queue.push(sanitize_pcm_sample(samples[offset])) {
+                    Ok(()) => offset += 1,
+                    Err(_) => break,
+                }
             }
-            let end = (offset + available).min(samples.len());
-            state.queue.extend(
-                samples[offset..end]
-                    .iter()
-                    .copied()
-                    .map(sanitize_pcm_sample),
-            );
-            offset = end;
-            condvar.notify_all();
+            self.inner.condvar.notify_all();
         }
     }
 
     /// 标记采样缓冲区不会再写入新的数据。
     pub fn finish(&self) {
-        let (lock, condvar) = &*self.inner;
-        let mut state = lock.lock().unwrap();
-        state.finished = true;
-        condvar.notify_all();
+        self.inner.finished.store(true, Ordering::Release);
+        self.inner.condvar.notify_all();
     }
 
     /// 标记采样缓冲区失败并唤醒等待中的消费者。
     pub fn fail(&self, message: impl Into<String>) {
-        let (lock, condvar) = &*self.inner;
-        let mut state = lock.lock().unwrap();
-        state.queue.clear();
-        state.error = Some(message.into());
-        state.finished = true;
-        condvar.notify_all();
+        *self.inner.error.lock().unwrap() = Some(message.into());
+        self.inner.error_flag.store(true, Ordering::Release);
+        self.inner.finished.store(true, Ordering::Release);
+        self.inner.condvar.notify_all();
     }
 
     /// 从缓冲区中弹出尽可能多的完整声道帧写入 `output`。
@@ -454,22 +470,20 @@ impl SampleBuffer {
     /// 返回值会说明本次写入了多少采样，以及缓冲区是否已经结束或失败。
     #[cfg(test)]
     pub fn pop_complete_frames_into(&self, output: &mut [f32], frame_channels: usize) -> PopStatus {
-        let (lock, condvar) = &*self.inner;
-        let mut state = lock.lock().unwrap();
-        pop_complete_frames_from_state(&mut state, condvar, output, frame_channels, false)
+        self.pop_frames_into(output, frame_channels, false)
     }
 
     /// 尝试从缓冲区弹出完整声道帧。
     ///
-    /// 该方法供实时输出回调使用：如果解码线程正在持有缓冲区锁，立即返回 `None`，
-    /// 由调用方输出静音，避免把音频回调阻塞在互斥锁上。
+    /// 该方法供实时输出回调使用；内部使用 lock-free 有界队列，正常路径不会因为
+    /// 解码线程写入而阻塞音频 callback。
     #[cfg(test)]
     pub fn try_pop_complete_frames_into(
         &self,
         output: &mut [f32],
         frame_channels: usize,
     ) -> Option<PopStatus> {
-        self.try_pop_frames_into(output, frame_channels, false)
+        Some(self.pop_frames_into(output, frame_channels, false))
     }
 
     /// 尝试弹出一整个实时输出 callback 所需的完整声道帧。
@@ -482,34 +496,64 @@ impl SampleBuffer {
         output: &mut [f32],
         frame_channels: usize,
     ) -> Option<PopStatus> {
-        self.try_pop_frames_into(output, frame_channels, true)
+        Some(self.pop_frames_into(output, frame_channels, true))
     }
 
-    fn try_pop_frames_into(
+    fn pop_frames_into(
         &self,
         output: &mut [f32],
         frame_channels: usize,
         require_full_callback: bool,
-    ) -> Option<PopStatus> {
-        let (lock, condvar) = &*self.inner;
-        let mut state = match lock.try_lock() {
-            Ok(state) => state,
-            Err(TryLockError::WouldBlock) => return None,
-            Err(TryLockError::Poisoned(_)) => {
-                return Some(PopStatus {
-                    written: 0,
-                    finished: true,
-                    error: Some("Sample buffer lock poisoned".to_string()),
-                });
+    ) -> PopStatus {
+        if let Some(error) = self.current_error() {
+            return PopStatus {
+                written: 0,
+                finished: true,
+                error: Some(error),
+            };
+        }
+
+        let frame_channels = frame_channels.max(1);
+        let writable_samples = output.len() - (output.len() % frame_channels);
+        let available_samples = self.inner.queue.len();
+        let available_complete_samples = available_samples - (available_samples % frame_channels);
+
+        if require_full_callback
+            && !self.inner.finished.load(Ordering::Acquire)
+            && available_complete_samples < writable_samples
+        {
+            return PopStatus {
+                written: 0,
+                finished: false,
+                error: self.current_error(),
+            };
+        }
+
+        let target_samples = writable_samples.min(available_complete_samples);
+        let mut written = 0_usize;
+        while written < target_samples {
+            match self.inner.queue.pop() {
+                Some(sample) => {
+                    output[written] = sample;
+                    written += 1;
+                }
+                None => break,
             }
-        };
-        Some(pop_complete_frames_from_state(
-            &mut state,
-            condvar,
-            output,
-            frame_channels,
-            require_full_callback,
-        ))
+        }
+
+        if written == 0 && self.inner.finished.load(Ordering::Acquire) && available_samples > 0 {
+            while self.inner.queue.pop().is_some() {}
+        }
+
+        if written > 0 {
+            self.inner.condvar.notify_all();
+        }
+
+        PopStatus {
+            written,
+            finished: self.inner.finished.load(Ordering::Acquire) && self.inner.queue.is_empty(),
+            error: self.current_error(),
+        }
     }
 
     /// 等待缓冲区中至少出现指定数量的采样。
@@ -530,27 +574,26 @@ impl SampleBuffer {
         minimum_samples: usize,
         stop_flag: &AtomicBool,
     ) -> Result<SampleWaitOutcome> {
-        let (lock, condvar) = &*self.inner;
-        let mut state = lock.lock().unwrap();
-
-        while state.queue.len() < minimum_samples
-            && !state.finished
-            && state.error.is_none()
+        while self.inner.queue.len() < minimum_samples
+            && !self.inner.finished.load(Ordering::Acquire)
+            && !self.inner.error_flag.load(Ordering::Acquire)
             && !stop_flag.load(Ordering::SeqCst)
         {
-            let (next_state, _) = condvar
-                .wait_timeout(state, Duration::from_millis(50))
+            let guard = self.inner.wait_lock.lock().unwrap();
+            let _ = self
+                .inner
+                .condvar
+                .wait_timeout(guard, Duration::from_millis(50))
                 .unwrap();
-            state = next_state;
         }
 
-        if let Some(error) = &state.error {
-            anyhow::bail!(error.clone());
+        if let Some(error) = self.current_error() {
+            anyhow::bail!(error);
         }
         if stop_flag.load(Ordering::SeqCst) {
             anyhow::bail!("Playback stopped");
         }
-        if state.finished && state.queue.is_empty() {
+        if self.inner.finished.load(Ordering::Acquire) && self.inner.queue.is_empty() {
             return Ok(SampleWaitOutcome::Ended);
         }
         Ok(SampleWaitOutcome::Ready)
@@ -558,59 +601,16 @@ impl SampleBuffer {
 
     #[cfg(test)]
     pub(crate) fn hold_lock_for_test(&self, duration: Duration) {
-        let (lock, _) = &*self.inner;
-        let _state = lock.lock().unwrap();
         thread::sleep(duration);
     }
-}
 
-fn pop_complete_frames_from_state(
-    state: &mut SampleBufferState,
-    condvar: &Condvar,
-    output: &mut [f32],
-    frame_channels: usize,
-    require_full_callback: bool,
-) -> PopStatus {
-    let mut written = 0_usize;
-    let frame_channels = frame_channels.max(1);
-    let writable_samples = output.len() - (output.len() % frame_channels);
-    let available_complete_samples = state.queue.len() - (state.queue.len() % frame_channels);
-
-    if require_full_callback && !state.finished && available_complete_samples < writable_samples {
-        return PopStatus {
-            written: 0,
-            finished: false,
-            error: state.error.clone(),
-        };
-    }
-
-    let target_samples = writable_samples.min(available_complete_samples);
-
-    while written < target_samples {
-        match state.queue.pop_front() {
-            Some(sample) => {
-                output[written] = sample;
-                written += 1;
-            }
-            None => break,
+    fn current_error(&self) -> Option<String> {
+        if self.inner.error_flag.load(Ordering::Acquire) {
+            self.inner.error.lock().unwrap().clone()
+        } else {
+            None
         }
     }
-
-    if written == 0 && state.finished && !state.queue.is_empty() {
-        state.queue.clear();
-    }
-
-    let status = PopStatus {
-        written,
-        finished: state.finished && state.queue.is_empty(),
-        error: state.error.clone(),
-    };
-
-    if written > 0 {
-        condvar.notify_all();
-    }
-
-    status
 }
 
 /// 等待采样缓冲区填充时的结果。
@@ -955,12 +955,14 @@ fn audio_format_from_codec_params(codec_params: &CodecParameters) -> Result<Audi
         .sample_rate
         .context("Missing audio sample rate")?;
 
-    Ok(AudioFormat {
+    Ok(AudioFormat::with_bits_per_sample(
         channels,
         sample_rate,
-        duration_secs: codec_duration_secs(codec_params),
-    }
-    .normalized())
+        codec_duration_secs(codec_params),
+        codec_params
+            .bits_per_sample
+            .and_then(|value| u16::try_from(value).ok()),
+    ))
 }
 
 fn codec_duration_secs(codec_params: &CodecParameters) -> f64 {
@@ -981,18 +983,31 @@ struct SampleConverter {
     pending: Vec<f32>,
     pending_base_frame: u64,
     next_source_frame: f64,
+    sinc_resampler: Option<SincFixedIn<f32>>,
 }
+
+const SINC_RESAMPLE_CHUNK_FRAMES: usize = 1024;
 
 impl SampleConverter {
     fn new(source_format: AudioFormat, target_format: AudioFormat) -> Self {
+        let source_channels = source_format.channels.max(1) as usize;
+        let target_channels = target_format.channels.max(1) as usize;
+        let source_rate = source_format.sample_rate.max(1);
+        let target_rate = target_format.sample_rate.max(1);
+        let sinc_resampler = if source_rate == target_rate {
+            None
+        } else {
+            create_sinc_resampler(source_rate, target_rate, target_channels)
+        };
         Self {
-            source_channels: source_format.channels.max(1) as usize,
-            target_channels: target_format.channels.max(1) as usize,
-            source_rate: source_format.sample_rate.max(1),
-            target_rate: target_format.sample_rate.max(1),
+            source_channels,
+            target_channels,
+            source_rate,
+            target_rate,
             pending: Vec::new(),
             pending_base_frame: 0,
             next_source_frame: 0.0,
+            sinc_resampler,
         }
     }
 
@@ -1023,6 +1038,71 @@ impl SampleConverter {
             return output;
         }
 
+        if self.sinc_resampler.is_some() {
+            return self.drain_available_with_sinc(finalizing, available_frames);
+        }
+
+        self.drain_available_with_linear_interpolation(finalizing, available_frames)
+    }
+
+    fn drain_available_with_sinc(&mut self, finalizing: bool, available_frames: usize) -> Vec<f32> {
+        let frames_to_process = if finalizing {
+            available_frames
+        } else {
+            available_frames - (available_frames % SINC_RESAMPLE_CHUNK_FRAMES)
+        };
+        if frames_to_process == 0 {
+            return Vec::new();
+        }
+
+        let mut output = Vec::new();
+        let mut processed_frames = 0_usize;
+
+        while processed_frames + SINC_RESAMPLE_CHUNK_FRAMES <= frames_to_process {
+            let planar = self.build_remixed_planar(processed_frames, SINC_RESAMPLE_CHUNK_FRAMES);
+            let output_planar = match self.sinc_resampler.as_mut() {
+                Some(resampler) => resampler.process(&planar, None),
+                None => unreachable!("sinc resampler checked by caller"),
+            };
+            match output_planar {
+                Ok(planar) => output.extend(interleave_planar(&planar)),
+                Err(_) => {
+                    return self
+                        .drain_available_with_linear_interpolation(finalizing, available_frames);
+                }
+            }
+            processed_frames += SINC_RESAMPLE_CHUNK_FRAMES;
+        }
+
+        if finalizing && processed_frames < frames_to_process {
+            let remaining_frames = frames_to_process - processed_frames;
+            let planar = self.build_remixed_planar(processed_frames, remaining_frames);
+            let output_planar = match self.sinc_resampler.as_mut() {
+                Some(resampler) => resampler.process_partial(Some(&planar), None),
+                None => unreachable!("sinc resampler checked by caller"),
+            };
+            match output_planar {
+                Ok(planar) => output.extend(interleave_planar(&planar)),
+                Err(_) => {
+                    return self
+                        .drain_available_with_linear_interpolation(finalizing, available_frames);
+                }
+            }
+            processed_frames = frames_to_process;
+        }
+
+        let samples_to_drop = processed_frames * self.source_channels;
+        self.pending.drain(..samples_to_drop);
+        self.pending_base_frame += processed_frames as u64;
+
+        output
+    }
+
+    fn drain_available_with_linear_interpolation(
+        &mut self,
+        finalizing: bool,
+        available_frames: usize,
+    ) -> Vec<f32> {
         let mut output = Vec::new();
         let ratio = self.source_rate as f64 / self.target_rate as f64;
         let available_abs_frames = self.pending_base_frame + available_frames as u64;
@@ -1094,6 +1174,47 @@ impl SampleConverter {
         }
     }
 
+    fn build_remixed_planar(&self, start_frame: usize, frame_count: usize) -> Vec<Vec<f32>> {
+        let mut planar = vec![Vec::with_capacity(frame_count); self.target_channels];
+        for source_frame in start_frame..start_frame + frame_count {
+            self.push_remixed_frame_to_planar(source_frame, &mut planar);
+        }
+        planar
+    }
+
+    fn push_remixed_frame_to_planar(&self, source_frame: usize, output: &mut [Vec<f32>]) {
+        let base = source_frame * self.source_channels;
+
+        if self.source_channels == self.target_channels {
+            for (channel, target) in output.iter_mut().enumerate().take(self.target_channels) {
+                target.push(self.pending[base + channel]);
+            }
+            return;
+        }
+
+        if self.source_channels == 1 {
+            let sample = self.pending[base];
+            for target in output.iter_mut().take(self.target_channels) {
+                target.push(sample);
+            }
+            return;
+        }
+
+        if self.target_channels == 1 {
+            let sum = self.pending[base..base + self.source_channels]
+                .iter()
+                .copied()
+                .sum::<f32>();
+            output[0].push(sum / self.source_channels as f32);
+            return;
+        }
+
+        for (target_channel, target) in output.iter_mut().enumerate().take(self.target_channels) {
+            let mapped = target_channel.min(self.source_channels - 1);
+            target.push(self.pending[base + mapped]);
+        }
+    }
+
     fn push_interpolated_frame(
         &self,
         source_frame: usize,
@@ -1158,6 +1279,43 @@ impl SampleConverter {
     }
 }
 
+fn create_sinc_resampler(
+    source_rate: u32,
+    target_rate: u32,
+    channels: usize,
+) -> Option<SincFixedIn<f32>> {
+    let params = SincInterpolationParameters {
+        sinc_len: 256,
+        f_cutoff: 0.95,
+        interpolation: SincInterpolationType::Cubic,
+        oversampling_factor: 256,
+        window: WindowFunction::BlackmanHarris2,
+    };
+    SincFixedIn::<f32>::new(
+        target_rate as f64 / source_rate as f64,
+        2.0,
+        params,
+        SINC_RESAMPLE_CHUNK_FRAMES,
+        channels,
+    )
+    .ok()
+}
+
+fn interleave_planar(planar: &[Vec<f32>]) -> Vec<f32> {
+    let channels = planar.len();
+    if channels == 0 {
+        return Vec::new();
+    }
+    let frames = planar.iter().map(Vec::len).min().unwrap_or(0);
+    let mut output = Vec::with_capacity(frames * channels);
+    for frame in 0..frames {
+        for channel in planar {
+            output.push(sanitize_pcm_sample(channel[frame]));
+        }
+    }
+    output
+}
+
 fn sanitize_pcm_sample(sample: f32) -> f32 {
     if sample.is_finite() {
         sample.clamp(-1.0, 1.0)
@@ -1172,6 +1330,7 @@ mod tests {
         ensure_decoded_format_matches_source, open_audio_reader, open_audio_reader_with_retry,
         timestamp_delta_to_frames, AudioFormat, BoxedAudioReader, GrowingFileHandle, Hint,
         SampleBuffer, SampleConverter, SampleWaitOutcome, SymphoniaSampleBuffer,
+        SINC_RESAMPLE_CHUNK_FRAMES,
     };
     use std::fs::File;
     use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -1289,27 +1448,31 @@ mod tests {
     }
 
     #[test]
-    fn sample_converter_interpolates_resampled_chunks() {
+    fn sample_converter_uses_sinc_resampler_for_rate_conversion() {
         let mut converter = SampleConverter::new(
             AudioFormat {
                 channels: 1,
-                sample_rate: 2,
+                sample_rate: 48_000,
                 duration_secs: 0.0,
+                bits_per_sample: None,
             },
             AudioFormat {
                 channels: 1,
-                sample_rate: 4,
+                sample_rate: 44_100,
                 duration_secs: 0.0,
+                bits_per_sample: None,
             },
         );
 
-        let first = converter.push_chunk(&[0.0, 1.0]);
-        let second = converter.push_chunk(&[0.0]);
-        let tail = converter.finish();
+        let input = (0..SINC_RESAMPLE_CHUNK_FRAMES)
+            .map(|frame| ((frame as f32 / 32.0).sin() * 0.5).clamp(-1.0, 1.0))
+            .collect::<Vec<_>>();
+        let output = converter.push_chunk(&input);
 
-        assert_eq!(first, vec![0.0, 0.5]);
-        assert_eq!(second, vec![1.0, 0.5]);
-        assert_eq!(tail, vec![0.0, 0.0]);
+        assert!(!output.is_empty());
+        assert!(output.iter().all(|sample| sample.is_finite()));
+        assert!(output.iter().all(|sample| (-1.0..=1.0).contains(sample)));
+        assert_ne!(output, input);
     }
 
     #[test]
@@ -1319,11 +1482,13 @@ mod tests {
                 channels: 1,
                 sample_rate: 1,
                 duration_secs: 0.0,
+                bits_per_sample: None,
             },
             AudioFormat {
                 channels: 1,
                 sample_rate: 1,
                 duration_secs: 0.0,
+                bits_per_sample: None,
             },
         );
 
@@ -1338,6 +1503,7 @@ mod tests {
             channels: 2,
             sample_rate: 48_000,
             duration_secs: 10.0,
+            bits_per_sample: None,
         };
         let stereo = SignalSpec::new(48_000, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
         let mono = SignalSpec::new(48_000, Channels::FRONT_LEFT);
@@ -1426,7 +1592,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_buffer_try_pop_returns_none_when_locked() {
+    fn sample_buffer_try_pop_is_lock_free_for_realtime_reader() {
         let buffer = SampleBuffer::new();
         buffer.push(&[0.25, -0.25]);
         let locked_buffer = buffer.clone();
@@ -1437,17 +1603,13 @@ mod tests {
         thread::sleep(Duration::from_millis(10));
 
         let mut output = [1.0_f32; 2];
-        assert!(buffer
-            .try_pop_complete_frames_into(&mut output, 2)
-            .is_none());
-        assert_eq!(output, [1.0, 1.0]);
-
-        handle.join().expect("lock holder should finish");
         let status = buffer
             .try_pop_complete_frames_into(&mut output, 2)
-            .expect("buffer lock should be available");
+            .expect("ring buffer reader should not wait on a sample mutex");
         assert_eq!(status.written, 2);
         assert_eq!(output, [0.25, -0.25]);
+
+        handle.join().expect("lock holder should finish");
     }
 
     #[test]

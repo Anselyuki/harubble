@@ -38,6 +38,7 @@
     progress: 0,
     duration: 0,
     volume: 1,
+    playbackFormat: null,
   };
 
   let playerState = $state<PlayerState>(EMPTY_PLAYER_STATE);

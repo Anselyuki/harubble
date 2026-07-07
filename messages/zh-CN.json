@@ -397,5 +397,17 @@
   "tag_editor_edit_add": "保存并添加",
   "tag_editor_no_results": "无匹配结果",
   "tag_editor_songs_tagged_count": "{count}/{total} 已标记",
-  "tag_editor_close": "关闭"
+  "tag_editor_close": "关闭",
+  "player_format_popover_title": "播放信息",
+  "player_format_section_source": "源格式",
+  "player_format_section_output": "输出格式",
+  "player_format_label_sample_rate": "采样率",
+  "player_format_label_bit_depth": "位深",
+  "player_format_label_channels": "声道",
+  "player_format_label_bitrate": "码率",
+  "player_format_label_sample_format": "采样格式",
+  "player_format_label_resampling": "重采样",
+  "player_format_label_channel_remix": "声道混合",
+  "player_format_flag_yes": "是",
+  "player_format_flag_no": "否"
 }

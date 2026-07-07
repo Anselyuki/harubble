@@ -14,8 +14,6 @@ import {
   setPlaybackVolume,
   clearResponseCache,
   resetHttpClient,
-  extractImageTheme,
-  getImageDataUrl,
   getSongLyrics,
   createDownloadJob,
   listDownloadJobs,
@@ -52,29 +50,11 @@ import {
   invalidateByTag,
   warmCacheManager,
 } from '$lib/cache';
-import type {
-  Album,
-  AlbumDetail,
-  OutputFormat,
-  SongEntry,
-  PlaybackQueueEntry,
-  AppErrorEvent,
-  LogLevel,
-  SearchLibraryResultItem,
-  ThemePalette,
-} from '$lib/types';
-import { applyAlbumAccentPalette, applyThemeColors } from '$lib/theme';
-import {
-  DEFAULT_THEME_PREFERENCES,
-  resolveThemeColors,
-} from '$lib/themePresets';
+import type { AppErrorEvent, LogLevel, OutputFormat } from '$lib/types';
+import { DEFAULT_THEME_PREFERENCES } from '$lib/themePresets';
 import { envStore } from '$lib/features/env/store.svelte';
-import { shellStore, type AppView } from '$lib/features/shell/store.svelte';
-import {
-  navigationStack,
-  isSameEntry,
-  type NavigationEntry,
-} from './navigation.svelte';
+import { shellStore } from '$lib/features/shell/store.svelte';
+import { navigationStack } from './navigation.svelte';
 import { createSettingsController } from '$lib/features/shell/settings.svelte';
 import { createAlbumStageMotionController } from '$lib/features/shell/albumStageMotion.svelte';
 import { createLibraryController } from '$lib/features/library/controller.svelte';
@@ -82,7 +62,6 @@ import { createPlayerController } from '$lib/features/player/controller.svelte';
 import { createDownloadController } from '$lib/features/download/controller.svelte';
 import { createHomeController } from '$lib/features/home/controller.svelte';
 import { createTagEditorController } from '$lib/features/tagEditor/controller.svelte';
-import { tagEditorStore } from '$lib/features/tagEditor/store.svelte';
 import { createCollectionController } from '$lib/features/collection/controller.svelte';
 import { createSearchController } from '$lib/features/search/controller.svelte';
 import {
@@ -97,12 +76,6 @@ import {
   exportCollection,
   importCollection,
 } from '$lib/collectionApi';
-import { preloadImage } from '$lib/features/library/helpers';
-import {
-  buildAlbumPlaybackEntries,
-  getPreferredAlbumArtworkUrl,
-  getSelectedAlbumCoverUrl,
-} from '$lib/features/library/selectors';
 import {
   bootstrapApp,
   subscribeToTauriEvents,
@@ -110,10 +83,13 @@ import {
 import { localeState, type Locale } from '$lib/i18n';
 import * as m from '$lib/paraglide/messages.js';
 import { toast } from 'svelte-sonner';
+import { createSelectionManager } from './selectionManager.svelte';
+import { createThemeManager } from './themeManager.svelte';
+import { createNavigationManager } from './navigationManager.svelte';
+import { createDownloadBridge } from './downloadBridge.svelte';
 
 const MIN_DISPLAY_MS = 260;
 const DETAIL_SKELETON_DELAY_MS = 140;
-const ALBUM_VISUAL_REQUEST_DELAY_MS = 450;
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -129,20 +105,21 @@ export function createAppRuntime() {
     toast.error(message);
   }
 
-  async function preloadAlbumArtwork(
-    album: AlbumDetail
-  ): Promise<number | null> {
-    const sourceUrl = getPreferredAlbumArtworkUrl(album);
-    if (!sourceUrl) return null;
+  // --- 子控制器创建 ---
 
-    const resolvedUrl = await getImageDataUrl(sourceUrl).catch(() => sourceUrl);
-    const meta = await preloadImage(resolvedUrl);
-    return meta?.aspectRatio ?? null;
-  }
+  const settingsController = createSettingsController({
+    getPreferences,
+    setPreferences,
+    notifyError,
+    onLocaleChanged: (locale) => localeState.applyBackendLocale(locale),
+  });
 
-  function setAlbumStageAspectRatio(value: number | null | undefined) {
-    albumStageMotionController.setAspectRatio(value);
-  }
+  const albumStageMotionController = createAlbumStageMotionController({
+    getReducedMotion: () => envStore.prefersReducedMotion,
+    getViewportHeight: () => envStore.viewportHeight,
+    getLoadingDetail: () => libraryController.loadingDetail,
+    getIsViewTransitioning: () => navigationManager.isViewTransitioning,
+  });
 
   const libraryController = createLibraryController({
     delay,
@@ -151,8 +128,9 @@ export function createAppRuntime() {
     getAlbums,
     getAlbumDetail,
     searchLibrary,
-    preloadAlbumArtwork,
-    setAlbumStageAspectRatio,
+    preloadAlbumArtwork: (album) => themeManager.preloadAlbumArtwork(album),
+    setAlbumStageAspectRatio: (value) =>
+      albumStageMotionController.setAspectRatio(value),
     notifyError,
   });
 
@@ -195,20 +173,6 @@ export function createAppRuntime() {
     }),
     notifyInfo,
     notifyError,
-  });
-
-  const settingsController = createSettingsController({
-    getPreferences,
-    setPreferences,
-    notifyError,
-    onLocaleChanged: (locale) => localeState.applyBackendLocale(locale),
-  });
-
-  const albumStageMotionController = createAlbumStageMotionController({
-    getReducedMotion: () => envStore.prefersReducedMotion,
-    getViewportHeight: () => envStore.viewportHeight,
-    getLoadingDetail: () => libraryController.loadingDetail,
-    getIsViewTransitioning: () => isViewTransitioning,
   });
 
   const homeController = createHomeController({
@@ -259,16 +223,53 @@ export function createAppRuntime() {
     notifyError,
   });
 
-  let selectedSongCids = $state<string[]>([]);
-  let selectionModeEnabled = $state(false);
-  let themeRequestSeq = 0;
-  let artworkRequestSeq = 0;
+  // --- 子模块创建 ---
+
+  const selectionManager = createSelectionManager({
+    getSelectedAlbum: () => libraryController.selectedAlbum,
+  });
+
+  const themeManager = createThemeManager({
+    getSelectedAlbum: () => libraryController.selectedAlbum,
+    getFullscreenOpen: () => playerController.fullscreenOpen,
+    getSettingsTheme: () => ({
+      presetId: settingsState.themePresetId,
+      customColors: settingsState.themeCustomColors,
+      colorScheme: settingsState.colorScheme,
+    }),
+  });
+
+  const navigationManager = createNavigationManager({
+    libraryController,
+    playerController,
+    collectionController,
+    tagEditorController,
+    albumStageMotionController,
+    clearSongSelection: () => selectionManager.clearSongSelection(),
+    setSelectionModeEnabled: (value) =>
+      selectionManager.setSelectionModeEnabled(value),
+    notifyError,
+    getAlbums: () => libraryController.albums,
+    getSelectedAlbum: () => libraryController.selectedAlbum,
+    getShuffleEnabled: () => playerController.shuffleEnabled,
+    getPlaybackOrder: () => playerController.playbackOrder,
+  });
+
+  const downloadBridge = createDownloadBridge({
+    downloadController,
+    playerController,
+    clearSongSelection: () => selectionManager.clearSongSelection(),
+    setSelectionModeEnabled: (value) =>
+      selectionManager.setSelectionModeEnabled(value),
+    notifyError,
+  });
+
+  // --- 本地状态 ---
+
   let playerStateInitSeq = 0;
   let playerStateHydratedFromEvent = false;
-  let navigationSeq = 0;
-  let isNavigating = $state(false);
-  let isViewTransitioning = $state(false);
-  let navigationDirection = $state<'forward' | 'back'>('forward');
+  let albumStageElement = $state<HTMLElement | null>(null);
+  let isRefreshing = $state(false);
 
   const settingsOpen = $derived(shellStore.settingsOpen);
   const downloadPanelOpen = $derived(shellStore.downloadPanelOpen);
@@ -320,6 +321,7 @@ export function createAppRuntime() {
   const shuffleEnabled = $derived(playerController.shuffleEnabled);
   const repeatMode = $derived(playerController.repeatMode);
   const playbackOrder = $derived(playerController.playbackOrder);
+  const playbackFormat = $derived(playerController.playbackFormat);
   const lyricsOpen = $derived(playerController.lyricsOpen);
   const playlistOpen = $derived(playerController.playlistOpen);
   const lyricsLoading = $derived(playerController.lyricsLoading);
@@ -333,6 +335,10 @@ export function createAppRuntime() {
   const hasDownloadHistory = $derived(downloadController.hasDownloadHistory);
   const contentEl = $derived(albumStageMotionController.contentElement);
   const isMacOS = $derived(envStore.isMacOS);
+  const playerHasPrevious = $derived(playerController.playerHasPrevious);
+  const playerHasNext = $derived(playerController.playerHasNext);
+
+  // --- 设置状态 ---
 
   const settingsState = $state({
     format: 'flac' as OutputFormat,
@@ -364,11 +370,6 @@ export function createAppRuntime() {
     suspendDirtyTracking: 0,
   });
 
-  let selectedAlbumArtworkUrl = $state<string | null>(null);
-  let albumStageElement = $state<HTMLElement | null>(null);
-  let activeThemeArtworkUrl: string | null = null;
-  let cachedAlbumPalette = $state<ThemePalette | null>(null);
-  let activeAlbumStageArtworkUrl: string | null = null;
   const lastObservedSettings = {
     format: settingsState.format,
     outputDir: settingsState.outputDir,
@@ -384,14 +385,7 @@ export function createAppRuntime() {
     }),
   };
 
-  const playerHasPrevious = $derived(playerController.playerHasPrevious);
-  const playerHasNext = $derived(playerController.playerHasNext);
-  const resolvedThemeColors = $derived.by(() =>
-    resolveThemeColors({
-      presetId: settingsState.themePresetId,
-      customColors: settingsState.themeCustomColors,
-    })
-  );
+  // --- 本地派生 ---
 
   const activeLyricIndex = $derived.by(() => {
     if (!lyricsOpen && !fullscreenOpen) return -1;
@@ -421,54 +415,7 @@ export function createAppRuntime() {
     })
   );
 
-  let isRefreshing = $state(false);
-
-  // --- PLACEHOLDER_HELPERS ---
-
-  function resetContentScroll() {
-    albumStageMotionController.resetContentScroll();
-  }
-
-  function isSongSelected(songCid: string): boolean {
-    return selectedSongCids.includes(songCid);
-  }
-
-  function toggleSongSelection(songCid: string) {
-    if (selectedSongCids.includes(songCid)) {
-      selectedSongCids = selectedSongCids.filter((cid) => cid !== songCid);
-      return;
-    }
-    selectedSongCids = [...selectedSongCids, songCid];
-  }
-
-  function clearSongSelection() {
-    selectedSongCids = [];
-  }
-
-  function selectAllSongs() {
-    if (!selectedAlbum) return;
-    selectedSongCids = selectedAlbum.songs.map((s: SongEntry) => s.cid);
-  }
-
-  function deselectAllSongs() {
-    selectedSongCids = [];
-  }
-
-  function invertSongSelection() {
-    if (!selectedAlbum) return;
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- ephemeral, non-reactive lookup
-    const allCids = new Set(selectedAlbum.songs.map((s: SongEntry) => s.cid));
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- ephemeral, non-reactive lookup
-    const currentSelected = new Set(selectedSongCids);
-    selectedSongCids = [...allCids].filter((cid) => !currentSelected.has(cid));
-  }
-
-  function toggleSelectionMode() {
-    selectionModeEnabled = !selectionModeEnabled;
-    if (!selectionModeEnabled) {
-      clearSongSelection();
-    }
-  }
+  // --- 本地辅助 ---
 
   function getSettingsSnapshot() {
     return JSON.stringify({
@@ -510,281 +457,22 @@ export function createAppRuntime() {
     await invalidateByTag(createInventoryCacheTag(inventoryVersion));
   }
 
-  function captureCurrentEntry(): NavigationEntry {
-    const view = shellStore.currentView;
-    switch (view) {
-      case 'home':
-        return { view: 'home' };
-      case 'search':
-        return { view: 'search' };
-      case 'overview':
-        return { view: 'overview' };
-      case 'library':
-        return {
-          view: 'library',
-          albumCid: libraryController.selectedAlbumCid,
-        };
-      case 'collection':
-        return {
-          view: 'collection',
-          collectionId: collectionController.selectedCollectionId ?? '',
-        };
-      case 'tagEditor':
-        return {
-          view: 'tagEditor',
-          albumCid: tagEditorStore.editingAlbum?.cid ?? null,
-          songCid: tagEditorStore.editingSong?.cid ?? null,
-        };
-    }
-  }
-
-  function clearNonTargetState(targetView: AppView): void {
-    if (targetView !== 'library') {
-      libraryController.deselectAlbum();
-    }
-    clearSongSelection();
-    selectionModeEnabled = false;
-    if (targetView !== 'collection') {
-      collectionController.clearSelection();
-    }
-    if (targetView !== 'tagEditor') {
-      tagEditorStore.reset();
-    }
-  }
-
-  function navigateToTop(view: AppView): void {
-    const current = captureCurrentEntry();
-    const target: NavigationEntry =
-      view === 'library'
-        ? { view: 'library', albumCid: null }
-        : view === 'collection'
-          ? { view: 'collection', collectionId: '' }
-          : view === 'tagEditor'
-            ? { view: 'tagEditor', albumCid: null, songCid: null }
-            : { view };
-
-    if (isSameEntry(current, target)) return;
-
-    navigationDirection = 'forward';
-    navigationSeq++;
-    navigationStack.push(current);
-    shellStore.currentView = view;
-    clearNonTargetState(view);
-  }
-
-  async function openAlbum(
-    album: Album,
-    options?: { pendingSongCid?: string | null }
-  ): Promise<void> {
-    const current = captureCurrentEntry();
-    const target: NavigationEntry = { view: 'library', albumCid: album.cid };
-    if (isSameEntry(current, target)) return;
-
-    const seq = ++navigationSeq;
-    navigationDirection = 'forward';
-    isNavigating = true;
-    navigationStack.push(current);
-    shellStore.currentView = 'library';
-    clearNonTargetState('library');
-
-    const shouldDispose = () => seq !== navigationSeq;
-
-    if (options?.pendingSongCid !== undefined) {
-      libraryController.setPendingScrollToSong(options.pendingSongCid);
-    }
-
-    try {
-      await libraryController.selectAlbum(album, {
-        afterSelect: async () => {
-          if (shouldDispose()) return;
-          await tick();
-          resetContentScroll();
-        },
-        shouldDispose,
-      });
-    } finally {
-      if (seq === navigationSeq) {
-        isNavigating = false;
-      }
-    }
-  }
-
-  async function openCollection(collectionId: string): Promise<void> {
-    const current = captureCurrentEntry();
-    const target: NavigationEntry = { view: 'collection', collectionId };
-    if (isSameEntry(current, target)) return;
-
-    const seq = ++navigationSeq;
-    navigationDirection = 'forward';
-    isNavigating = true;
-    navigationStack.push(current);
-    shellStore.currentView = 'collection';
-    clearNonTargetState('collection');
-
-    const shouldDispose = () => seq !== navigationSeq;
-
-    try {
-      await collectionController.loadAndSelect(collectionId);
-      if (shouldDispose()) return;
-    } finally {
-      if (seq === navigationSeq) {
-        isNavigating = false;
-      }
-    }
-  }
-
-  async function openTagEditor(album: Album): Promise<void> {
-    const current = captureCurrentEntry();
-    const target: NavigationEntry = {
-      view: 'tagEditor',
-      albumCid: album.cid,
-      songCid: null,
-    };
-    if (isSameEntry(current, target)) return;
-
-    const seq = ++navigationSeq;
-    navigationDirection = 'forward';
-    isNavigating = true;
-    navigationStack.push(current);
-    shellStore.currentView = 'tagEditor';
-    clearNonTargetState('tagEditor');
-
-    const shouldDispose = () => seq !== navigationSeq;
-
-    try {
-      await tagEditorController.selectAlbumForEditAsync(album, shouldDispose);
-      if (shouldDispose()) return;
-    } finally {
-      if (seq === navigationSeq) {
-        isNavigating = false;
-      }
-    }
-  }
-
-  async function goBack(): Promise<void> {
-    if (!navigationStack.canGoBack) return;
-
-    const entry = navigationStack.pop()!;
-    const seq = ++navigationSeq;
-    navigationDirection = 'back';
-    isNavigating = true;
-    shellStore.currentView = entry.view;
-    clearNonTargetState(entry.view);
-
-    const shouldDispose = () => seq !== navigationSeq;
-
-    try {
-      switch (entry.view) {
-        case 'library': {
-          if (entry.albumCid) {
-            const album = albums.find((a) => a.cid === entry.albumCid);
-            if (album) {
-              await libraryController.selectAlbum(album, {
-                afterSelect: async () => {
-                  if (shouldDispose()) return;
-                  await tick();
-                  resetContentScroll();
-                },
-                shouldDispose,
-              });
-            }
-          }
-          break;
-        }
-        case 'collection': {
-          if (entry.collectionId) {
-            await collectionController.restoreSelection(entry.collectionId);
-          }
-          break;
-        }
-        case 'tagEditor': {
-          await tagEditorController.restoreEditingState(
-            entry.albumCid,
-            entry.songCid,
-            shouldDispose
-          );
-          break;
-        }
-      }
-    } finally {
-      if (seq === navigationSeq) {
-        isNavigating = false;
-      }
-    }
-  }
-
-  async function handleSelectAlbum(album: Album) {
-    await openAlbum(album);
-  }
-
-  async function handleSelectSearchResult(item: SearchLibraryResultItem) {
-    const album = albums.find((candidate) => candidate.cid === item.albumCid);
-    if (!album) {
-      notifyError(m.app_error_album_not_found());
-      return;
-    }
-    await openAlbum(album, {
-      pendingSongCid: item.kind === 'song' ? item.songCid : null,
-    });
-  }
-
-  async function handlePlay(song: SongEntry) {
-    const sourceEntries = buildAlbumPlaybackEntries(selectedAlbum);
-    const fallbackEntry: PlaybackQueueEntry = {
-      cid: song.cid,
-      name: song.name,
-      artists: song.artists,
-      coverUrl: getSelectedAlbumCoverUrl(selectedAlbum),
-    };
-    const entries = sourceEntries.length ? sourceEntries : [fallbackEntry];
-    playerController.applyPlaybackQueue(entries, song.cid);
-    const nextOrder = shuffleEnabled ? [...playbackOrder] : [...entries];
-    const nextIndex = nextOrder.findIndex((entry) => entry.cid === song.cid);
-    if (nextIndex < 0) return;
-    await playerController.playQueueEntry(
-      nextOrder[nextIndex],
-      nextOrder,
-      nextIndex
-    );
-  }
-
-  async function handlePlayCollectionSong(
-    song: SongEntry,
-    queue: PlaybackQueueEntry[]
-  ) {
-    const entries = queue.length
-      ? queue
-      : [
-          {
-            cid: song.cid,
-            name: song.name,
-            artists: song.artists,
-            coverUrl: null,
-          },
-        ];
-    playerController.applyPlaybackQueue(entries, song.cid);
-    const nextOrder = shuffleEnabled ? [...playbackOrder] : [...entries];
-    const nextIndex = nextOrder.findIndex((entry) => entry.cid === song.cid);
-    if (nextIndex < 0) return;
-    await playerController.playQueueEntry(
-      nextOrder[nextIndex],
-      nextOrder,
-      nextIndex
-    );
+  function handleOutputDirChange() {
+    return settingsController.savePreferences(settingsState);
   }
 
   async function handleRefresh() {
     if (isRefreshing) return;
     isRefreshing = true;
-    clearSongSelection();
-    selectionModeEnabled = false;
+    selectionManager.clearSongSelection();
+    selectionManager.setSelectionModeEnabled(false);
     try {
       await clearCache();
       await clearResponseCache();
       await libraryController.reloadAlbumsAndRefreshCurrentSelection({
         afterSelect: async () => {
           await tick();
-          resetContentScroll();
+          navigationManager.resetContentScroll();
         },
       });
     } catch (e) {
@@ -799,139 +487,7 @@ export function createAppRuntime() {
     }
   }
 
-  function handleToggleDownloads() {
-    void shellStore.toggleDownloads({ notifyError });
-  }
-
-  function handleToggleSettings() {
-    void shellStore.toggleSettings({ notifyError });
-  }
-
-  function handleOutputDirChange() {
-    return settingsController.savePreferences(settingsState);
-  }
-
-  function handleDownloadSelection(songCids: string[]) {
-    void downloadController.handleSelectionDownload(songCids, {
-      afterCreated: () => {
-        clearSongSelection();
-        selectionModeEnabled = false;
-      },
-    });
-  }
-
-  function handleCurrentSongDownload() {
-    if (currentSong) {
-      void downloadController.handleSongDownload(currentSong.cid);
-    }
-  }
-
-  function hasAlbumDownloadJob(albumCid: string): boolean {
-    return !!downloadController.findAlbumDownloadJob(albumCid);
-  }
-
-  function hasCurrentSelectionJob(songCids: string[]): boolean {
-    return !!downloadController.getCurrentSelectionJob(songCids);
-  }
-
-  $effect(() => {
-    const artworkUrl = getPreferredAlbumArtworkUrl(selectedAlbum);
-    if (artworkUrl === activeThemeArtworkUrl) {
-      return;
-    }
-
-    activeThemeArtworkUrl = artworkUrl;
-    const paletteRequestSeq = ++themeRequestSeq;
-
-    if (!artworkUrl) {
-      cachedAlbumPalette = null;
-      return;
-    }
-
-    void (async () => {
-      await delay(ALBUM_VISUAL_REQUEST_DELAY_MS);
-      if (paletteRequestSeq !== themeRequestSeq) return;
-
-      try {
-        const palette = await extractImageTheme(artworkUrl);
-        if (paletteRequestSeq !== themeRequestSeq) return;
-        cachedAlbumPalette = palette;
-      } catch {
-        if (paletteRequestSeq !== themeRequestSeq) return;
-        cachedAlbumPalette = null;
-      }
-    })();
-  });
-
-  $effect(() => {
-    const themeColors = resolvedThemeColors;
-    const shouldApplyAlbumTheme =
-      shellStore.currentView === 'library' || fullscreenOpen;
-
-    applyThemeColors(themeColors);
-    applyAlbumAccentPalette(
-      shouldApplyAlbumTheme ? cachedAlbumPalette : null,
-      themeColors
-    );
-  });
-
-  // 配色方案：根据 colorScheme 设置在 <html> 上切换 .light / .dark 类
-  $effect(() => {
-    const scheme = settingsState.colorScheme;
-    const html = document.documentElement;
-
-    function applyScheme(isDark: boolean) {
-      html.classList.toggle('dark', isDark);
-      html.classList.toggle('light', !isDark);
-      html.style.colorScheme = isDark ? 'dark' : 'light';
-    }
-
-    if (scheme === 'light') {
-      applyScheme(false);
-      return;
-    }
-    if (scheme === 'dark') {
-      applyScheme(true);
-      return;
-    }
-
-    // auto: 跟随系统
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    applyScheme(mq.matches);
-
-    const handler = (e: MediaQueryListEvent) => applyScheme(e.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  });
-
-  $effect(() => {
-    const sourceUrl = getPreferredAlbumArtworkUrl(selectedAlbum);
-    if (sourceUrl === activeAlbumStageArtworkUrl) {
-      return;
-    }
-
-    activeAlbumStageArtworkUrl = sourceUrl;
-    const requestSeq = ++artworkRequestSeq;
-
-    if (!sourceUrl) {
-      selectedAlbumArtworkUrl = null;
-      return;
-    }
-
-    void (async () => {
-      await delay(ALBUM_VISUAL_REQUEST_DELAY_MS);
-      if (requestSeq !== artworkRequestSeq) return;
-
-      try {
-        const dataUrl = await getImageDataUrl(sourceUrl);
-        if (requestSeq !== artworkRequestSeq) return;
-        selectedAlbumArtworkUrl = dataUrl;
-      } catch {
-        if (requestSeq !== artworkRequestSeq) return;
-        selectedAlbumArtworkUrl = null;
-      }
-    })();
-  });
+  // --- 设置 dirty tracking effects ---
 
   $effect(() => {
     const value = settingsState.format;
@@ -1032,26 +588,18 @@ export function createAppRuntime() {
   $effect(() => {
     const { persistedSnapshot, isSaving, lastSaveFailedSnapshot, prefsReady } =
       settingsState;
-    if (!prefsReady || isSaving) {
-      return;
-    }
-
+    if (!prefsReady || isSaving) return;
     const currentSnapshot = getSettingsSnapshot();
-
-    if (currentSnapshot === persistedSnapshot) {
-      return;
-    }
-
-    if (currentSnapshot === lastSaveFailedSnapshot) {
-      return;
-    }
-
+    if (currentSnapshot === persistedSnapshot) return;
+    if (currentSnapshot === lastSaveFailedSnapshot) return;
     void settingsController.savePreferences(settingsState);
   });
 
   $effect(() => {
     albumStageMotionController.albumStageElement = albumStageElement;
   });
+
+  // --- 生命周期 ---
 
   async function doBootstrapApp(shouldDispose: () => boolean) {
     await bootstrapApp(
@@ -1062,11 +610,10 @@ export function createAppRuntime() {
         libraryController,
         getDefaultOutputDir,
         getLocalInventorySnapshot,
-        clearSongSelection,
-        setSelectionModeEnabled: (value) => {
-          selectionModeEnabled = value;
-        },
-        resetContentScroll,
+        clearSongSelection: () => selectionManager.clearSongSelection(),
+        setSelectionModeEnabled: (value) =>
+          selectionManager.setSelectionModeEnabled(value),
+        resetContentScroll: () => navigationManager.resetContentScroll(),
         tick,
         downloadController,
         listDownloadJobs,
@@ -1090,10 +637,9 @@ export function createAppRuntime() {
         libraryController,
         homeController,
         handleAppErrorEvent,
-        clearSongSelection,
-        setSelectionModeEnabled: (value) => {
-          selectionModeEnabled = value;
-        },
+        clearSongSelection: () => selectionManager.clearSongSelection(),
+        setSelectionModeEnabled: (value) =>
+          selectionManager.setSelectionModeEnabled(value),
         invalidateInventoryCaches,
         setPlayerStateHydratedFromEvent: (value) => {
           playerStateHydratedFromEvent = value;
@@ -1211,6 +757,8 @@ export function createAppRuntime() {
     }
   });
 
+  // --- 公共 API ---
+
   return {
     get isMacOS() {
       return isMacOS;
@@ -1255,7 +803,7 @@ export function createAppRuntime() {
       return albumRequestSeq;
     },
     get selectedAlbumArtworkUrl() {
-      return selectedAlbumArtworkUrl;
+      return themeManager.selectedAlbumArtworkUrl;
     },
     get currentSong() {
       return currentSong;
@@ -1286,6 +834,9 @@ export function createAppRuntime() {
     },
     get playbackOrder() {
       return playbackOrder;
+    },
+    get playbackFormat() {
+      return playbackFormat;
     },
     get lyricsOpen() {
       return lyricsOpen;
@@ -1363,10 +914,10 @@ export function createAppRuntime() {
       albumStageElement = value;
     },
     get selectionModeEnabled() {
-      return selectionModeEnabled;
+      return selectionManager.selectionModeEnabled;
     },
     get selectedSongCids() {
-      return selectedSongCids;
+      return selectionManager.selectedSongCids;
     },
     get settingsOpen() {
       return settingsOpen;
@@ -1410,49 +961,45 @@ export function createAppRuntime() {
     searchController,
     notifyInfo,
     notifyError,
-    handleSelectAlbum,
+    handleSelectAlbum: navigationManager.handleSelectAlbum,
     handleDeselectAlbum: libraryController.deselectAlbum,
-    handleSelectSearchResult,
-    handlePlay,
-    handlePlayCollectionSong,
+    handleSelectSearchResult: navigationManager.handleSelectSearchResult,
+    handlePlay: navigationManager.handlePlay,
+    handlePlayCollectionSong: navigationManager.handlePlayCollectionSong,
     handleRefresh,
     handleContentWheel,
-    handleToggleDownloads,
-    handleToggleSettings,
+    handleToggleDownloads: downloadBridge.handleToggleDownloads,
+    handleToggleSettings: downloadBridge.handleToggleSettings,
     handleOutputDirChange,
-    handleDownloadSelection,
-    handleCurrentSongDownload,
-    hasAlbumDownloadJob,
-    hasCurrentSelectionJob,
-    toggleSelectionMode,
-    selectAllSongs,
-    deselectAllSongs,
-    invertSongSelection,
-    toggleSongSelection,
-    isSongSelected,
+    handleDownloadSelection: downloadBridge.handleDownloadSelection,
+    handleCurrentSongDownload: downloadBridge.handleCurrentSongDownload,
+    hasAlbumDownloadJob: downloadBridge.hasAlbumDownloadJob,
+    hasCurrentSelectionJob: downloadBridge.hasCurrentSelectionJob,
+    toggleSelectionMode: selectionManager.toggleSelectionMode,
+    selectAllSongs: selectionManager.selectAllSongs,
+    deselectAllSongs: selectionManager.deselectAllSongs,
+    invertSongSelection: selectionManager.invertSongSelection,
+    toggleSongSelection: selectionManager.toggleSongSelection,
+    isSongSelected: selectionManager.isSongSelected,
     get canGoBack() {
-      return navigationStack.canGoBack;
+      return navigationManager.canGoBack;
     },
     get isNavigating() {
-      return isNavigating;
+      return navigationManager.isNavigating;
     },
     get isViewTransitioning() {
-      return isViewTransitioning;
+      return navigationManager.isViewTransitioning;
     },
-    handleTransitionStart() {
-      isViewTransitioning = true;
-    },
-    handleTransitionEnd() {
-      isViewTransitioning = false;
-    },
+    handleTransitionStart: navigationManager.handleTransitionStart,
+    handleTransitionEnd: navigationManager.handleTransitionEnd,
     get navigationDirection() {
-      return navigationDirection;
+      return navigationManager.navigationDirection;
     },
-    navigateToTop,
-    openAlbum,
-    openCollection,
-    openTagEditor,
-    goBack,
+    navigateToTop: navigationManager.navigateToTop,
+    openAlbum: navigationManager.openAlbum,
+    openCollection: navigationManager.openCollection,
+    openTagEditor: navigationManager.openTagEditor,
+    goBack: navigationManager.goBack,
   };
 }
 

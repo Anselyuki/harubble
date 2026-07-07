@@ -3,6 +3,7 @@ import type {
   PlaybackQueueEntry,
   PlayerState,
   PlaybackEndedEvent,
+  PlaybackFormatState,
 } from '$lib/types';
 import { parseLyricText } from './lyrics';
 import { buildPlaybackContext } from './queue';
@@ -70,6 +71,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let playingCid = $state<string | null>(null);
   let volume = $state(1.0);
   let muted = $state(false);
+  let playbackFormat = $state<PlaybackFormatState | null>(null);
   let volumeBeforeMute = 1.0;
   let playbackEndRequestSeq = 0;
   let playRequestSeq = 0;
@@ -131,6 +133,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     if (progress !== state.progress) progress = state.progress;
     if (duration !== state.duration) duration = state.duration;
     if (Math.abs(volume - state.volume) > 0.001) volume = state.volume;
+    if (playbackFormat !== state.playbackFormat) {
+      playbackFormat = state.playbackFormat;
+    }
     if (state.volume > 0 && muted) muted = false;
   }
 
@@ -350,6 +355,12 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     try {
       const context = buildPlaybackContext(playbackOrder, playbackIndex);
       await deps.playSong(entry.cid, entry.coverUrl ?? null, context ?? null);
+      if (requestSeq !== playRequestSeq) return;
+      try {
+        syncPlayerState(await deps.getPlayerState());
+      } catch {
+        // 后端事件仍会同步播放状态；这里仅用于避免首帧 UI 依赖事件到达。
+      }
     } catch (error) {
       if (shouldIgnorePlaybackError(error, requestSeq, playRequestSeq)) {
         return;
@@ -595,6 +606,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     playingCid = null;
     volume = 1.0;
     muted = false;
+    playbackFormat = null;
     volumeBeforeMute = 1.0;
     lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
     lyricRequestSeq += 1;
@@ -673,6 +685,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     },
     get muted() {
       return muted;
+    },
+    get playbackFormat() {
+      return playbackFormat;
     },
     get hasLyrics() {
       return !lyricsLoading && lyricsLines.length > 0;
