@@ -1,6 +1,6 @@
 [package]
 name = "harubble"
-version = "0.1.0"
+version = "2.2.0"
 edition = "2021"
 description = "Cross-platform lossless music player and downloader"
 license = "MIT"

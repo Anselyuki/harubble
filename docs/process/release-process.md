@@ -110,6 +110,7 @@ PR 阶段不会执行以下行为：
 - `package.json`
 - `src-tauri/tauri.conf.json`
 - `src-tauri/Cargo.toml`
+- `crates/harubble-core/Cargo.toml`
 
 这些修改仅作用于 workflow 运行时的构建上下文，用来保证生成产物的版本一致。
 
