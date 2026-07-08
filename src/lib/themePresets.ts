@@ -73,6 +73,7 @@ export const DEFAULT_THEME_PREFERENCES: ThemePreferences = {
   presetId: DEFAULT_THEME_PRESET_ID,
   customColors: {},
   colorScheme: 'auto',
+  dynamicAlbumAccent: true,
 };
 
 export function isThemeColorSlot(value: string): value is ThemeColorSlot {

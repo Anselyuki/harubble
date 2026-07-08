@@ -51,7 +51,7 @@
     <p class="empty-hint">{labels.empty}</p>
   {:else}
     <div class="history-list">
-      {#each entries as entry (entry.id)}
+      {#each entries as entry (entry.songCid)}
         <button
           class="history-item"
           onclick={() => onPlay(entry)}

@@ -3,15 +3,7 @@ import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
 
 type RgbTuple = [number, number, number];
 
-export const DEFAULT_THEME_PALETTE: ThemePalette = {
-  accentHex: '#fa2d48',
-  accentHoverHex: '#ff3b5c',
-  accentRgb: [250, 45, 72],
-  accentHoverRgb: [255, 59, 92],
-  waveColors: [[250, 45, 72]],
-};
-
-let activeTween: gsap.core.Tween | null = null;
+const activeTweens = new Map<string, gsap.core.Tween>();
 
 const THEME_TRANSITION_MS = MOTION.SLOW;
 
@@ -86,10 +78,12 @@ function buildProxy(
   targets: Record<string, string>
 ): {
   proxy: Record<string, number>;
+  targetValues: Record<string, number>;
   isRgbString: Map<string, boolean>;
   directKeys: string[];
 } {
   const proxy: Record<string, number> = {};
+  const targetValues: Record<string, number> = {};
   const isRgbString = new Map<string, boolean>();
   const directKeys: string[] = [];
 
@@ -101,16 +95,18 @@ function buildProxy(
       continue;
     }
     const baseKey = extracted.key.replace(/^-+/, '');
-    // 初始值取当前 CSS 变量的 RGB（而非目标值）
     const currentExtracted = extractRgbValue(key, current);
     const initialRgb = currentExtracted?.rgb ?? [0, 0, 0];
     proxy[`${baseKey}_r`] = initialRgb[0];
     proxy[`${baseKey}_g`] = initialRgb[1];
     proxy[`${baseKey}_b`] = initialRgb[2];
+    targetValues[`${baseKey}_r`] = extracted.rgb[0];
+    targetValues[`${baseKey}_g`] = extracted.rgb[1];
+    targetValues[`${baseKey}_b`] = extracted.rgb[2];
     isRgbString.set(key, extracted.isRgbString);
   }
 
-  return { proxy, isRgbString, directKeys };
+  return { proxy, targetValues, isRgbString, directKeys };
 }
 
 /**
@@ -124,9 +120,13 @@ function buildProxy(
  *
  * @param targets 目标 CSS 变量值
  */
-export function transitionCssVariables(targets: Record<string, string>): void {
+export function transitionCssVariables(
+  targets: Record<string, string>,
+  groupKey?: string
+): void {
   const root = document.documentElement;
   const duration = getMotionDuration(THEME_TRANSITION_MS);
+  const tweenKey = groupKey ?? Object.keys(targets).sort().join(',');
 
   // 快速路径：没有旧值（首次设置），直接写入
   const firstKey = Object.keys(targets)[0];
@@ -157,6 +157,7 @@ export function transitionCssVariables(targets: Record<string, string>): void {
   // 构建 proxy 对象
   const {
     proxy,
+    targetValues,
     isRgbString: rgbStringMap,
     directKeys,
   } = buildProxy(currentValues, colorTargets);
@@ -166,12 +167,15 @@ export function transitionCssVariables(targets: Record<string, string>): void {
     root.style.setProperty(key, targets[key]!);
   }
 
-  // kill 前一个 tween
-  if (activeTween) {
-    activeTween.kill();
+  // kill 同组的前一个 tween
+  const prevTween = activeTweens.get(tweenKey);
+  if (prevTween) {
+    prevTween.kill();
+    activeTweens.delete(tweenKey);
   }
 
-  activeTween = gsap.to(proxy, {
+  const tween = gsap.to(proxy, {
+    ...targetValues,
     duration,
     ease: 'ios',
     onUpdate: () => {
@@ -188,13 +192,13 @@ export function transitionCssVariables(targets: Record<string, string>): void {
       }
     },
     onComplete: () => {
-      // 确保最终值精确
-      for (const key of directKeys) {
-        root.style.setProperty(key, targets[key]!);
+      for (const [prop, value] of Object.entries(targets)) {
+        root.style.setProperty(prop, value);
       }
-      activeTween = null;
+      activeTweens.delete(tweenKey);
     },
   });
+  activeTweens.set(tweenKey, tween);
 }
 
 export function hexToRgb(hex: string): RgbTuple {
@@ -315,7 +319,7 @@ function applyCssVariables(nextValues: Record<string, string>): void {
 }
 
 export function applyThemeColors(themeColors: ThemeColorSlots): void {
-  transitionCssVariables(deriveThemeCssVariables(themeColors));
+  transitionCssVariables(deriveThemeCssVariables(themeColors), 'app-tokens');
 }
 
 export function applyAlbumAccentPalette(
@@ -342,31 +346,5 @@ export function applyAlbumAccentPalette(
     nextValues[`--wave-color-${i}`] = `${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
   }
 
-  transitionCssVariables(nextValues);
-}
-
-export function applyThemePalette(
-  palette: ThemePalette = DEFAULT_THEME_PALETTE
-): void {
-  const nextValues: Record<string, string> = {
-    '--accent': palette.accentHex,
-    '--accent-hover': palette.accentHoverHex,
-    '--accent-rgb': palette.accentRgb.join(', '),
-    '--accent-hover-rgb': palette.accentHoverRgb.join(', '),
-    '--accent-readable-foreground': getReadableForegroundColor(
-      palette.accentRgb
-    ),
-    '--accent-hover-readable-foreground': getReadableForegroundColor(
-      palette.accentHoverRgb
-    ),
-  };
-
-  const colors =
-    palette.waveColors.length > 0 ? palette.waveColors : [palette.accentRgb];
-  for (let i = 0; i < 4; i += 1) {
-    const rgb = colors[i % colors.length];
-    nextValues[`--wave-color-${i}`] = `${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
-  }
-
-  transitionCssVariables(nextValues);
+  transitionCssVariables(nextValues, 'context-palette');
 }

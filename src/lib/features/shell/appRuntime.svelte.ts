@@ -15,6 +15,7 @@ import {
   clearResponseCache,
   resetHttpClient,
   getSongLyrics,
+  recordSongHeat,
   createDownloadJob,
   listDownloadJobs,
   cancelDownloadJob,
@@ -88,7 +89,7 @@ import { createThemeManager } from './themeManager.svelte';
 import { createNavigationManager } from './navigationManager.svelte';
 import { createDownloadBridge } from './downloadBridge.svelte';
 
-const MIN_DISPLAY_MS = 260;
+const MIN_DISPLAY_MS = 120;
 const DETAIL_SKELETON_DELAY_MS = 140;
 
 const delay = (ms: number): Promise<void> =>
@@ -129,6 +130,7 @@ export function createAppRuntime() {
     getAlbumDetail,
     searchLibrary,
     preloadAlbumArtwork: (album) => themeManager.preloadAlbumArtwork(album),
+    warmAlbumArtwork: (coverUrl) => themeManager.warmAlbumArtwork(coverUrl),
     setAlbumStageAspectRatio: (value) =>
       albumStageMotionController.setAspectRatio(value),
     notifyError,
@@ -146,6 +148,11 @@ export function createAppRuntime() {
     setPlaybackVolume,
     getPlayerState,
     getSongLyrics,
+    recordSongHeat: (songCid, coverUrl) => {
+      void recordSongHeat(songCid, coverUrl).then(() => {
+        void homeController.refreshRecentHistory();
+      });
+    },
     notifyError,
   });
 
@@ -231,11 +238,13 @@ export function createAppRuntime() {
 
   const themeManager = createThemeManager({
     getSelectedAlbum: () => libraryController.selectedAlbum,
+    getCurrentView: () => shellStore.currentView,
     getFullscreenOpen: () => playerController.fullscreenOpen,
     getSettingsTheme: () => ({
       presetId: settingsState.themePresetId,
       customColors: settingsState.themeCustomColors,
       colorScheme: settingsState.colorScheme,
+      dynamicAlbumAccent: settingsState.dynamicAlbumAccent,
     }),
   });
 
@@ -271,72 +280,10 @@ export function createAppRuntime() {
   let albumStageElement = $state<HTMLElement | null>(null);
   let isRefreshing = $state(false);
 
-  const settingsOpen = $derived(shellStore.settingsOpen);
-  const downloadPanelOpen = $derived(shellStore.downloadPanelOpen);
-  const SettingsSheetView = $derived(shellStore.SettingsSheetView);
-  const DownloadTasksSheetView = $derived(shellStore.DownloadTasksSheetView);
-  const contentScrollbarEvents = $derived(
-    albumStageMotionController.contentScrollbarEvents
-  );
-  const albumStageStyle = $derived(albumStageMotionController.albumStageStyle);
-  const albumStageMediaHeight = $derived(
-    albumStageMotionController.albumStageMediaHeight
-  );
-  const albumStageScrimOpacity = $derived(
-    albumStageMotionController.albumStageScrimOpacity
-  );
-  const albumStageImageOpacity = $derived(
-    albumStageMotionController.albumStageImageOpacity
-  );
-  const albumStageImageTransform = $derived(
-    albumStageMotionController.albumStageImageTransform
-  );
-  const albumStageSolidifyOpacity = $derived(
-    albumStageMotionController.albumStageSolidifyOpacity
-  );
-  const prefersReducedMotion = $derived(envStore.prefersReducedMotion);
-  const albums = $derived(libraryController.albums);
-  const selectedAlbum = $derived(libraryController.selectedAlbum);
-  const selectedAlbumCid = $derived(libraryController.selectedAlbumCid);
-  const loadingAlbums = $derived(libraryController.loadingAlbums);
-  const loadingDetail = $derived(libraryController.loadingDetail);
-  const errorMsg = $derived(libraryController.errorMsg);
-  const librarySearchQuery = $derived(libraryController.librarySearchQuery);
-  const librarySearchScope = $derived(libraryController.librarySearchScope);
-  const librarySearchLoading = $derived(libraryController.librarySearchLoading);
-  const librarySearchResponse = $derived(
-    libraryController.librarySearchResponse
-  );
   const pendingScrollToSongCid = $derived(
     libraryController.pendingScrollToSongCid
   );
-  const showDetailSkeleton = $derived(libraryController.showDetailSkeleton);
-  const albumRequestSeq = $derived(libraryController.albumRequestSeq);
-  const currentSong = $derived(playerController.currentSong);
-  const isPlaying = $derived(playerController.isPlaying);
-  const isPaused = $derived(playerController.isPaused);
-  const isLoading = $derived(playerController.isLoading);
-  const progress = $derived(playerController.progress);
-  const duration = $derived(playerController.duration);
-  const shuffleEnabled = $derived(playerController.shuffleEnabled);
-  const repeatMode = $derived(playerController.repeatMode);
-  const playbackOrder = $derived(playerController.playbackOrder);
-  const playbackFormat = $derived(playerController.playbackFormat);
-  const lyricsOpen = $derived(playerController.lyricsOpen);
-  const playlistOpen = $derived(playerController.playlistOpen);
-  const lyricsLoading = $derived(playerController.lyricsLoading);
-  const lyricsError = $derived(playerController.lyricsError);
-  const lyricsLines = $derived(playerController.lyricsLines);
-  const lyricsUnavailable = $derived(playerController.lyricsUnavailable);
-  const fullscreenOpen = $derived(playerController.fullscreenOpen);
-  const downloadingAlbumCid = $derived(downloadController.downloadingAlbumCid);
-  const activeDownloadCount = $derived(downloadController.activeDownloadCount);
-  const filteredDownloadJobs = $derived(downloadController.filteredJobs);
-  const hasDownloadHistory = $derived(downloadController.hasDownloadHistory);
   const contentEl = $derived(albumStageMotionController.contentElement);
-  const isMacOS = $derived(envStore.isMacOS);
-  const playerHasPrevious = $derived(playerController.playerHasPrevious);
-  const playerHasNext = $derived(playerController.playerHasNext);
 
   // --- 设置状态 ---
 
@@ -352,6 +299,7 @@ export function createAppRuntime() {
     themePresetId: DEFAULT_THEME_PREFERENCES.presetId,
     themeCustomColors: {},
     colorScheme: DEFAULT_THEME_PREFERENCES.colorScheme ?? 'auto',
+    dynamicAlbumAccent: DEFAULT_THEME_PREFERENCES.dynamicAlbumAccent ?? true,
     settingsLogRefreshToken: 0,
     prefsReady: false,
     isSaving: false,
@@ -382,18 +330,21 @@ export function createAppRuntime() {
       presetId: settingsState.themePresetId,
       customColors: settingsState.themeCustomColors,
       colorScheme: settingsState.colorScheme,
+      dynamicAlbumAccent: settingsState.dynamicAlbumAccent,
     }),
   };
 
   // --- 本地派生 ---
 
   const activeLyricIndex = $derived.by(() => {
-    if (!lyricsOpen && !fullscreenOpen) return -1;
+    if (!playerController.lyricsOpen && !playerController.fullscreenOpen)
+      return -1;
     let activeIndex = -1;
-    for (let index = 0; index < lyricsLines.length; index += 1) {
-      const lineTime = lyricsLines[index].time;
+    const lines = playerController.lyricsLines;
+    for (let index = 0; index < lines.length; index += 1) {
+      const lineTime = lines[index].time;
       if (lineTime === null) continue;
-      if (progress + 0.08 >= lineTime) {
+      if (playerController.progress + 0.08 >= lineTime) {
         activeIndex = index;
       } else {
         break;
@@ -406,8 +357,8 @@ export function createAppRuntime() {
     (): PartialOptions => ({
       scrollbars: {
         theme: 'os-theme-app',
-        autoHide: prefersReducedMotion ? 'leave' : 'move',
-        autoHideDelay: prefersReducedMotion ? 160 : 720,
+        autoHide: envStore.prefersReducedMotion ? 'leave' : 'move',
+        autoHideDelay: envStore.prefersReducedMotion ? 160 : 720,
         autoHideSuspend: true,
         dragScroll: true,
         clickScroll: false,
@@ -430,6 +381,7 @@ export function createAppRuntime() {
         presetId: settingsState.themePresetId,
         customColors: settingsState.themeCustomColors,
         colorScheme: settingsState.colorScheme,
+        dynamicAlbumAccent: settingsState.dynamicAlbumAccent,
       },
     });
   }
@@ -439,6 +391,7 @@ export function createAppRuntime() {
       presetId: settingsState.themePresetId,
       customColors: settingsState.themeCustomColors,
       colorScheme: settingsState.colorScheme,
+      dynamicAlbumAccent: settingsState.dynamicAlbumAccent,
     });
   }
 
@@ -448,7 +401,7 @@ export function createAppRuntime() {
 
   function handleAppErrorEvent(event: AppErrorEvent) {
     notifyError(event.message);
-    settingsController.handleAppError(settingsState, settingsOpen);
+    settingsController.handleAppError(settingsState, shellStore.settingsOpen);
   }
 
   async function invalidateInventoryCaches(
@@ -718,7 +671,11 @@ export function createAppRuntime() {
   });
 
   $effect(() => {
-    if (!pendingScrollToSongCid || !selectedAlbum || loadingDetail) {
+    if (
+      !pendingScrollToSongCid ||
+      !libraryController.selectedAlbum ||
+      libraryController.loadingDetail
+    ) {
       return;
     }
 
@@ -761,151 +718,156 @@ export function createAppRuntime() {
 
   return {
     get isMacOS() {
-      return isMacOS;
+      return envStore.isMacOS;
     },
     get currentView() {
       return shellStore.currentView;
     },
     get albums() {
-      return albums;
+      return libraryController.albums;
     },
     get selectedAlbum() {
-      return selectedAlbum;
+      return libraryController.selectedAlbum;
     },
     get selectedAlbumCid() {
-      return selectedAlbumCid;
+      return libraryController.selectedAlbumCid;
     },
     get loadingAlbums() {
-      return loadingAlbums;
+      return libraryController.loadingAlbums;
     },
     get loadingDetail() {
-      return loadingDetail;
+      return libraryController.loadingDetail;
+    },
+    get loadingAlbumCid(): string | null {
+      return libraryController.loadingDetail
+        ? libraryController.selectedAlbumCid
+        : null;
     },
     get errorMsg() {
-      return errorMsg;
+      return libraryController.errorMsg;
     },
     get librarySearchQuery() {
-      return librarySearchQuery;
+      return libraryController.librarySearchQuery;
     },
     get librarySearchScope() {
-      return librarySearchScope;
+      return libraryController.librarySearchScope;
     },
     get librarySearchLoading() {
-      return librarySearchLoading;
+      return libraryController.librarySearchLoading;
     },
     get librarySearchResponse() {
-      return librarySearchResponse;
+      return libraryController.librarySearchResponse;
     },
     get showDetailSkeleton() {
-      return showDetailSkeleton;
+      return libraryController.showDetailSkeleton;
     },
     get albumRequestSeq() {
-      return albumRequestSeq;
+      return libraryController.albumRequestSeq;
     },
     get selectedAlbumArtworkUrl() {
       return themeManager.selectedAlbumArtworkUrl;
     },
     get currentSong() {
-      return currentSong;
+      return playerController.currentSong;
     },
     get isPlaying() {
-      return isPlaying;
+      return playerController.isPlaying;
     },
     get isPaused() {
-      return isPaused;
+      return playerController.isPaused;
     },
     get isLoading() {
-      return isLoading;
+      return playerController.isLoading;
     },
     get isPlayTogglePending() {
       return playerController.isPlayTogglePending;
     },
     get progress() {
-      return progress;
+      return playerController.progress;
     },
     get duration() {
-      return duration;
+      return playerController.duration;
     },
     get shuffleEnabled() {
-      return shuffleEnabled;
+      return playerController.shuffleEnabled;
     },
     get repeatMode() {
-      return repeatMode;
+      return playerController.repeatMode;
     },
     get playbackOrder() {
-      return playbackOrder;
+      return playerController.playbackOrder;
     },
     get playbackFormat() {
-      return playbackFormat;
+      return playerController.playbackFormat;
     },
     get lyricsOpen() {
-      return lyricsOpen;
+      return playerController.lyricsOpen;
     },
     get playlistOpen() {
-      return playlistOpen;
+      return playerController.playlistOpen;
     },
     get lyricsLoading() {
-      return lyricsLoading;
+      return playerController.lyricsLoading;
     },
     get lyricsError() {
-      return lyricsError;
+      return playerController.lyricsError;
     },
     get lyricsLines() {
-      return lyricsLines;
+      return playerController.lyricsLines;
     },
     get lyricsUnavailable() {
-      return lyricsUnavailable;
+      return playerController.lyricsUnavailable;
     },
     get activeLyricIndex() {
       return activeLyricIndex;
     },
     get fullscreenOpen() {
-      return fullscreenOpen;
+      return playerController.fullscreenOpen;
     },
     get playerHasPrevious() {
-      return playerHasPrevious;
+      return playerController.playerHasPrevious;
     },
     get playerHasNext() {
-      return playerHasNext;
+      return playerController.playerHasNext;
     },
     get downloadingAlbumCid() {
-      return downloadingAlbumCid;
+      return downloadController.downloadingAlbumCid;
     },
     get activeDownloadCount() {
-      return activeDownloadCount;
+      return downloadController.activeDownloadCount;
     },
     get filteredDownloadJobs() {
-      return filteredDownloadJobs;
+      return downloadController.filteredJobs;
     },
     get hasDownloadHistory() {
-      return hasDownloadHistory;
+      return downloadController.hasDownloadHistory;
     },
     get prefersReducedMotion() {
-      return prefersReducedMotion;
+      return envStore.prefersReducedMotion;
     },
     get overlayScrollbarOptions() {
       return overlayScrollbarOptions;
     },
     get contentScrollbarEvents() {
-      return contentScrollbarEvents;
+      return albumStageMotionController.contentScrollbarEvents;
     },
     get albumStageStyle() {
-      return albumStageStyle;
+      return albumStageMotionController.albumStageStyle;
     },
     get albumStageMediaHeight() {
-      return albumStageMediaHeight;
+      return albumStageMotionController.albumStageMediaHeight;
     },
     get albumStageScrimOpacity() {
-      return albumStageScrimOpacity;
+      return albumStageMotionController.albumStageScrimOpacity;
     },
     get albumStageImageOpacity() {
-      return albumStageImageOpacity;
+      return albumStageMotionController.albumStageImageOpacity;
     },
     get albumStageImageTransform() {
-      return albumStageImageTransform;
+      return albumStageMotionController.albumStageImageTransform;
     },
     get albumStageSolidifyOpacity() {
-      return albumStageSolidifyOpacity;
+      return albumStageMotionController.albumStageSolidifyOpacity;
     },
     get albumStageElement() {
       return albumStageElement;
@@ -920,28 +882,32 @@ export function createAppRuntime() {
       return selectionManager.selectedSongCids;
     },
     get settingsOpen() {
-      return settingsOpen;
+      return shellStore.settingsOpen;
     },
     get downloadPanelOpen() {
-      return downloadPanelOpen;
+      return shellStore.downloadPanelOpen;
     },
     get SettingsSheetView() {
-      return SettingsSheetView;
+      return shellStore.SettingsSheetView;
     },
     get DownloadTasksSheetView() {
-      return DownloadTasksSheetView;
+      return shellStore.DownloadTasksSheetView;
     },
     get isRefreshing() {
       return isRefreshing;
     },
     get currentSongDownloadState() {
-      return currentSong
-        ? downloadController.getSongDownloadState(currentSong.cid)
+      return playerController.currentSong
+        ? downloadController.getSongDownloadState(
+            playerController.currentSong.cid
+          )
         : ('idle' as const);
     },
     get currentSongDownloadDisabled() {
-      return currentSong
-        ? downloadController.isSongDownloadInteractionBlocked(currentSong.cid)
+      return playerController.currentSong
+        ? downloadController.isSongDownloadInteractionBlocked(
+            playerController.currentSong.cid
+          )
         : false;
     },
     get sidebarCollapsed() {

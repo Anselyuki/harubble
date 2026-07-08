@@ -321,6 +321,7 @@ fn main() {
             commands::homepage::get_latest_albums,
             commands::homepage::get_albums_by_series,
             commands::homepage::get_recent_history,
+            commands::homepage::record_song_heat,
             commands::homepage::clear_listening_history,
             commands::homepage::get_homepage_status,
             commands::tag_registry::get_tag_dimensions,

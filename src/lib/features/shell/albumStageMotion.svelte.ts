@@ -27,7 +27,6 @@ export function createAlbumStageMotionController(deps: AlbumStageMotionDeps) {
 
   const reducedMotion = $derived.by(() => deps.getReducedMotion());
   const viewportHeight = $derived.by(() => deps.getViewportHeight());
-  const isTransitioning = $derived.by(() => deps.getIsViewTransitioning());
 
   function setContentViewport(instance: OverlayScrollbars) {
     const viewport = instance.elements().viewport;
@@ -250,18 +249,18 @@ export function createAlbumStageMotionController(deps: AlbumStageMotionDeps) {
     () => `${albumStageMotionHeight}px`
   );
   const albumStageScrimOpacity = $derived.by(() =>
-    isTransitioning ? 1 : Math.max(0.58, 1 - albumStageSolidifyProgress * 0.34)
+    Math.max(0.58, 1 - albumStageSolidifyProgress * 0.34)
   );
-  const albumStageImageOpacity = $derived.by(() =>
-    isTransitioning ? 0 : 1 - albumStageSolidifyProgress * 0.54
+  const albumStageImageOpacity = $derived.by(
+    () => 1 - albumStageSolidifyProgress * 0.54
   );
   const albumStageImageTransform = $derived.by(() =>
     reducedMotion
       ? 'translateZ(0) scale(1)'
       : `translateZ(0) scale(${1 + albumStageRevealProgress * 0.006 + albumStageSolidifyProgress * 0.012})`
   );
-  const albumStageSolidifyOpacity = $derived.by(() =>
-    isTransitioning ? 1 : albumStageSolidifyProgress
+  const albumStageSolidifyOpacity = $derived.by(
+    () => albumStageSolidifyProgress
   );
 
   $effect(() => {

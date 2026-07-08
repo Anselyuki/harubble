@@ -408,6 +408,13 @@ export async function getAlbumsBySeriesGroup(): Promise<SeriesGroup[]> {
   return invoke<SeriesGroup[]>('get_albums_by_series');
 }
 
+export async function recordSongHeat(
+  songCid: string,
+  coverUrl: string | null
+): Promise<void> {
+  return invoke('record_song_heat', { songCid, coverUrl });
+}
+
 export async function getRecentHistory(limit: number): Promise<HistoryEntry[]> {
   return invoke<HistoryEntry[]>('get_recent_history', { limit });
 }

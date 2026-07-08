@@ -131,7 +131,7 @@
     font-size: var(--brand-logo-glyph-size);
     font-weight: 700;
     line-height: 0.88;
-    color: var(--theme-text-primary);
+    color: var(--accent-readable-foreground);
     white-space: nowrap;
   }
 
@@ -156,6 +156,7 @@
 
   .brand-char.outline {
     color: transparent;
-    -webkit-text-stroke: 1.5px var(--theme-tint);
+    -webkit-text-stroke: 1.2px
+      color-mix(in srgb, var(--accent-readable-foreground) 40%, transparent);
   }
 </style>

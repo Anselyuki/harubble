@@ -21,12 +21,14 @@ interface LibraryControllerDeps {
     scope: LibrarySearchScope;
   }) => Promise<SearchLibraryResponse>;
   preloadAlbumArtwork: (album: AlbumDetail) => Promise<number | null>;
+  warmAlbumArtwork: (coverUrl: string) => void;
   setAlbumStageAspectRatio: (value: number | null | undefined) => void;
   notifyError: (message: string) => void;
 }
 
 interface SelectAlbumOptions {
   shouldDispose?: () => boolean;
+  beforeReveal?: () => void;
   afterSelect?: () => void | Promise<void>;
 }
 
@@ -186,6 +188,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     const requestSeq = ++albumRequestSeq;
     selectedAlbumCid = album.cid;
     loadingDetail = true;
+    deps.warmAlbumArtwork(album.coverUrl);
     if (!selectedAlbum) {
       armDetailSkeleton();
     } else {
@@ -201,6 +204,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       if (shouldDispose?.() || requestSeq !== albumRequestSeq) return;
       const artworkAspectRatio = await deps.preloadAlbumArtwork(detail);
       if (shouldDispose?.() || requestSeq !== albumRequestSeq) return;
+      options?.beforeReveal?.();
       selectedAlbum = detail;
       deps.setAlbumStageAspectRatio(artworkAspectRatio);
       errorMsg = '';

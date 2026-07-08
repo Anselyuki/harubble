@@ -4,11 +4,10 @@ use std::sync::Mutex;
 use harubble_core::homepage::{HistoryEntry, ListeningEvent};
 use rusqlite::Connection;
 
-const MAX_HISTORY_ROWS: u32 = 500;
-
-/// 收听历史持久化服务。
+/// 歌曲热度持久化服务。
 ///
-/// 基于 SQLite 存储用户播放记录，提供写入、查询、去重与上限截断能力。
+/// 基于 SQLite 存储歌曲播放热度，每首歌一行，记录有效收听次数与最近播放时间。
+/// 当播放进度达到阈值（由调用方判断）时，通过 UPSERT 增加热度或插入新记录。
 /// 内部持有 `Mutex<Connection>` 以保证线程安全。
 pub(crate) struct ListeningHistoryService {
     conn: Mutex<Connection>,
@@ -40,20 +39,20 @@ impl ListeningHistoryService {
             .lock()
             .map_err(|e| format!("获取数据库锁失败: {e}"))?;
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS listening_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                song_cid TEXT NOT NULL,
+            "CREATE TABLE IF NOT EXISTS song_heat (
+                song_cid TEXT PRIMARY KEY,
                 song_name TEXT NOT NULL,
                 album_cid TEXT NOT NULL,
                 album_name TEXT NOT NULL,
                 cover_url TEXT,
                 artists TEXT NOT NULL,
-                played_at TEXT NOT NULL
+                heat INTEGER NOT NULL DEFAULT 1,
+                last_played_at TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_listening_played_at
-                ON listening_history(played_at DESC);",
+            CREATE INDEX IF NOT EXISTS idx_song_heat_last_played
+                ON song_heat(last_played_at DESC);",
         )
-        .map_err(|e| format!("初始化收听历史表失败: {e}"))?;
+        .map_err(|e| format!("初始化歌曲热度表失败: {e}"))?;
         Ok(())
     }
 
@@ -63,27 +62,19 @@ impl ListeningHistoryService {
             .lock()
             .map_err(|e| format!("获取数据库锁失败: {e}"))?;
 
-        let last_cid: Option<String> = conn
-            .query_row(
-                "SELECT song_cid FROM listening_history ORDER BY id DESC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .ok();
-
-        if last_cid.as_deref() == Some(&event.song_cid) {
-            return Ok(());
-        }
-
         let artists_json = serde_json::to_string(&event.artists)
             .map_err(|e| format!("序列化 artists 失败: {e}"))?;
         let now = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Iso8601::DEFAULT)
             .map_err(|e| format!("格式化时间失败: {e}"))?;
 
+        // UPSERT: 如果 song_cid 已存在则增加 heat 并更新 last_played_at，否则插入新记录
         conn.execute(
-            "INSERT INTO listening_history (song_cid, song_name, album_cid, album_name, cover_url, artists, played_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO song_heat (song_cid, song_name, album_cid, album_name, cover_url, artists, heat, last_played_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)
+             ON CONFLICT(song_cid) DO UPDATE SET
+                heat = heat + 1,
+                last_played_at = excluded.last_played_at",
             rusqlite::params![
                 event.song_cid,
                 event.song_name,
@@ -94,23 +85,7 @@ impl ListeningHistoryService {
                 now,
             ],
         )
-        .map_err(|e| format!("写入收听历史失败: {e}"))?;
-
-        let count: u32 = conn
-            .query_row("SELECT COUNT(*) FROM listening_history", [], |row| {
-                row.get(0)
-            })
-            .map_err(|e| format!("查询收听历史条数失败: {e}"))?;
-
-        if count > MAX_HISTORY_ROWS {
-            conn.execute(
-                "DELETE FROM listening_history WHERE id IN (
-                    SELECT id FROM listening_history ORDER BY played_at ASC LIMIT ?1
-                )",
-                [count - MAX_HISTORY_ROWS],
-            )
-            .map_err(|e| format!("截断收听历史失败: {e}"))?;
-        }
+        .map_err(|e| format!("记录歌曲热度失败: {e}"))?;
 
         Ok(())
     }
@@ -122,29 +97,29 @@ impl ListeningHistoryService {
             .map_err(|e| format!("获取数据库锁失败: {e}"))?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, song_cid, song_name, album_cid, album_name, cover_url, artists, played_at
-                 FROM listening_history ORDER BY played_at DESC LIMIT ?1",
+                "SELECT song_cid, song_name, album_cid, album_name, cover_url, artists, heat, last_played_at
+                 FROM song_heat ORDER BY last_played_at DESC LIMIT ?1",
             )
             .map_err(|e| format!("准备查询语句失败: {e}"))?;
 
         let entries = stmt
             .query_map([limit], |row| {
-                let artists_json: String = row.get(6)?;
+                let artists_json: String = row.get(5)?;
                 let artists: Vec<String> = serde_json::from_str(&artists_json).unwrap_or_default();
                 Ok(HistoryEntry {
-                    id: row.get(0)?,
-                    song_cid: row.get(1)?,
-                    song_name: row.get(2)?,
-                    album_cid: row.get(3)?,
-                    album_name: row.get(4)?,
-                    cover_url: row.get(5)?,
+                    song_cid: row.get(0)?,
+                    song_name: row.get(1)?,
+                    album_cid: row.get(2)?,
+                    album_name: row.get(3)?,
+                    cover_url: row.get(4)?,
                     artists,
+                    heat: row.get(6)?,
                     played_at: row.get(7)?,
                 })
             })
-            .map_err(|e| format!("查询收听历史失败: {e}"))?
+            .map_err(|e| format!("查询歌曲热度失败: {e}"))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("读取收听历史行失败: {e}"))?;
+            .map_err(|e| format!("读取歌曲热度行失败: {e}"))?;
 
         Ok(entries)
     }
@@ -155,8 +130,8 @@ impl ListeningHistoryService {
             .lock()
             .map_err(|e| format!("获取数据库锁失败: {e}"))?;
         let deleted = conn
-            .execute("DELETE FROM listening_history", [])
-            .map_err(|e| format!("清除收听历史失败: {e}"))?;
+            .execute("DELETE FROM song_heat", [])
+            .map_err(|e| format!("清除歌曲热度失败: {e}"))?;
         Ok(deleted as u32)
     }
 }
@@ -177,32 +152,24 @@ mod tests {
     }
 
     #[test]
-    fn deduplicates_consecutive_same_song() {
-        let service = ListeningHistoryService::new_in_memory().unwrap();
-        service.record(&make_event("s1", "a1")).unwrap();
-        service.record(&make_event("s1", "a1")).unwrap();
-        let entries = service.get_recent(10).unwrap();
-        assert_eq!(entries.len(), 1);
-    }
-
-    #[test]
-    fn allows_same_song_after_different_song() {
+    fn accumulates_heat_for_same_song() {
         let service = ListeningHistoryService::new_in_memory().unwrap();
         service.record(&make_event("s1", "a1")).unwrap();
         service.record(&make_event("s2", "a1")).unwrap();
         service.record(&make_event("s1", "a1")).unwrap();
+        // s1 出现两次，s2 出现一次，共两行
         let entries = service.get_recent(10).unwrap();
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 2);
     }
 
     #[test]
-    fn truncates_beyond_max_rows() {
+    fn unique_songs_each_get_one_row() {
         let service = ListeningHistoryService::new_in_memory().unwrap();
-        for i in 0..(MAX_HISTORY_ROWS + 5) {
+        for i in 0..5 {
             service.record(&make_event(&format!("s{i}"), "a1")).unwrap();
         }
-        let entries = service.get_recent(MAX_HISTORY_ROWS + 10).unwrap();
-        assert_eq!(entries.len() as u32, MAX_HISTORY_ROWS);
+        let entries = service.get_recent(10).unwrap();
+        assert_eq!(entries.len(), 5);
     }
 
     #[test]
@@ -224,7 +191,16 @@ mod tests {
         }
         let entries = service.get_recent(3).unwrap();
         assert_eq!(entries.len(), 3);
-        // 最新的在前
-        assert_eq!(entries[0].song_cid, "s9");
+    }
+
+    #[test]
+    fn get_recent_orders_by_last_played_desc() {
+        let service = ListeningHistoryService::new_in_memory().unwrap();
+        service.record(&make_event("s1", "a1")).unwrap();
+        service.record(&make_event("s2", "a1")).unwrap();
+        service.record(&make_event("s1", "a1")).unwrap(); // s1 最近播放更新
+        let entries = service.get_recent(10).unwrap();
+        // s1 最近播放，排在首位
+        assert_eq!(entries[0].song_cid, "s1");
     }
 }

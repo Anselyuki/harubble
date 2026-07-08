@@ -21,17 +21,19 @@ pub struct SeriesGroup {
     pub albums: Vec<Album>,
 }
 
-/// 收听历史条目，对应 SQLite `listening_history` 表的一行。
+/// 歌曲热度条目，对应 SQLite `song_heat` 表的一行。
+///
+/// `heat` 为有效收听次数（播放进度达到阈值时累加），`last_played_at` 为最近播放时间（ISO8601）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
-    pub id: i64,
     pub song_cid: String,
     pub song_name: String,
     pub album_cid: String,
     pub album_name: String,
     pub cover_url: Option<String>,
     pub artists: Vec<String>,
+    pub heat: u32,
     pub played_at: String,
 }
 

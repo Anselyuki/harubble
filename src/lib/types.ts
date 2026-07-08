@@ -155,6 +155,11 @@ export interface ThemePalette {
   accentRgb: [number, number, number];
   accentHoverRgb: [number, number, number];
   waveColors: [number, number, number][];
+  surfaceHex: string;
+  textPrimaryHex: string;
+  textSecondaryHex: string;
+  tintHex: string;
+  dangerHex: string;
 }
 
 export type ThemeColorSlot =
@@ -173,6 +178,31 @@ export interface ThemePreferences {
   presetId: string;
   customColors: Partial<ThemeColorSlots>;
   colorScheme?: ColorScheme;
+  dynamicAlbumAccent?: boolean;
+}
+
+export interface ThemeTokenSet {
+  accent: string;
+  accentHover: string;
+  accentRgb: string;
+  accentHoverRgb: string;
+  accentReadableForeground: string;
+  accentHoverReadableForeground: string;
+  bgPrimary: string;
+  bgSecondary: string;
+  bgTertiary: string;
+  bgElevated: string;
+  textPrimary: string;
+  textSecondary: string;
+  textTertiary: string;
+  border: string;
+  ring: string;
+  destructive: string;
+  destructiveRgb: string;
+  surfaceState: string;
+  surfaceBase: string;
+  surfaceSidebar: string;
+  surfaceOverlay: string;
 }
 
 export type OutputFormat = 'flac' | 'wav' | 'mp3';
@@ -418,13 +448,13 @@ export interface TagGroup {
 }
 
 export interface HistoryEntry {
-  id: number;
   songCid: string;
   songName: string;
   albumCid: string;
   albumName: string;
   coverUrl: string | null;
   artists: string[];
+  heat: number;
   playedAt: string;
 }
 

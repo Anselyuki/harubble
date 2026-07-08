@@ -97,14 +97,6 @@ impl AppState {
                     "playing",
                     false,
                 );
-                self.spawn_listening_history_record(harubble_core::ListeningEvent {
-                    song_cid: song_cid.clone(),
-                    song_name: song_detail.name.clone(),
-                    album_cid: song_detail.album_cid.clone(),
-                    album_name: String::new(),
-                    cover_url: cover_url.clone(),
-                    artists: song_detail.artists.clone(),
-                });
                 Ok(PlaybackStartResult::new(duration, session_id))
             }
             Err(error) => {
@@ -490,30 +482,6 @@ impl AppState {
                     "playback.ticket_superseded": ticket_superseded,
                 })),
             );
-        });
-    }
-
-    fn spawn_listening_history_record(&self, listening_event: harubble_core::ListeningEvent) {
-        self.spawn_playback_side_effect("record_listening_history", move |state| async move {
-            let listening_history = state.listening_history.clone();
-            let log_center = state.log_center.clone();
-            let record_result =
-                tokio::task::spawn_blocking(move || listening_history.record(&listening_event))
-                    .await
-                    .map_err(|error| error.to_string())
-                    .and_then(|result| result);
-
-            if let Err(e) = record_result {
-                log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "listening-history",
-                        "listening_history.record_failed",
-                        "Failed to record listening history",
-                    )
-                    .details(e),
-                );
-            }
         });
     }
 

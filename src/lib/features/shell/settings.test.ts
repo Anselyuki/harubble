@@ -19,6 +19,7 @@ function createState(): SettingsState {
     themePresetId: DEFAULT_THEME_PREFERENCES.presetId,
     themeCustomColors: {},
     colorScheme: 'auto',
+    dynamicAlbumAccent: true,
     settingsLogRefreshToken: 0,
     prefsReady: true,
     isSaving: false,
@@ -115,6 +116,7 @@ describe('createSettingsController theme preferences', () => {
             danger: '#AA3300',
           },
           colorScheme: 'auto',
+          dynamicAlbumAccent: true,
         },
       })
     );

@@ -26,6 +26,7 @@ interface PlayerControllerDeps {
   setPlaybackVolume: (volume: number) => Promise<number>;
   getPlayerState: () => Promise<PlayerState>;
   getSongLyrics: (songCid: string) => Promise<string | null>;
+  recordSongHeat: (songCid: string, coverUrl: string | null) => void;
   notifyError: (message: string) => void;
 }
 
@@ -75,6 +76,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let volumeBeforeMute = 1.0;
   let playbackEndRequestSeq = 0;
   let playRequestSeq = 0;
+  let heatFiredSessionId = -1;
   let lastPlaybackSnapshot: PlaybackSnapshot = {
     cid: null as string | null,
     active: false,
@@ -285,6 +287,18 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   function syncPlayerProgress(state: PlayerState) {
     if (progress !== state.progress) progress = state.progress;
     if (duration !== state.duration) duration = state.duration;
+
+    // 播放进度达到 50% 时记录热度，每个播放会话只触发一次
+    if (
+      state.isPlaying &&
+      state.duration > 0 &&
+      state.progress / state.duration >= 0.5 &&
+      state.songCid &&
+      state.sessionId !== heatFiredSessionId
+    ) {
+      heatFiredSessionId = state.sessionId;
+      deps.recordSongHeat(state.songCid, state.coverUrl ?? null);
+    }
   }
 
   function syncPlaybackLifecycle() {

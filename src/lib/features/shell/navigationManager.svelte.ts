@@ -125,8 +125,6 @@ export function createNavigationManager(deps: NavigationManagerDeps) {
     navigationDirection = 'forward';
     isNavigating = true;
     navigationStack.push(current);
-    shellStore.currentView = 'library';
-    clearNonTargetState('library');
 
     const shouldDispose = () => seq !== navigationSeq;
 
@@ -136,6 +134,11 @@ export function createNavigationManager(deps: NavigationManagerDeps) {
 
     try {
       await deps.libraryController.selectAlbum(album, {
+        beforeReveal: () => {
+          if (shouldDispose()) return;
+          shellStore.currentView = 'library';
+          clearNonTargetState('library');
+        },
         afterSelect: async () => {
           if (shouldDispose()) return;
           await tick();

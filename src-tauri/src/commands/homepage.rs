@@ -128,7 +128,37 @@ pub async fn get_recent_history(
         .map_err(|e| e.to_string())?
 }
 
-/// 清除所有收听历史，返回删除条数。
+/// 记录歌曲热度（当播放进度达到阈值时由前端调用）。
+///
+/// 入参 `song_cid` 为歌曲 CID，`cover_url` 为可选封面 URL。
+/// 内部通过 UPSERT 增加该歌曲的热度计数并更新最近播放时间；
+/// 若歌曲不存在则先从 API 获取元数据后插入。
+/// 该接口应只在前端确认播放进度达到阈值后调用，不应高频轮询。
+#[tauri::command]
+pub async fn record_song_heat(
+    state: State<'_, AppState>,
+    song_cid: String,
+    cover_url: Option<String>,
+) -> Result<(), String> {
+    let song_detail = state
+        .api
+        .get_song_detail(&song_cid)
+        .await
+        .map_err(|e| e.to_string())?;
+    let event = harubble_core::ListeningEvent {
+        song_cid,
+        song_name: song_detail.name,
+        album_cid: song_detail.album_cid,
+        album_name: String::new(),
+        cover_url,
+        artists: song_detail.artists,
+    };
+    let history = state.listening_history.clone();
+    tokio::task::spawn_blocking(move || history.record(&event))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 ///
 /// 适用于用户手动清空收听历史面板的场景。
 /// 返回值为本次实际删除的记录条数。

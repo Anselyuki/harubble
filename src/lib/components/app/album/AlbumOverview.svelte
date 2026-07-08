@@ -12,6 +12,7 @@
   interface Props {
     albums: Album[];
     selectedAlbumCid: string | null;
+    loadingAlbumCid?: string | null;
     reducedMotion: boolean;
     searchQuery: string;
     searchLoading: boolean;
@@ -23,6 +24,7 @@
   let {
     albums,
     selectedAlbumCid,
+    loadingAlbumCid = null,
     reducedMotion,
     searchQuery,
     searchLoading,
@@ -155,6 +157,7 @@
                 {album}
                 layout="grid"
                 selected={selectedAlbumCid === album.cid}
+                loading={loadingAlbumCid === album.cid}
                 {reducedMotion}
                 onclick={() => onSelectAlbum(album)}
               />

@@ -58,13 +58,9 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 前端架构、组件约定、域边界、运行时架构、UI 系统（设计 token、字体方案、动效规则）、国际化、交互模式与内容规范。
 
-#### [global-monet-theme-plan.md](./reference/global-monet-theme-plan.md)
+#### [token-inventory.md](./reference/token-inventory.md)
 
-全局 Monet 取色与主题收敛方案。包含现有颜色系统问题盘点、多智能体讨论纪要、可行性判断、目标主题架构、偏好模型升级、设置面板改造、分阶段实施计划与测试清单。
-
-#### [ui-album-overview-redesign.md](./reference/ui-album-overview-redesign.md) `已实现`
-
-Sidebar 精简与 Album Overview 页改版方案。涵盖移除 `AlbumSidebarSection`、新增 `overview` AppView、卡片网格布局、搜索结果迁移到主内容区、Collections 作为播放列表语义入口的完整设计与实现指引。方案核心已落地，文档保留为设计背景记录（实现偏差见文首「as-built」小节），as-built 真相以 frontend-guide.md 为准。
+CSS token 盘点清单。列出 `:root` / `:root.light` / `:root.dark` 中所有 CSS 变量的迁移归属、运行时写入分析与 shadcn token 引用方向，作为主题系统迁移的可执行依据。
 
 #### [resource-update.md](./reference/resource-update.md)
 

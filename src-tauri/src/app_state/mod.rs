@@ -387,28 +387,6 @@ impl AppState {
         result
     }
 
-    pub(crate) fn spawn_playback_side_effect<F, Fut>(&self, command_name: &'static str, task: F)
-    where
-        F: FnOnce(Self) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        command_scheduling::debug_assert_command_domain(
-            command_name,
-            CommandDomain::PlaybackSideEffect,
-        );
-        let submitted_at = Instant::now();
-        let state = self.clone();
-        let log_center = Arc::clone(&self.log_center);
-
-        tauri::async_runtime::spawn(async move {
-            let started_at = Instant::now();
-            let queue_wait_ms = submitted_at.elapsed().as_millis();
-            task(state).await;
-            let run_ms = started_at.elapsed().as_millis();
-            record_playback_side_effect_metrics(log_center, command_name, queue_wait_ms, run_ms);
-        });
-    }
-
     pub(crate) async fn persist_preferences(&self, prefs: AppPreferences) -> Result<(), String> {
         let _guard = self.preferences_write_lock.lock().await;
         let locale = prefs.locale;

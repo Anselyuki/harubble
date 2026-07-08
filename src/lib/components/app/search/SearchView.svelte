@@ -15,6 +15,7 @@
       searchController: ReturnType<typeof createSearchController>;
       handleSelectAlbum: (album: Album) => void | Promise<void>;
       prefersReducedMotion: boolean;
+      loadingAlbumCid: string | null;
     };
   }
 
@@ -89,6 +90,7 @@
         <SearchRecentlyPlayed
           albums={searchController.recentPlayed}
           loading={searchController.loading}
+          loadingAlbumCid={runtime.loadingAlbumCid}
           reducedMotion={runtime.prefersReducedMotion}
           onSelectAlbum={(album) => {
             void runtime.handleSelectAlbum(album);

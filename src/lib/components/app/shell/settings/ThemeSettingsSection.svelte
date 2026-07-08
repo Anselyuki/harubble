@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as Select from '$lib/components/ui/select/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { Input } from '$lib/components/ui/input/index.js';
+  import { cn } from '$lib/utils.js';
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
   import {
     THEME_COLOR_SLOTS,
@@ -19,6 +19,7 @@
 
   interface Props {
     colorScheme?: ColorScheme;
+    dynamicAlbumAccent?: boolean;
     themePresetId: string;
     resolvedThemeColors: ThemeColorSlots;
     themePresetOptions: ThemePresetOption[];
@@ -36,6 +37,9 @@
     appearanceLightLabel: string;
     appearanceDarkLabel: string;
     appearanceSegmentAria: string;
+    dynamicAlbumLabel: string;
+    dynamicAlbumOnLabel: string;
+    dynamicAlbumOffLabel: string;
     onThemePresetChange: (nextPresetId: string) => void;
     onThemeTextInput: (slot: ThemeColorSlot, value: string) => void;
     onThemeColorInput: (slot: ThemeColorSlot, value: string) => void;
@@ -44,6 +48,7 @@
 
   let {
     colorScheme = $bindable<ColorScheme>('auto'),
+    dynamicAlbumAccent = $bindable<boolean>(true),
     themePresetId,
     resolvedThemeColors,
     themePresetOptions,
@@ -61,6 +66,9 @@
     appearanceLightLabel,
     appearanceDarkLabel,
     appearanceSegmentAria,
+    dynamicAlbumLabel,
+    dynamicAlbumOnLabel,
+    dynamicAlbumOffLabel,
     onThemePresetChange,
     onThemeTextInput,
     onThemeColorInput,
@@ -135,6 +143,7 @@
       </Select.Content>
     </Select.Root>
   </label>
+
   <div class="settings-theme-color-list">
     {#each THEME_COLOR_SLOTS as slot (slot)}
       {@const draft = getThemeDraft(slot)}
@@ -146,9 +155,12 @@
           style={`--swatch-color: ${resolvedThemeColors[slot]}`}
         ></span>
         <span class="settings-theme-color-label">{getSlotLabel(slot)}</span>
-        <Input
+        <input
           id={`theme-color-${slot}`}
-          class="settings-theme-hex-input h-8 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]"
+          class={cn(
+            'border-input focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 aria-invalid:border-destructive h-8 rounded-lg border bg-transparent px-2.5 py-1 text-base focus-visible:ring-3 aria-invalid:ring-3 md:text-sm w-full min-w-0 outline-none',
+            'settings-theme-hex-input h-8 border-[var(--sheet-border)] bg-[var(--sheet-control-bg)]'
+          )}
           value={draft}
           aria-invalid={invalid}
           aria-describedby={invalid ? invalidHelpId : undefined}
@@ -169,6 +181,26 @@
         {/if}
       </label>
     {/each}
+  </div>
+
+  <div class="settings-field settings-appearance-field">
+    <span>{dynamicAlbumLabel}</span>
+    <div class="settings-segment" aria-label={dynamicAlbumLabel}>
+      <button
+        type="button"
+        class:active={dynamicAlbumAccent === true}
+        aria-pressed={dynamicAlbumAccent === true}
+        onclick={() => (dynamicAlbumAccent = true)}
+        >{dynamicAlbumOnLabel}</button
+      >
+      <button
+        type="button"
+        class:active={dynamicAlbumAccent === false}
+        aria-pressed={dynamicAlbumAccent === false}
+        onclick={() => (dynamicAlbumAccent = false)}
+        >{dynamicAlbumOffLabel}</button
+      >
+    </div>
   </div>
 </section>
 
