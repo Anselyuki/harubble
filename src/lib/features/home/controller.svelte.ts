@@ -119,6 +119,15 @@ export function createHomeController(deps: HomeControllerDeps) {
     await loadTagGroups(dimensionKey);
   }
 
+  async function refreshRecentHistory() {
+    try {
+      const entries = await deps.getRecentHistory(RECENT_HISTORY_LIMIT);
+      homeStore.recentHistory = entries;
+    } catch {
+      // 刷新失败静默忽略，不影响已有数据
+    }
+  }
+
   async function refreshHomepage() {
     await loadHomepageData({ force: true });
   }
@@ -188,6 +197,7 @@ export function createHomeController(deps: HomeControllerDeps) {
     init,
     loadHomepageData,
     refreshHomepage,
+    refreshRecentHistory,
     refreshSeriesGroups,
     selectDimension,
     handleClearHistory,

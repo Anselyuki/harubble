@@ -51,7 +51,7 @@
     <p class="empty-hint">{labels.empty}</p>
   {:else}
     <div class="history-list">
-      {#each entries as entry (entry.id)}
+      {#each entries as entry (entry.songCid)}
         <button
           class="history-item"
           onclick={() => onPlay(entry)}
@@ -59,7 +59,11 @@
         >
           {#if entry.coverUrl}
             <img
-              use:imageDataSrc={entry.coverUrl}
+              use:imageDataSrc={{
+                src: entry.coverUrl,
+                loading: 'lazy',
+                rootMargin: '600px',
+              }}
               alt=""
               class="history-cover"
               loading="lazy"

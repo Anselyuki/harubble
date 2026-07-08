@@ -37,7 +37,7 @@ mod macos {
     const SETTLE_DELAY: Duration = Duration::from_millis(500);
 
     struct CallbackState {
-        api: Arc<harubble_core::ApiClient>,
+        app_state: AppState,
         log_center: Arc<crate::logging::LogCenter>,
         last_reset: std::sync::Mutex<Instant>,
     }
@@ -60,7 +60,7 @@ mod macos {
         // Increased from 200ms to 500ms to handle slower proxy configuration updates.
         std::thread::sleep(SETTLE_DELAY);
 
-        match state.api.reset_http_client() {
+        match state.app_state.reset_http_clients() {
             Ok(()) => {
                 state.log_center.record(LogPayload::new(
                     LogLevel::Info,
@@ -69,7 +69,7 @@ mod macos {
                     "网络配置变更，已重建 HTTP 客户端",
                 ));
             }
-            Err(e) => {
+            Err(error) => {
                 state.log_center.record(
                     LogPayload::new(
                         LogLevel::Warn,
@@ -77,21 +77,21 @@ mod macos {
                         "network.reset_client_failed",
                         "网络配置变更后重建 HTTP 客户端失败",
                     )
-                    .details(e.to_string()),
+                    .details(error),
                 );
             }
         }
     }
 
     pub(super) fn spawn(state: &AppState) {
-        let api = state.api.clone();
+        let app_state = state.clone();
         let log_center = state.log_center.clone();
 
         std::thread::Builder::new()
             .name("network-monitor".into())
             .spawn(move || {
                 let callback_state = CallbackState {
-                    api,
+                    app_state,
                     log_center,
                     last_reset: std::sync::Mutex::new(Instant::now() - DEBOUNCE_DURATION),
                 };

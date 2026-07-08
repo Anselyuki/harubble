@@ -30,6 +30,7 @@ export interface SettingsState {
   themePresetId: string;
   themeCustomColors: Partial<ThemeColorSlots>;
   colorScheme: ColorScheme;
+  dynamicAlbumAccent: boolean;
   settingsLogRefreshToken: number;
   prefsReady: boolean;
   isSaving: boolean;
@@ -74,6 +75,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
         presetId: state.themePresetId,
         customColors: state.themeCustomColors,
         colorScheme: state.colorScheme,
+        dynamicAlbumAccent: state.dynamicAlbumAccent,
       },
     });
   }
@@ -124,9 +126,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       }
       const theme = normalizeThemePreferences(prefs);
       if (!state.dirty.theme) {
-        state.themePresetId = theme.presetId;
-        state.themeCustomColors = { ...theme.customColors };
-        state.colorScheme = theme.colorScheme ?? 'auto';
+        applyNormalizedTheme(state, theme);
       }
       state.volume = prefs.volume;
       deps.onLocaleChanged?.(prefs.locale);
@@ -146,6 +146,24 @@ export function createSettingsController(deps: SettingsControllerDeps) {
         state.prefsReady = true;
       }
     }
+  }
+
+  function applyNormalizedTheme(
+    state: SettingsState,
+    theme: ReturnType<typeof normalizeThemePreferences>
+  ) {
+    if (state.themePresetId !== theme.presetId) {
+      state.themePresetId = theme.presetId;
+    }
+    const nextCustomColors = theme.customColors;
+    if (
+      JSON.stringify(state.themeCustomColors) !==
+      JSON.stringify(nextCustomColors)
+    ) {
+      state.themeCustomColors = { ...nextCustomColors };
+    }
+    state.colorScheme = theme.colorScheme ?? 'auto';
+    state.dynamicAlbumAccent = theme.dynamicAlbumAccent ?? true;
   }
 
   function applyDefaultOutputDir(state: SettingsState, value: string) {
@@ -181,6 +199,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
         presetId: state.themePresetId,
         customColors: { ...state.themeCustomColors },
         colorScheme: state.colorScheme,
+        dynamicAlbumAccent: state.dynamicAlbumAccent,
       },
     };
 
@@ -198,9 +217,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
           state.logLevel = updated.logLevel;
           state.locale = updated.locale;
           const updatedTheme = normalizeThemePreferences(updated);
-          state.themePresetId = updatedTheme.presetId;
-          state.themeCustomColors = { ...updatedTheme.customColors };
-          state.colorScheme = updatedTheme.colorScheme ?? 'auto';
+          applyNormalizedTheme(state, updatedTheme);
           state.persistedSnapshot = getSnapshot(state);
         } else {
           state.persistedSnapshot = requestSnapshot;

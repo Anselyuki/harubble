@@ -155,6 +155,11 @@ export interface ThemePalette {
   accentRgb: [number, number, number];
   accentHoverRgb: [number, number, number];
   waveColors: [number, number, number][];
+  surfaceHex: string;
+  textPrimaryHex: string;
+  textSecondaryHex: string;
+  tintHex: string;
+  dangerHex: string;
 }
 
 export type ThemeColorSlot =
@@ -173,6 +178,31 @@ export interface ThemePreferences {
   presetId: string;
   customColors: Partial<ThemeColorSlots>;
   colorScheme?: ColorScheme;
+  dynamicAlbumAccent?: boolean;
+}
+
+export interface ThemeTokenSet {
+  accent: string;
+  accentHover: string;
+  accentRgb: string;
+  accentHoverRgb: string;
+  accentReadableForeground: string;
+  accentHoverReadableForeground: string;
+  bgPrimary: string;
+  bgSecondary: string;
+  bgTertiary: string;
+  bgElevated: string;
+  textPrimary: string;
+  textSecondary: string;
+  textTertiary: string;
+  border: string;
+  ring: string;
+  destructive: string;
+  destructiveRgb: string;
+  surfaceState: string;
+  surfaceBase: string;
+  surfaceSidebar: string;
+  surfaceOverlay: string;
 }
 
 export type OutputFormat = 'flac' | 'wav' | 'mp3';
@@ -289,7 +319,21 @@ export interface CreateDownloadJobRequest {
   options: DownloadOptions;
 }
 
+export interface PlaybackFormatState {
+  sourceSampleRate: number;
+  sourceChannels: number;
+  sourceBitsPerSample: number | null;
+  sourceBitrateKbps?: number | null;
+  outputSampleRate: number;
+  outputChannels: number;
+  outputBitsPerSample: number | null;
+  outputSampleFormat: string;
+  resampling: boolean;
+  channelRemix: boolean;
+}
+
 export interface PlayerState {
+  sessionId: number;
   songCid: string | null;
   songName: string | null;
   artists: string[];
@@ -302,6 +346,37 @@ export interface PlayerState {
   progress: number;
   duration: number;
   volume: number;
+  playbackFormat: PlaybackFormatState | null;
+}
+
+export interface PlaybackStartResult {
+  duration: number;
+  sessionId: number;
+}
+
+export type PlaybackErrorCode =
+  | 'superseded'
+  | 'noActiveTrack'
+  | 'noNextTrack'
+  | 'noPreviousTrack'
+  | 'loading'
+  | 'network'
+  | 'audio'
+  | 'io'
+  | 'internal';
+
+export interface PlaybackErrorPayload {
+  code: PlaybackErrorCode;
+  message: string;
+  retryable: boolean;
+  sessionId: number | null;
+}
+
+export interface PlaybackEndedEvent {
+  sessionId: number;
+  songCid: string;
+  progress: number;
+  duration: number;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -373,13 +448,13 @@ export interface TagGroup {
 }
 
 export interface HistoryEntry {
-  id: number;
   songCid: string;
   songName: string;
   albumCid: string;
   albumName: string;
   coverUrl: string | null;
   artists: string[];
+  heat: number;
   playedAt: string;
 }
 

@@ -39,6 +39,37 @@ const THEME_COLOR_SLOTS: &[&str] = &[
     "danger",
 ];
 
+/// 反序列化动态专辑色——兼容旧枚举格式和新布尔格式。
+fn deserialize_dynamic_album_accent<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct BoolOrLegacyVisitor;
+
+    impl<'de> de::Visitor<'de> for BoolOrLegacyVisitor {
+        type Value = bool;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a boolean or legacy enum string")
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<Self::Value, E> {
+            Ok(v)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            match v {
+                "off" => Ok(false),
+                _ => Ok(true),
+            }
+        }
+    }
+
+    deserializer.deserialize_any(BoolOrLegacyVisitor)
+}
+
 /// 应用主题偏好，保存当前预设以及覆盖预设的自定义颜色槽。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +84,12 @@ pub(crate) struct ThemePreferences {
     /// 配色方案偏好；缺失时默认跟随系统。
     #[serde(default)]
     pub(crate) color_scheme: ColorScheme,
+    /// 动态专辑色开关；缺失时默认开启。
+    #[serde(
+        default = "default_dynamic_album_accent",
+        deserialize_with = "deserialize_dynamic_album_accent"
+    )]
+    pub(crate) dynamic_album_accent: bool,
 }
 
 impl Default for ThemePreferences {
@@ -61,8 +98,13 @@ impl Default for ThemePreferences {
             preset_id: default_theme_preset_id(),
             custom_colors: BTreeMap::new(),
             color_scheme: ColorScheme::default(),
+            dynamic_album_accent: true,
         }
     }
+}
+
+fn default_dynamic_album_accent() -> bool {
+    true
 }
 
 fn default_theme_preset_id() -> String {

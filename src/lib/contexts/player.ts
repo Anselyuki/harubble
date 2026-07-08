@@ -1,5 +1,5 @@
 import { getContext, setContext } from 'svelte';
-import type { PlaybackQueueEntry } from '$lib/types';
+import type { PlaybackFormatState, PlaybackQueueEntry } from '$lib/types';
 import { PLAYER_CONTEXT_KEY } from './keys';
 
 export interface PlayerContextSong {
@@ -14,6 +14,7 @@ export interface PlayerContext {
   readonly isPlaying: boolean;
   readonly isPaused: boolean;
   readonly isLoading: boolean;
+  readonly isPlayTogglePending: boolean;
   readonly hasPrevious: boolean;
   readonly hasNext: boolean;
   readonly progress: number;
@@ -31,6 +32,7 @@ export interface PlayerContext {
   readonly fullscreenOpen: boolean;
   readonly volume: number;
   readonly muted: boolean;
+  readonly playbackFormat: PlaybackFormatState | null;
   pause: () => void;
   resume: () => void;
   seek: (positionSecs: number) => void;

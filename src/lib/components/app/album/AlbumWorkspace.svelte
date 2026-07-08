@@ -12,7 +12,7 @@
 
   const contentClass = $derived.by(
     () =>
-      `content${currentSong ? ' content-with-player' : ''}${loadingDetail && selectedAlbum ? ' content-pending' : ''}`
+      `content album-workspace-shell${currentSong ? ' content-with-player' : ''}${loadingDetail && selectedAlbum ? ' content-pending' : ''}`
   );
 </script>
 

@@ -42,9 +42,13 @@ pub async fn get_album_detail(
         .get_album_detail(&album_cid)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = state
-        .album_metadata_cache
-        .upsert_belong(&album.cid, &album.belong);
+    let cache = state.album_metadata_cache.clone();
+    let album_cid_for_cache = album.cid.clone();
+    let album_belong_for_cache = album.belong.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        cache.upsert_belong(&album_cid_for_cache, &album_belong_for_cache)
+    })
+    .await;
     let mut enriched = state
         .local_inventory_service
         .enrich_album_detail(album)
@@ -100,22 +104,26 @@ pub async fn get_song_lyrics(
     state: State<'_, AppState>,
     cid: String,
 ) -> Result<Option<String>, String> {
-    let song_detail = state
-        .api
-        .get_song_detail(&cid)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let Some(lyric_url) = song_detail.lyric_url else {
-        return Ok(None);
-    };
-
     state
-        .api
-        .download_text(&lyric_url)
+        .dispatch_visual_aux("get_song_lyrics", move |state| async move {
+            let song_detail = state
+                .image_api
+                .get_song_detail(&cid)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let Some(lyric_url) = song_detail.lyric_url else {
+                return Ok(None);
+            };
+
+            state
+                .api
+                .download_text(&lyric_url)
+                .await
+                .map(Some)
+                .map_err(|e| e.to_string())
+        })
         .await
-        .map(Some)
-        .map_err(|e| e.to_string())
 }
 
 /// 下载图片并提取主题色调板。
@@ -129,17 +137,20 @@ pub async fn extract_image_theme(
     image_url: String,
 ) -> Result<theme::ThemePalette, String> {
     harubble_core::validate_download_url(&image_url).map_err(|e| e.to_string())?;
+    state
+        .dispatch_visual_aux("extract_image_theme", move |state| async move {
+            let bytes = state
+                .image_api
+                .download_bytes_coalesced(&image_url)
+                .await
+                .map_err(|e| e.to_string())?;
 
-    let bytes = state
-        .api
-        .download_bytes(&image_url, |_, _| {})
+            tokio::task::spawn_blocking(move || theme::extract_theme_palette(&bytes))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())
+        })
         .await
-        .map_err(|e| e.to_string())?;
-
-    tokio::task::spawn_blocking(move || theme::extract_theme_palette(&bytes))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
 }
 
 fn encode_image_data_url(mime: &str, bytes: &[u8]) -> String {
@@ -161,16 +172,19 @@ pub async fn get_image_data_url(
     image_url: String,
 ) -> Result<String, String> {
     harubble_core::validate_download_url(&image_url).map_err(|e| e.to_string())?;
+    state
+        .dispatch_visual_aux("get_image_data_url", move |state| async move {
+            let bytes = state
+                .image_api
+                .download_bytes_coalesced(&image_url)
+                .await
+                .map_err(|e| e.to_string())?;
 
-    let bytes = state
-        .api
-        .download_bytes(&image_url, |_, _| {})
+            let mime = harubble_core::audio::detect_image_mime(&bytes)
+                .unwrap_or("application/octet-stream");
+            Ok(encode_image_data_url(mime, &bytes))
+        })
         .await
-        .map_err(|e| e.to_string())?;
-
-    let mime =
-        harubble_core::audio::detect_image_mime(&bytes).unwrap_or("application/octet-stream");
-    Ok(encode_image_data_url(mime, &bytes))
 }
 
 /// 返回默认下载输出目录。

@@ -92,9 +92,8 @@ impl AppState {
     }
 
     fn handle_media_next(&self) {
-        let state = self.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = state.play_next_internal().await {
+        self.spawn_playback_transition("play_next", move |state, request_id| async move {
+            if let Err(error) = state.play_next_for_request(request_id).await {
                 state.log_center.record(
                     LogPayload::new(
                         LogLevel::Warn,
@@ -109,9 +108,8 @@ impl AppState {
     }
 
     fn handle_media_previous(&self) {
-        let state = self.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = state.play_previous_internal().await {
+        self.spawn_playback_transition("play_previous", move |state, request_id| async move {
+            if let Err(error) = state.play_previous_for_request(request_id).await {
                 state.log_center.record(
                     LogPayload::new(
                         LogLevel::Warn,
@@ -126,63 +124,72 @@ impl AppState {
     }
 
     fn handle_media_set_position(&self, position_secs: f64) {
-        let state = self.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = state.seek_current_internal(position_secs).await {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "media-session",
-                        "media_session.seek_failed",
-                        "Failed to seek playback",
-                    )
-                    .details(error.to_string()),
-                );
-            }
-        });
+        self.spawn_playback_transition(
+            "seek_current_playback",
+            move |state, request_id| async move {
+                if let Err(error) = state
+                    .seek_current_for_request(request_id, position_secs)
+                    .await
+                {
+                    state.log_center.record(
+                        LogPayload::new(
+                            LogLevel::Warn,
+                            "media-session",
+                            "media_session.seek_failed",
+                            "Failed to seek playback",
+                        )
+                        .details(error.to_string()),
+                    );
+                }
+            },
+        );
     }
 
     fn handle_media_seek_by(&self, direction: SeekDirection, delta_secs: f64) {
-        let state = self.clone();
-        tauri::async_runtime::spawn(async move {
-            let current = state.player.get_state();
-            let target = match direction {
-                SeekDirection::Forward => current.progress + delta_secs,
-                SeekDirection::Backward => current.progress - delta_secs,
-            };
-            if let Err(error) = state.seek_current_internal(target).await {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "media-session",
-                        "media_session.seek_by_delta_failed",
-                        "Failed to seek by delta",
-                    )
-                    .details(error.to_string()),
-                );
-            }
-        });
+        self.spawn_playback_transition(
+            "seek_current_playback",
+            move |state, request_id| async move {
+                let current = state.player.get_state();
+                let target = match direction {
+                    SeekDirection::Forward => current.progress + delta_secs,
+                    SeekDirection::Backward => current.progress - delta_secs,
+                };
+                if let Err(error) = state.seek_current_for_request(request_id, target).await {
+                    state.log_center.record(
+                        LogPayload::new(
+                            LogLevel::Warn,
+                            "media-session",
+                            "media_session.seek_by_delta_failed",
+                            "Failed to seek by delta",
+                        )
+                        .details(error.to_string()),
+                    );
+                }
+            },
+        );
     }
 
     fn handle_media_seek(&self, direction: SeekDirection) {
-        let state = self.clone();
-        tauri::async_runtime::spawn(async move {
-            let current = state.player.get_state();
-            let target = match direction {
-                SeekDirection::Forward => current.progress + 10.0,
-                SeekDirection::Backward => current.progress - 10.0,
-            };
-            if let Err(error) = state.seek_current_internal(target).await {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "media-session",
-                        "media_session.seek_forward_failed",
-                        "Failed to seek forward/backward",
-                    )
-                    .details(error.to_string()),
-                );
-            }
-        });
+        self.spawn_playback_transition(
+            "seek_current_playback",
+            move |state, request_id| async move {
+                let current = state.player.get_state();
+                let target = match direction {
+                    SeekDirection::Forward => current.progress + 10.0,
+                    SeekDirection::Backward => current.progress - 10.0,
+                };
+                if let Err(error) = state.seek_current_for_request(request_id, target).await {
+                    state.log_center.record(
+                        LogPayload::new(
+                            LogLevel::Warn,
+                            "media-session",
+                            "media_session.seek_forward_failed",
+                            "Failed to seek forward/backward",
+                        )
+                        .details(error.to_string()),
+                    );
+                }
+            },
+        );
     }
 }

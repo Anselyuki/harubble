@@ -69,6 +69,9 @@
     get isLoading() {
       return runtime.isLoading;
     },
+    get isPlayTogglePending() {
+      return runtime.isPlayTogglePending;
+    },
     get hasPrevious() {
       return runtime.playerHasPrevious;
     },
@@ -119,6 +122,9 @@
     },
     get muted() {
       return runtime.playerController.muted;
+    },
+    get playbackFormat() {
+      return runtime.playbackFormat;
     },
     pause: () => {
       void runtime.playerController.pause();

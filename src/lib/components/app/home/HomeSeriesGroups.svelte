@@ -59,7 +59,11 @@
             {#each group.albums.slice(0, 8) as album (album.cid)}
               <div class="mini-cover-wrapper" title={album.name}>
                 <img
-                  use:imageDataSrc={album.coverUrl}
+                  use:imageDataSrc={{
+                    src: album.coverUrl,
+                    loading: 'lazy',
+                    rootMargin: '500px',
+                  }}
                   alt={album.name}
                   class="mini-cover"
                   loading="lazy"

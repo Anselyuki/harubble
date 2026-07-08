@@ -113,11 +113,9 @@
     overflow: hidden;
     border-radius: 16px 16px 0 0;
     z-index: 10;
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    border: 1px solid var(--volume-shell-border, var(--player-shell-border));
     border-bottom: none;
-    box-shadow:
-      0 4px 16px rgba(0, 0, 0, 0.12),
-      0 1px 4px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--volume-shell-shadow);
   }
 
   .wave-glass-blur {
@@ -128,10 +126,14 @@
     background:
       linear-gradient(
         180deg,
-        rgba(255, 255, 255, 0.18),
-        rgba(255, 255, 255, 0.06)
+        var(--volume-shell-highlight, var(--player-shell-highlight)),
+        var(--volume-shell-highlight-soft, transparent)
       ),
-      color-mix(in srgb, var(--player-shell-bg) 28%, transparent);
+      color-mix(
+        in srgb,
+        var(--volume-shell-surface, var(--player-shell-bg)) 96%,
+        transparent
+      );
     backdrop-filter: blur(22px) saturate(1.75);
     -webkit-backdrop-filter: blur(22px) saturate(1.75);
   }
@@ -143,35 +145,10 @@
     border-radius: inherit;
     background: linear-gradient(
       180deg,
-      rgba(255, 255, 255, 0.2),
-      rgba(255, 255, 255, 0)
+      var(--volume-shell-highlight, var(--player-shell-highlight)),
+      transparent
     );
     pointer-events: none;
-  }
-
-  :global(.dark) .wave-glass {
-    border-color: rgba(255, 255, 255, 0.12);
-    box-shadow:
-      0 4px 16px rgba(0, 0, 0, 0.28),
-      0 1px 4px rgba(0, 0, 0, 0.18);
-  }
-
-  :global(.dark) .wave-glass-blur {
-    background:
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.12),
-        rgba(255, 255, 255, 0.035)
-      ),
-      color-mix(in srgb, var(--player-shell-bg) 18%, transparent);
-  }
-
-  :global(.dark) .wave-glass-blur::before {
-    background: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.12),
-      rgba(255, 255, 255, 0)
-    );
   }
 
   .ripple-backdrop {

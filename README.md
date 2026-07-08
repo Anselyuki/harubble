@@ -6,31 +6,65 @@
   <img alt="stars" src="https://img.shields.io/github/stars/Anselyuki/harubble?style=social">
 </div>
 
-面向 [塞壬唱片](https://monster-siren.hypergryph.com/) 的桌面音乐播放器与下载器。
+Harubble 是面向 [塞壬唱片](https://monster-siren.hypergryph.com/) 的桌面音乐播放器与下载器。
 
-> 名字取自《明日方舟》角色 **遥**（Haruka）与她的源石技艺——漂浮在空中的透明泡泡（Bubble）。Haru 是 Haruka 的简写。
+> 名字来自《明日方舟》角色 **遥**（Haruka）和她漂浮在空中的透明泡泡（Bubble）。Haru 是 Haruka 的简写。
 >
-> 胆小、总是害怕、常常会哭——但即便哭得一塌糊涂，还是在做着最勇敢的事情。她随身带着泡泡水，源石技艺只有以浮泡为表现形式时才能发挥最佳效果；那些漂浮在空中的泡泡，是她给所有人的庇护。
+> 她胆小、容易害怕，也常常会哭。可就算哭得一塌糊涂，她还是会站出来做那件勇敢的事。她随身带着泡泡水，源石技艺只有借由浮泡才能发挥到最好；那些漂在空中的泡泡，就是她给大家撑起的庇护。
 >
 > 「横竖都是死，我和你们拼了！」
 
 ## 下载与安装
 
-- 从 [GitHub Releases](https://github.com/Anselyuki/harubble/releases) 下载对应系统的发布文件。
-- 应用面向 macOS、Windows 和 Linux 提供桌面端体验。
-- Windows 发布版为依赖系统 WebView2 运行时的精简 `.exe`，不会额外提供安装型打包。
-- Linux 发布版为 AppImage 格式，自包含运行时，`chmod +x` 后直接运行；构建基于 Ubuntu 22.04，要求 glibc 2.35+。
-- 首次启动需要联网拉取专辑、歌词和音频资源。
+从 [GitHub Releases](https://github.com/Anselyuki/harubble/releases) 下载对应平台的发布文件。首次启动时，应用需要联网拉取专辑、歌词和音频资源。
+
+### macOS
+
+1. 根据设备芯片下载 `harubble_<version>_macos_intel.dmg` 或 `harubble_<version>_macos_apple_silicon.dmg`。
+2. 打开 DMG，把 `Harubble.app` 拖到 `Applications` 文件夹。
+3. 执行一次：
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Harubble.app
+   ```
+
+4. 从 `Applications` 启动 Harubble。
+
+> 当前 macOS 发布包没有做代码签名，也没有走 Apple notarization 流程，所以系统可能在首次打开时拦截它。Apple 官方对面向分发的 macOS 软件要求使用 Developer ID 签名，并通过 notarization；
+>
+> 相关说明见 [Notarizing macOS software before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) 和 [Distributing your app for beta testing and releases](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases)。
+>
+> 这条 `xattr` 命令只是移除下载隔离标记，不会给应用签名，只应对来自可信来源的软件执行。
+
+### Windows
+
+1. 下载 `harubble_<version>_windows_x64_portable_webview2.exe`。
+2. 双击 `.exe` 直接运行。当前 Windows 发布版是便携程序，不提供安装型打包。
+3. 程序依赖系统里的 Microsoft Edge WebView2 Runtime；如果无法启动，先安装或更新 WebView2 Runtime。
+
+### Linux
+
+1. 下载 `harubble_<version>_linux_x64.AppImage`。
+2. 给文件添加执行权限：
+
+   ```bash
+   chmod +x harubble_<version>_linux_x64.AppImage
+   ```
+
+3. 直接运行 AppImage。当前构建基于 Ubuntu 22.04，要求 glibc 2.35 或更高版本。
+
+> 当前 Linux 发布包还没有经过完整测试，使用中如果发现问题，欢迎到 [Issues](https://github.com/Anselyuki/harubble/issues) 提交反馈，也欢迎直接留下 bug report。
 
 ## 文档
 
-详见 [docs/README.md](./docs/README.md)，包含本地开发指南与完整文档索引。
+[docs/README.md](./docs/README.md) 包含本地开发指南和文档索引。
 
 ## 说明
 
-- 项目依赖塞壬唱片公开接口与公开资源；若上游接口或资源地址变化，应用也需要同步调整。
-- 本项目为桌面端体验整合与学习项目，与塞壬唱片或鹰角网络无官方隶属关系。
-- 如果你在使用中遇到问题或有改进建议，欢迎提交 [Issue](https://github.com/Anselyuki/harubble/issues) 或 Pull Request。
+- Harubble 使用塞壬唱片的公开接口与公开资源；如果上游接口或资源地址变化，应用可能需要同步更新。
+- 本项目是桌面端体验整合与学习项目，与塞壬唱片或鹰角网络没有官方关系。
+- 使用中遇到问题，或有改进建议，可以提交 [Issue](https://github.com/Anselyuki/harubble/issues) 或 Pull Request。
+- 也欢迎到 [Discussions](https://github.com/Anselyuki/harubble/discussions) 交流想法、提问或分享反馈。
 
 ## 许可证
 

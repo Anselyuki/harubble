@@ -1,6 +1,6 @@
 {
   "name": "harubble",
-  "version": "0.1.0",
+  "version": "2.2.0",
   "packageManager": "bun@1.3.13",
   "type": "module",
   "description": "Cross-platform lossless music player and downloader built with Rust + Tauri 2",

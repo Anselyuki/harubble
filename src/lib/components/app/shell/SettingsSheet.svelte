@@ -48,6 +48,7 @@
     themePresetId?: string;
     themeCustomColors?: Partial<ThemeColorSlots>;
     colorScheme?: ColorScheme;
+    dynamicAlbumAccent?: boolean;
     logRefreshToken?: number;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
@@ -65,6 +66,7 @@
     themePresetId = $bindable(DEFAULT_THEME_PRESET_ID),
     themeCustomColors = $bindable<Partial<ThemeColorSlots>>({}),
     colorScheme = $bindable<ColorScheme>('auto'),
+    dynamicAlbumAccent = $bindable<boolean>(true),
     logRefreshToken = 0,
     notifyInfo,
     notifyError,
@@ -131,6 +133,9 @@
       appearanceLight: m.settings_appearance_light(),
       appearanceDark: m.settings_appearance_dark(),
       appearanceSegmentAria: m.settings_appearance_segment_aria(),
+      dynamicAlbumLabel: m.settings_theme_dynamic_album_label(),
+      dynamicAlbumOn: m.settings_theme_dynamic_album_on(),
+      dynamicAlbumOff: m.settings_theme_dynamic_album_off(),
     };
   });
   const formatOptions = $derived.by(() => {
@@ -411,6 +416,7 @@
         />
         <ThemeSettingsSection
           bind:colorScheme
+          bind:dynamicAlbumAccent
           {themePresetId}
           {resolvedThemeColors}
           {themePresetOptions}
@@ -428,6 +434,9 @@
           appearanceLightLabel={labels.appearanceLight}
           appearanceDarkLabel={labels.appearanceDark}
           appearanceSegmentAria={labels.appearanceSegmentAria}
+          dynamicAlbumLabel={labels.dynamicAlbumLabel}
+          dynamicAlbumOnLabel={labels.dynamicAlbumOn}
+          dynamicAlbumOffLabel={labels.dynamicAlbumOff}
           onThemePresetChange={handleThemePresetChange}
           onThemeTextInput={handleThemeTextInput}
           onThemeColorInput={handleThemeColorInput}

@@ -2,9 +2,16 @@ import type {
   PlaybackContext,
   PlaybackQueueEntry,
   PlayerState,
+  PlaybackEndedEvent,
+  PlaybackFormatState,
 } from '$lib/types';
 import { parseLyricText } from './lyrics';
 import { buildPlaybackContext } from './queue';
+import {
+  shouldApplyPlaybackEnded,
+  shouldIgnorePlaybackError,
+  type PlaybackSnapshot,
+} from './playback-contract';
 import * as m from '$lib/paraglide/messages.js';
 
 interface PlayerControllerDeps {
@@ -17,11 +24,14 @@ interface PlayerControllerDeps {
   resumePlayback: () => Promise<void>;
   seekCurrentPlayback: (positionSecs: number) => Promise<void>;
   setPlaybackVolume: (volume: number) => Promise<number>;
+  getPlayerState: () => Promise<PlayerState>;
   getSongLyrics: (songCid: string) => Promise<string | null>;
+  recordSongHeat: (songCid: string, coverUrl: string | null) => void;
   notifyError: (message: string) => void;
 }
 
 type RepeatMode = 'all' | 'one';
+type PlayToggleTarget = 'playing' | 'paused';
 
 interface PlayerSong {
   cid: string;
@@ -42,6 +52,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let isPlaying = $state(false);
   let isPaused = $state(false);
   let isLoading = $state(false);
+  let pendingPlayToggleTarget = $state<PlayToggleTarget | null>(null);
   let hasPrevious = $state(false);
   let hasNext = $state(false);
   let progress = $state(0);
@@ -61,11 +72,15 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let playingCid = $state<string | null>(null);
   let volume = $state(1.0);
   let muted = $state(false);
+  let playbackFormat = $state<PlaybackFormatState | null>(null);
   let volumeBeforeMute = 1.0;
   let playbackEndRequestSeq = 0;
-  let lastPlaybackSnapshot = {
+  let playRequestSeq = 0;
+  let heatFiredSessionId = -1;
+  let lastPlaybackSnapshot: PlaybackSnapshot = {
     cid: null as string | null,
     active: false,
+    sessionId: 0,
   };
   let lyricRequestSeq = 0;
 
@@ -106,6 +121,12 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   function assignPlayerStateFields(state: PlayerState) {
+    if (state.sessionId >= lastPlaybackSnapshot.sessionId) {
+      lastPlaybackSnapshot = {
+        ...lastPlaybackSnapshot,
+        sessionId: state.sessionId,
+      };
+    }
     if (isPlaying !== state.isPlaying) isPlaying = state.isPlaying;
     if (isPaused !== state.isPaused) isPaused = state.isPaused;
     if (isLoading !== state.isLoading) isLoading = state.isLoading;
@@ -114,7 +135,25 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     if (progress !== state.progress) progress = state.progress;
     if (duration !== state.duration) duration = state.duration;
     if (Math.abs(volume - state.volume) > 0.001) volume = state.volume;
+    if (playbackFormat !== state.playbackFormat) {
+      playbackFormat = state.playbackFormat;
+    }
     if (state.volume > 0 && muted) muted = false;
+  }
+
+  function clearPlayTogglePendingWhenSettled(state: PlayerState) {
+    if (!pendingPlayToggleTarget) return;
+    if (state.isLoading) return;
+    if (!state.songCid || (!state.isPlaying && !state.isPaused)) {
+      pendingPlayToggleTarget = null;
+      return;
+    }
+    if (
+      (pendingPlayToggleTarget === 'playing' && state.isPlaying) ||
+      (pendingPlayToggleTarget === 'paused' && state.isPaused)
+    ) {
+      pendingPlayToggleTarget = null;
+    }
   }
 
   function buildSinglePlaybackEntry(song: PlayerSong): PlaybackQueueEntry {
@@ -236,6 +275,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       currentSong = nextSong;
     }
     assignPlayerStateFields(state);
+    clearPlayTogglePendingWhenSettled(state);
 
     if (!state.isLoading && playingCid !== null) {
       playingCid = null;
@@ -246,27 +286,25 @@ export function createPlayerController(deps: PlayerControllerDeps) {
 
   function syncPlayerProgress(state: PlayerState) {
     if (progress !== state.progress) progress = state.progress;
-    if (isPlaying !== state.isPlaying) isPlaying = state.isPlaying;
-    if (isPaused !== state.isPaused) isPaused = state.isPaused;
     if (duration !== state.duration) duration = state.duration;
+
+    // 播放进度达到 50% 时记录热度，每个播放会话只触发一次
+    if (
+      state.isPlaying &&
+      state.duration > 0 &&
+      state.progress / state.duration >= 0.5 &&
+      state.songCid &&
+      state.sessionId !== heatFiredSessionId
+    ) {
+      heatFiredSessionId = state.sessionId;
+      deps.recordSongHeat(state.songCid, state.coverUrl ?? null);
+    }
   }
 
   function syncPlaybackLifecycle() {
     const songCid = currentSong?.cid ?? null;
-    const isCurrentActive =
-      Boolean(songCid) && (isPlaying || isPaused || isLoading);
+    const isCurrentActive = Boolean(songCid) && (isPlaying || isPaused);
     const previousSnapshot = lastPlaybackSnapshot;
-
-    if (
-      previousSnapshot.cid &&
-      previousSnapshot.active &&
-      !isCurrentActive &&
-      songCid === previousSnapshot.cid &&
-      duration > 0 &&
-      progress >= Math.max(0, duration - 0.25)
-    ) {
-      void handlePlaybackEnded(previousSnapshot.cid);
-    }
 
     if (!songCid) {
       lyricRequestSeq += 1;
@@ -277,7 +315,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       lyricsOpen = false;
       playlistOpen = false;
       if (previousSnapshot.cid !== null || previousSnapshot.active) {
-        lastPlaybackSnapshot = { cid: null, active: false };
+        lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
       }
       return;
     }
@@ -289,10 +327,11 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       lastPlaybackSnapshot = {
         cid: songCid,
         active: isCurrentActive,
+        sessionId: previousSnapshot.sessionId,
       };
     }
 
-    if (songCid === lyricsSongCid) {
+    if (isLoading || songCid === lyricsSongCid) {
       return;
     }
 
@@ -312,7 +351,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
 
     if (!options.forceRestart) {
       if (currentSong?.cid === entry.cid && isPaused) {
-        await deps.resumePlayback();
+        await resume();
         return;
       }
 
@@ -326,10 +365,20 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     }
 
     playingCid = entry.cid;
+    const requestSeq = ++playRequestSeq;
     try {
       const context = buildPlaybackContext(playbackOrder, playbackIndex);
       await deps.playSong(entry.cid, entry.coverUrl ?? null, context ?? null);
+      if (requestSeq !== playRequestSeq) return;
+      try {
+        syncPlayerState(await deps.getPlayerState());
+      } catch {
+        // 后端事件仍会同步播放状态；这里仅用于避免首帧 UI 依赖事件到达。
+      }
     } catch (error) {
+      if (shouldIgnorePlaybackError(error, requestSeq, playRequestSeq)) {
+        return;
+      }
       playingCid = null;
       deps.notifyError(
         m.player_error_play_failed({
@@ -337,6 +386,25 @@ export function createPlayerController(deps: PlayerControllerDeps) {
         })
       );
     }
+  }
+
+  function syncPlaybackEnded(event: PlaybackEndedEvent) {
+    if (
+      !shouldApplyPlaybackEnded(
+        event,
+        currentSong?.cid ?? null,
+        lastPlaybackSnapshot
+      )
+    )
+      return;
+    lastPlaybackSnapshot = {
+      cid: event.songCid,
+      active: false,
+      sessionId: event.sessionId,
+    };
+    progress = event.progress;
+    duration = event.duration;
+    void handlePlaybackEnded(event.songCid);
   }
 
   function resolveWrappedQueueIndex(step: 1 | -1): number {
@@ -424,26 +492,46 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   async function pause() {
+    if (pendingPlayToggleTarget || isLoading) return;
+    pendingPlayToggleTarget = 'paused';
     try {
       await deps.pausePlayback();
     } catch (error) {
+      pendingPlayToggleTarget = null;
       deps.notifyError(
         m.player_error_pause_failed({
           error: error instanceof Error ? error.message : String(error),
         })
       );
+      return;
+    }
+
+    try {
+      syncPlayerState(await deps.getPlayerState());
+    } catch {
+      pendingPlayToggleTarget = null;
     }
   }
 
   async function resume() {
+    if (pendingPlayToggleTarget || isLoading) return;
+    pendingPlayToggleTarget = 'playing';
     try {
       await deps.resumePlayback();
     } catch (error) {
+      pendingPlayToggleTarget = null;
       deps.notifyError(
         m.player_error_resume_failed({
           error: error instanceof Error ? error.message : String(error),
         })
       );
+      return;
+    }
+
+    try {
+      syncPlayerState(await deps.getPlayerState());
+    } catch {
+      pendingPlayToggleTarget = null;
     }
   }
 
@@ -512,6 +600,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     isPlaying = false;
     isPaused = false;
     isLoading = false;
+    pendingPlayToggleTarget = null;
     hasPrevious = false;
     hasNext = false;
     progress = 0;
@@ -531,8 +620,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     playingCid = null;
     volume = 1.0;
     muted = false;
+    playbackFormat = null;
     volumeBeforeMute = 1.0;
-    lastPlaybackSnapshot = { cid: null, active: false };
+    lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
     lyricRequestSeq += 1;
     playbackEndRequestSeq += 1;
   }
@@ -549,6 +639,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     },
     get isLoading() {
       return isLoading;
+    },
+    get isPlayTogglePending() {
+      return pendingPlayToggleTarget !== null;
     },
     get hasPrevious() {
       return hasPrevious;
@@ -607,6 +700,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     get muted() {
       return muted;
     },
+    get playbackFormat() {
+      return playbackFormat;
+    },
     get hasLyrics() {
       return !lyricsLoading && lyricsLines.length > 0;
     },
@@ -626,6 +722,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     dispose,
     syncPlayerState,
     syncPlayerProgress,
+    syncPlaybackEnded,
     syncPlaybackLifecycle,
     playQueueEntry,
     toggleShuffle,

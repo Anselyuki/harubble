@@ -12,6 +12,8 @@ import type {
   SongDetail,
   ThemePalette,
   PlayerState,
+  PlaybackErrorPayload,
+  PlaybackStartResult,
   PlaybackContext,
   CreateDownloadJobRequest,
   DownloadJobSnapshot,
@@ -41,6 +43,74 @@ const CACHE_KEY_SONG_DETAIL = 'song_detail:';
 const CACHE_KEY_SONG_LYRICS = 'song_lyrics:';
 const CACHE_KEY_IMAGE_THEME = 'image_theme:';
 const CACHE_KEY_IMAGE_DATA_URL = 'image_data_url:';
+const IMAGE_RESOURCE_CONCURRENCY_LIMIT = 1;
+
+const inflightImageThemeRequests = new Map<string, Promise<ThemePalette>>();
+const inflightImageDataUrlRequests = new Map<string, Promise<string>>();
+const queuedImageResourceRequests: (() => void)[] = [];
+let activeImageResourceRequestCount = 0;
+
+export class PlaybackCommandError extends Error {
+  readonly code: PlaybackErrorPayload['code'];
+  readonly retryable: boolean;
+  readonly sessionId: number | null;
+
+  constructor(payload: PlaybackErrorPayload) {
+    super(payload.message);
+    this.name = 'PlaybackCommandError';
+    this.code = payload.code;
+    this.retryable = payload.retryable;
+    this.sessionId = payload.sessionId;
+  }
+}
+
+function isPlaybackErrorPayload(value: unknown): value is PlaybackErrorPayload {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<PlaybackErrorPayload>;
+  return (
+    typeof candidate.code === 'string' &&
+    typeof candidate.message === 'string' &&
+    typeof candidate.retryable === 'boolean'
+  );
+}
+
+async function invokePlayback<T>(
+  command: string,
+  args?: Record<string, unknown>
+): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    if (isPlaybackErrorPayload(error)) {
+      throw new PlaybackCommandError(error);
+    }
+    throw error;
+  }
+}
+
+function scheduleImageResourceRequest<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const run = () => {
+      activeImageResourceRequestCount += 1;
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeImageResourceRequestCount = Math.max(
+            activeImageResourceRequestCount - 1,
+            0
+          );
+          queuedImageResourceRequests.shift()?.();
+        });
+    };
+
+    if (activeImageResourceRequestCount < IMAGE_RESOURCE_CONCURRENCY_LIMIT) {
+      run();
+      return;
+    }
+
+    queuedImageResourceRequests.push(run);
+  });
+}
 
 export async function getAlbums(): Promise<Album[]> {
   return invoke('get_albums');
@@ -111,8 +181,8 @@ export async function playSong(
   songCid: string,
   coverUrl?: string,
   playbackContext?: PlaybackContext
-): Promise<number> {
-  return invoke('play_song', {
+): Promise<PlaybackStartResult> {
+  return invokePlayback('play_song', {
     songCid,
     coverUrl: coverUrl ?? null,
     playbackContext: playbackContext ?? null,
@@ -129,16 +199,16 @@ export async function resumePlayback(): Promise<void> {
 
 export async function seekCurrentPlayback(
   positionSecs: number
-): Promise<number> {
-  return invoke('seek_current_playback', { positionSecs });
+): Promise<PlaybackStartResult> {
+  return invokePlayback('seek_current_playback', { positionSecs });
 }
 
-export async function playNext(): Promise<number> {
-  return invoke('play_next');
+export async function playNext(): Promise<PlaybackStartResult> {
+  return invokePlayback('play_next');
 }
 
-export async function playPrevious(): Promise<number> {
-  return invoke('play_previous');
+export async function playPrevious(): Promise<PlaybackStartResult> {
+  return invokePlayback('play_previous');
 }
 
 export async function getPlayerState(): Promise<PlayerState> {
@@ -147,6 +217,10 @@ export async function getPlayerState(): Promise<PlayerState> {
 
 export async function setPlaybackVolume(volume: number): Promise<number> {
   return invoke('set_playback_volume', { volume });
+}
+
+export async function showMainWindow(): Promise<void> {
+  return invoke('show_main_window');
 }
 
 export async function getDefaultOutputDir(): Promise<string> {
@@ -178,26 +252,74 @@ export async function extractImageTheme(
   imageUrl: string
 ): Promise<ThemePalette> {
   const cacheKey = `${CACHE_KEY_IMAGE_THEME}${imageUrl}`;
-  const cached = await cacheManager.themes.get(cacheKey);
-  if (cached.found) {
-    return cached.data;
+  const inflight = inflightImageThemeRequests.get(cacheKey);
+  if (inflight) {
+    return inflight;
   }
 
-  const data = await invoke<ThemePalette>('extract_image_theme', { imageUrl });
-  await cacheManager.themes.set(cacheKey, data);
-  return data;
+  const request = (async () => {
+    const cached = await cacheManager.themes.get(cacheKey);
+    if (cached.found) {
+      return cached.data;
+    }
+
+    return scheduleImageResourceRequest(async () => {
+      const queuedCached = await cacheManager.themes.get(cacheKey);
+      if (queuedCached.found) {
+        return queuedCached.data;
+      }
+
+      const data = await invoke<ThemePalette>('extract_image_theme', {
+        imageUrl,
+      });
+      await cacheManager.themes.set(cacheKey, data);
+      return data;
+    });
+  })();
+  inflightImageThemeRequests.set(cacheKey, request);
+
+  try {
+    return await request;
+  } finally {
+    if (inflightImageThemeRequests.get(cacheKey) === request) {
+      inflightImageThemeRequests.delete(cacheKey);
+    }
+  }
 }
 
 export async function getImageDataUrl(imageUrl: string): Promise<string> {
   const cacheKey = `${CACHE_KEY_IMAGE_DATA_URL}${imageUrl}`;
-  const cached = await cacheManager.covers.get(cacheKey);
-  if (cached.found) {
-    return cached.data;
+  const inflight = inflightImageDataUrlRequests.get(cacheKey);
+  if (inflight) {
+    return inflight;
   }
 
-  const data = await invoke<string>('get_image_data_url', { imageUrl });
-  await cacheManager.covers.set(cacheKey, data);
-  return data;
+  const request = (async () => {
+    const cached = await cacheManager.covers.get(cacheKey);
+    if (cached.found) {
+      return cached.data;
+    }
+
+    return scheduleImageResourceRequest(async () => {
+      const queuedCached = await cacheManager.covers.get(cacheKey);
+      if (queuedCached.found) {
+        return queuedCached.data;
+      }
+
+      const data = await invoke<string>('get_image_data_url', { imageUrl });
+      await cacheManager.covers.set(cacheKey, data);
+      return data;
+    });
+  })();
+  inflightImageDataUrlRequests.set(cacheKey, request);
+
+  try {
+    return await request;
+  } finally {
+    if (inflightImageDataUrlRequests.get(cacheKey) === request) {
+      inflightImageDataUrlRequests.delete(cacheKey);
+    }
+  }
 }
 
 export async function createDownloadJob(
@@ -284,6 +406,13 @@ export async function getLatestAlbums(limit: number): Promise<Album[]> {
 
 export async function getAlbumsBySeriesGroup(): Promise<SeriesGroup[]> {
   return invoke<SeriesGroup[]>('get_albums_by_series');
+}
+
+export async function recordSongHeat(
+  songCid: string,
+  coverUrl: string | null
+): Promise<void> {
+  return invoke('record_song_heat', { songCid, coverUrl });
 }
 
 export async function getRecentHistory(limit: number): Promise<HistoryEntry[]> {

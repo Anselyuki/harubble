@@ -6,6 +6,12 @@ export function getSelectedAlbumCoverUrl(
   return album?.coverUrl ?? null;
 }
 
+export function getPreferredAlbumArtworkUrl(
+  album: AlbumDetail | null
+): string | null {
+  return album?.coverDeUrl ?? album?.coverUrl ?? null;
+}
+
 export function buildAlbumPlaybackEntries(
   album: AlbumDetail | null
 ): PlaybackQueueEntry[] {

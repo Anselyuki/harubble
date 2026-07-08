@@ -71,7 +71,11 @@
                   type="button"
                 >
                   <img
-                    use:imageDataSrc={album.coverUrl}
+                    use:imageDataSrc={{
+                      src: album.coverUrl,
+                      loading: 'lazy',
+                      rootMargin: '500px',
+                    }}
                     alt={album.name}
                     class="mini-cover"
                     loading="lazy"

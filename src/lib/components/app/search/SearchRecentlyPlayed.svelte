@@ -9,6 +9,7 @@
   interface Props {
     albums: Album[];
     loading: boolean;
+    loadingAlbumCid?: string | null;
     reducedMotion?: boolean;
     onSelectAlbum: (album: Album) => void;
   }
@@ -16,6 +17,7 @@
   let {
     albums,
     loading,
+    loadingAlbumCid = null,
     reducedMotion = false,
     onSelectAlbum,
   }: Props = $props();
@@ -67,6 +69,7 @@
           {album}
           layout="grid"
           selected={false}
+          loading={loadingAlbumCid === album.cid}
           {reducedMotion}
           onclick={() => onSelectAlbum(album)}
         />

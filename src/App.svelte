@@ -37,7 +37,6 @@
   let logoContainerEl: HTMLDivElement | null = $state(null);
   let logoSlabEl: HTMLElement | null = $state(null);
   let brandRegionEl: HTMLElement | null = $state(null);
-
   let contentCollapsed = $state(runtime.sidebarCollapsed);
   let contentInteractive = $state(!runtime.sidebarCollapsed);
   let layoutCollapsed = $state(runtime.sidebarCollapsed);
@@ -346,6 +345,7 @@
         bind:themePresetId={runtime.settingsState.themePresetId}
         bind:themeCustomColors={runtime.settingsState.themeCustomColors}
         bind:colorScheme={runtime.settingsState.colorScheme}
+        bind:dynamicAlbumAccent={runtime.settingsState.dynamicAlbumAccent}
         settingsLogRefreshToken={runtime.settingsState.settingsLogRefreshToken}
         notifyInfo={runtime.notifyInfo}
         notifyError={runtime.notifyError}

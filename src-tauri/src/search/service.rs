@@ -13,6 +13,7 @@ use harubble_core::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -163,9 +164,13 @@ impl LibrarySearchService {
             ));
         };
 
-        let (items, total) = active_index
-            .search(&sanitized)
-            .map_err(|error| error.to_string())?;
+        let sanitized_for_search = sanitized.clone();
+        let search_result =
+            tokio::task::spawn_blocking(move || active_index.search(&sanitized_for_search))
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
+        let (items, total) = search_result;
 
         Ok(SearchLibraryResponse {
             items,
@@ -183,6 +188,10 @@ impl LibrarySearchService {
 
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
+            state
+                .wait_for_background_io_gate("library_search_rebuild", Duration::from_millis(250))
+                .await;
+
             let generation = service.start_rebuild(&inventory).await;
             let snapshot_result = build_library_search_snapshot(
                 state.api.clone(),

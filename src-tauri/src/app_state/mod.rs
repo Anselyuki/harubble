@@ -3,22 +3,29 @@ mod playback;
 
 use crate::album_metadata_cache::AlbumMetadataCacheService;
 use crate::collection::CollectionService;
+use crate::command_scheduling::{self, CommandDomain};
 use crate::download_session::DownloadSessionStore;
 use crate::listening_history::ListeningHistoryService;
 use crate::local_inventory::LocalInventoryService;
 use crate::local_inventory_provenance::LocalInventoryProvenanceStore;
 use crate::logging::{LogCenter, LogLevel, LogPayload};
+use crate::playback_actor::{start_playback_actor, PlaybackActor};
+use crate::playback_load_gate::PlaybackLoadGate;
 use crate::player::stream::PlaybackInput;
 use crate::player::AudioPlayer;
+use crate::player::PlaybackError;
 use crate::preferences::{AppPreferences, PreferencesStore};
 use crate::search::LibrarySearchService;
 use crate::startup_recovery::prepare_local_database;
 use crate::tag_editor::TagEditorService;
 use crate::tag_registry::TagRegistryService;
 use harubble_core::{DownloadManagerSnapshot, DownloadService};
+use serde_json::json;
+use std::future::Future;
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 
 /// 应用运行期间共享的后端状态容器。
 ///
@@ -29,7 +36,16 @@ use tokio::sync::Mutex;
 pub struct AppState {
     pub(crate) player: Arc<AudioPlayer>,
     pub(crate) api: Arc<harubble_core::ApiClient>,
+    pub(crate) playback_api: Arc<harubble_core::ApiClient>,
+    pub(crate) image_api: Arc<harubble_core::ApiClient>,
+    pub(crate) download_api: Arc<harubble_core::ApiClient>,
+    pub(crate) playback_runtime: Arc<tokio::runtime::Runtime>,
+    pub(crate) playback_actor: PlaybackActor,
+    pub(crate) playback_load_gate: PlaybackLoadGate,
+    pub(crate) visual_aux_lock: Arc<Mutex<()>>,
     pub(crate) download_service: Arc<Mutex<DownloadService>>,
+    pub(crate) download_job_creation_lock: Arc<Mutex<()>>,
+    pub(crate) preferences_write_lock: Arc<Mutex<()>>,
     pub(crate) local_inventory_service: LocalInventoryService,
     pub(crate) local_inventory_provenance_store: Arc<LocalInventoryProvenanceStore>,
     pub(crate) download_session_store: Arc<DownloadSessionStore>,
@@ -46,6 +62,7 @@ pub struct AppState {
 
 struct PreparedPlaybackInput {
     input: PlaybackInput,
+    cache_path: std::path::PathBuf,
 }
 
 impl AppState {
@@ -58,6 +75,17 @@ impl AppState {
         let log_center = Arc::new(LogCenter::new(app.clone())?);
         let player = AudioPlayer::new(app.clone()).map_err(|e| e.to_string())?;
         let api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let playback_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let image_api = harubble_core::ApiClient::new_image().map_err(|e| e.to_string())?;
+        let download_api = harubble_core::ApiClient::new_download().map_err(|e| e.to_string())?;
+        let playback_runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("harubble-playback")
+            .worker_threads(2)
+            .max_blocking_threads(4)
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to initialize playback runtime: {e}"))?;
+        let (playback_actor, playback_actor_inbox) = PlaybackActor::new();
         crate::migration::migrate_legacy_data(&app.path().app_data_dir().unwrap_or_default());
         let app_data_dir = app
             .path()
@@ -98,7 +126,16 @@ impl AppState {
         let state = Self {
             player: Arc::new(player),
             api: Arc::new(api),
+            playback_api: Arc::new(playback_api),
+            image_api: Arc::new(image_api),
+            download_api: Arc::new(download_api),
+            playback_runtime: Arc::new(playback_runtime),
+            playback_actor,
+            playback_load_gate: PlaybackLoadGate::new(),
+            visual_aux_lock: Arc::new(Mutex::new(())),
             download_service,
+            download_job_creation_lock: Arc::new(Mutex::new(())),
+            preferences_write_lock: Arc::new(Mutex::new(())),
             local_inventory_service,
             local_inventory_provenance_store,
             download_session_store,
@@ -113,6 +150,7 @@ impl AppState {
             collection,
         };
         state.player.set_volume_silent(state.preferences().volume);
+        start_playback_actor(Arc::clone(&state.playback_runtime), playback_actor_inbox);
         if loaded_download_session.should_persist {
             state.persist_download_snapshot(&loaded_download_session.snapshot);
         }
@@ -175,11 +213,239 @@ impl AppState {
         self.preferences_store.clone()
     }
 
+    pub(crate) fn clear_api_response_caches(&self) {
+        self.api.clear_response_cache();
+        self.playback_api.clear_response_cache();
+        self.image_api.clear_response_cache();
+        self.download_api.clear_response_cache();
+    }
+
+    pub(crate) fn reset_http_clients(&self) -> Result<(), String> {
+        let results = [
+            ("app", self.api.reset_http_client()),
+            ("playback", self.playback_api.reset_http_client()),
+            ("image", self.image_api.reset_http_client()),
+            ("download", self.download_api.reset_http_client()),
+        ];
+        let errors = results
+            .into_iter()
+            .filter_map(|(domain, result)| {
+                result
+                    .err()
+                    .map(|error| format!("{domain} HTTP client reset failed: {error}"))
+            })
+            .collect::<Vec<_>>();
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
+    pub(crate) fn begin_playback_transition(&self, command_name: &'static str) -> u64 {
+        command_scheduling::debug_assert_command_domain(
+            command_name,
+            CommandDomain::PlaybackTransition,
+        );
+        let request_id = self.player.supersede_playback_request();
+        self.player.supersede_loading_session();
+        request_id
+    }
+
+    pub(crate) fn is_playback_load_gate_active(&self) -> bool {
+        self.playback_load_gate.is_active()
+    }
+
+    pub(crate) async fn wait_for_playback_load_gate(&self, settle_delay: Duration) {
+        self.playback_load_gate
+            .wait_until_inactive_with_settle(settle_delay)
+            .await;
+    }
+
+    pub(crate) async fn wait_for_background_io_gate(
+        &self,
+        command_name: &'static str,
+        settle_delay: Duration,
+    ) {
+        command_scheduling::debug_assert_command_domain(command_name, CommandDomain::BackgroundIo);
+        let was_active = self.is_playback_load_gate_active();
+        let started_at = Instant::now();
+        self.wait_for_playback_load_gate(settle_delay).await;
+        let resource_gate_wait_ms = started_at.elapsed().as_millis();
+        if was_active || resource_gate_wait_ms >= settle_delay.as_millis() {
+            record_background_io_gate_metrics(
+                Arc::clone(&self.log_center),
+                command_name,
+                resource_gate_wait_ms,
+            );
+        }
+    }
+
+    async fn enter_visual_aux(&self, command_name: &'static str) -> (MutexGuard<'_, ()>, u128) {
+        const VISUAL_AUX_PLAYBACK_SETTLE_DELAY: Duration = Duration::from_millis(350);
+
+        command_scheduling::debug_assert_command_domain(command_name, CommandDomain::VisualAux);
+
+        let mut resource_gate_wait_ms = 0_u128;
+        loop {
+            let gate_wait_started_at = Instant::now();
+            self.wait_for_playback_load_gate(VISUAL_AUX_PLAYBACK_SETTLE_DELAY)
+                .await;
+            resource_gate_wait_ms =
+                resource_gate_wait_ms.saturating_add(gate_wait_started_at.elapsed().as_millis());
+            let guard = self.visual_aux_lock.lock().await;
+            if !self.is_playback_load_gate_active() {
+                return (guard, resource_gate_wait_ms);
+            }
+        }
+    }
+
+    pub(crate) async fn dispatch_visual_aux<F, Fut, T>(
+        &self,
+        command_name: &'static str,
+        task: F,
+    ) -> T
+    where
+        F: FnOnce(Self) -> Fut,
+        Fut: Future<Output = T>,
+    {
+        let submitted_at = Instant::now();
+        let (visual_guard, resource_gate_wait_ms) = self.enter_visual_aux(command_name).await;
+        let queue_wait_ms = submitted_at.elapsed().as_millis();
+        let state = self.clone();
+        let log_center = Arc::clone(&self.log_center);
+        let started_at = Instant::now();
+        let result = task(state).await;
+        let run_ms = started_at.elapsed().as_millis();
+        drop(visual_guard);
+        record_visual_aux_metrics(
+            log_center,
+            command_name,
+            queue_wait_ms,
+            run_ms,
+            resource_gate_wait_ms,
+        );
+        result
+    }
+
+    pub(crate) async fn dispatch_playback_transition<F, Fut, T>(
+        &self,
+        command_name: &'static str,
+        task: F,
+    ) -> Result<T, PlaybackError>
+    where
+        F: FnOnce(Self, u64) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, PlaybackError>> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.playback_actor
+            .dispatch(self.clone(), command_name, task)
+            .await
+    }
+
+    pub(crate) fn spawn_playback_transition<F, Fut>(&self, command_name: &'static str, task: F)
+    where
+        F: FnOnce(Self, u64) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        if let Err(error) = self.playback_actor.spawn(self.clone(), command_name, task) {
+            self.log_center.record(
+                LogPayload::new(
+                    LogLevel::Error,
+                    "playback",
+                    "playback.transition_schedule_failed",
+                    "Failed to schedule playback transition",
+                )
+                .details(error.to_string()),
+            );
+        }
+    }
+
+    pub(crate) async fn dispatch_playback_side_effect<F, Fut, T>(
+        &self,
+        command_name: &'static str,
+        task: F,
+    ) -> T
+    where
+        F: FnOnce(Self) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        command_scheduling::debug_assert_command_domain(
+            command_name,
+            CommandDomain::PlaybackSideEffect,
+        );
+        let submitted_at = Instant::now();
+        let state = self.clone();
+        let log_center = Arc::clone(&self.log_center);
+        let started_at = Instant::now();
+        let queue_wait_ms = submitted_at.elapsed().as_millis();
+        let result = task(state).await;
+        let run_ms = started_at.elapsed().as_millis();
+        record_playback_side_effect_metrics(log_center, command_name, queue_wait_ms, run_ms);
+        result
+    }
+
+    pub(crate) async fn persist_preferences(&self, prefs: AppPreferences) -> Result<(), String> {
+        let _guard = self.preferences_write_lock.lock().await;
+        let locale = prefs.locale;
+        let store = self.preferences_store();
+        let prefs_to_save = prefs.clone();
+        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
+            .await
+            .map_err(|error| error.to_string())??;
+        self.set_preferences(prefs);
+        Ok(())
+    }
+
+    pub(crate) async fn update_preferences<F>(&self, update: F) -> Result<AppPreferences, String>
+    where
+        F: FnOnce(&mut AppPreferences),
+    {
+        let _guard = self.preferences_write_lock.lock().await;
+        let mut prefs = self.preferences();
+        update(&mut prefs);
+        let locale = prefs.locale;
+        let store = self.preferences_store();
+        let prefs_to_save = prefs.clone();
+        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
+            .await
+            .map_err(|error| error.to_string())??;
+        self.set_preferences(prefs.clone());
+        Ok(prefs)
+    }
+
     pub(crate) fn persist_download_snapshot(&self, snapshot: &DownloadManagerSnapshot) {
         if let Err(error) = self
             .download_session_store
             .save(snapshot, self.preferences().locale)
         {
+            self.log_center.record(
+                LogPayload::new(
+                    LogLevel::Error,
+                    "download-session",
+                    "download_session.write_failed",
+                    "Failed to persist download session",
+                )
+                .user_message(crate::i18n::tr(
+                    self.preferences().locale,
+                    "download-session-save-failed",
+                ))
+                .details(error),
+            );
+        }
+    }
+
+    pub(crate) async fn persist_download_snapshot_async(&self, snapshot: DownloadManagerSnapshot) {
+        let store = self.download_session_store.clone();
+        let locale = self.preferences().locale;
+        let result = tokio::task::spawn_blocking(move || store.save(&snapshot, locale))
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
+
+        if let Err(error) = result {
             self.log_center.record(
                 LogPayload::new(
                     LogLevel::Error,
@@ -212,8 +478,13 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
     let api = state.api.clone();
     let cache = state.album_metadata_cache.clone();
     let log_center = state.log_center.clone();
+    let state_for_gate = state.clone();
 
     tauri::async_runtime::spawn(async move {
+        state_for_gate
+            .wait_for_background_io_gate("belong_warmup", Duration::from_millis(250))
+            .await;
+
         let albums = match api.get_albums().await {
             Ok(albums) => albums,
             Err(e) => {
@@ -231,7 +502,13 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
         };
 
         let all_cids: Vec<String> = albums.iter().map(|a| a.cid.clone()).collect();
-        let missing = match cache.get_missing_album_cids(&all_cids) {
+        let missing = match {
+            let cache = cache.clone();
+            tokio::task::spawn_blocking(move || cache.get_missing_album_cids(&all_cids))
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result)
+        } {
             Ok(m) => m,
             Err(e) => {
                 log_center.record(
@@ -265,7 +542,14 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
                 let _permit = permit.acquire().await;
                 match api.get_album_detail(&cid).await {
                     Ok(detail) => {
-                        if let Err(e) = cache.upsert_belong(&cid, &detail.belong) {
+                        let cid_for_log = cid.clone();
+                        let belong = detail.belong;
+                        let upsert_result =
+                            tokio::task::spawn_blocking(move || cache.upsert_belong(&cid, &belong))
+                                .await
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result);
+                        if let Err(e) = upsert_result {
                             log_center.record(
                                 LogPayload::new(
                                     LogLevel::Warn,
@@ -273,7 +557,7 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
                                     "homepage.belong_warmup_upsert_failed",
                                     "belong 预热: 写入缓存失败",
                                 )
-                                .details(format!("{cid}: {e}")),
+                                .details(format!("{cid_for_log}: {e}")),
                             );
                         }
                     }
@@ -303,13 +587,17 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
 /// dev 模式下从本地项目文件加载 tag registry，release 模式下从远端拉取。
 #[cfg(debug_assertions)]
 async fn load_tag_registry_bytes(_state: &AppState) -> anyhow::Result<Vec<u8>> {
-    let path = std::path::Path::new(crate::tag_registry::DEV_LOCAL_PATH);
-    std::fs::read(path).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to read local tag registry at {}: {e}",
-            path.display()
-        )
+    let path = std::path::PathBuf::from(crate::tag_registry::DEV_LOCAL_PATH);
+    tokio::task::spawn_blocking(move || {
+        std::fs::read(&path).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to read local tag registry at {}: {e}",
+                path.display()
+            )
+        })
     })
+    .await
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?
 }
 
 #[cfg(not(debug_assertions))]
@@ -318,6 +606,81 @@ async fn load_tag_registry_bytes(state: &AppState) -> anyhow::Result<Vec<u8>> {
         .api
         .download_bytes(crate::tag_registry::REMOTE_URL, |_, _| {})
         .await
+}
+
+fn record_background_io_gate_metrics(
+    log_center: Arc<LogCenter>,
+    command_name: &'static str,
+    resource_gate_wait_ms: u128,
+) {
+    if let Some(spec) = command_scheduling::command_spec(command_name) {
+        log_center.record(
+            LogPayload::new(
+                LogLevel::Debug,
+                "playback",
+                "playback.background_gate_wait_completed",
+                "Background I/O waited for playback loading gate",
+            )
+            .context(json!({
+                "command.name": command_name,
+                "command.domain": spec.domain.as_label(),
+                "command.priority": spec.priority.as_label(),
+                "resource_gate.wait_ms": resource_gate_wait_ms,
+            })),
+        );
+    }
+}
+
+fn record_visual_aux_metrics(
+    log_center: Arc<LogCenter>,
+    command_name: &'static str,
+    queue_wait_ms: u128,
+    run_ms: u128,
+    resource_gate_wait_ms: u128,
+) {
+    if let Some(spec) = command_scheduling::command_spec(command_name) {
+        log_center.record(
+            LogPayload::new(
+                LogLevel::Debug,
+                "playback",
+                "playback.visual_aux_completed",
+                "Playback visual auxiliary command completed",
+            )
+            .context(json!({
+                "command.name": command_name,
+                "command.domain": spec.domain.as_label(),
+                "command.priority": spec.priority.as_label(),
+                "command.queue_wait_ms": queue_wait_ms,
+                "command.run_ms": run_ms,
+                "resource_gate.wait_ms": resource_gate_wait_ms,
+            })),
+        );
+    }
+}
+
+fn record_playback_side_effect_metrics(
+    log_center: Arc<LogCenter>,
+    command_name: &'static str,
+    queue_wait_ms: u128,
+    run_ms: u128,
+) {
+    if let Some(spec) = command_scheduling::command_spec(command_name) {
+        log_center.record(
+            LogPayload::new(
+                LogLevel::Debug,
+                "playback",
+                "playback.side_effect_completed",
+                "Playback side-effect command completed",
+            )
+            .context(json!({
+                "command.name": command_name,
+                "command.domain": spec.domain.as_label(),
+                "command.priority": spec.priority.as_label(),
+                "command.queue_wait_ms": queue_wait_ms,
+                "command.run_ms": run_ms,
+            })),
+        );
+    }
 }
 
 /// 启动 tag registry 远程同步后台任务。
@@ -329,6 +692,10 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
     let state = state.clone();
 
     tauri::async_runtime::spawn(async move {
+        state
+            .wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250))
+            .await;
+
         let updated = async {
             let response_bytes = load_tag_registry_bytes(&state).await?;
             let new_registry: crate::tag_registry::TagRegistry =
@@ -351,7 +718,25 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
                 }
             }
 
-            state.tag_registry.update(new_registry)?;
+            state.tag_registry.replace_in_memory(new_registry.clone());
+            let tag_registry = state.tag_registry.clone();
+            let persist_result =
+                tokio::task::spawn_blocking(move || tag_registry.persist_registry(&new_registry))
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))
+                    .and_then(|result| result);
+            if let Err(error) = persist_result {
+                state.log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "tag-registry",
+                        "tag_registry.persist_failed",
+                        "Failed to persist synced tag registry",
+                    )
+                    .details(error.to_string()),
+                );
+            }
+
             Ok::<bool, anyhow::Error>(true)
         }
         .await;

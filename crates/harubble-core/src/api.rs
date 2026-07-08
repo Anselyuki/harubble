@@ -5,10 +5,12 @@
 
 use crate::local_inventory::{AlbumDownloadBadge, TrackDownloadBadge};
 use anyhow::Result;
+use futures::future::{BoxFuture, FutureExt, Shared};
 use lru::LruCache;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -19,8 +21,65 @@ const DEFAULT_CACHE_CAPACITY: usize = 100;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const IMAGE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+const IMAGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const IMAGE_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
+const DOWNLOAD_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_JSON_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
 const MAX_AUDIO_RESPONSE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_IMAGE_RESPONSE_SIZE: u64 = 32 * 1024 * 1024;
+
+type SharedApiFetch = Shared<BoxFuture<'static, Result<Arc<Vec<u8>>, String>>>;
+
+struct InflightApiRequest {
+    fetch: SharedApiFetch,
+}
+
+struct InflightDownloadRequest {
+    fetch: SharedApiFetch,
+}
+
+enum CachedApiRequest {
+    Cached(Vec<u8>),
+    Inflight(Arc<InflightApiRequest>),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ApiClientProfile {
+    connect_timeout: Duration,
+    request_timeout: Duration,
+    pool_idle_timeout: Duration,
+    max_streamed_response_size: u64,
+}
+
+impl ApiClientProfile {
+    const fn app() -> Self {
+        Self {
+            connect_timeout: CONNECT_TIMEOUT,
+            request_timeout: REQUEST_TIMEOUT,
+            pool_idle_timeout: POOL_IDLE_TIMEOUT,
+            max_streamed_response_size: MAX_AUDIO_RESPONSE_SIZE,
+        }
+    }
+
+    const fn image() -> Self {
+        Self {
+            connect_timeout: IMAGE_CONNECT_TIMEOUT,
+            request_timeout: IMAGE_REQUEST_TIMEOUT,
+            pool_idle_timeout: IMAGE_POOL_IDLE_TIMEOUT,
+            max_streamed_response_size: MAX_IMAGE_RESPONSE_SIZE,
+        }
+    }
+
+    const fn download() -> Self {
+        Self {
+            connect_timeout: CONNECT_TIMEOUT,
+            request_timeout: REQUEST_TIMEOUT,
+            pool_idle_timeout: DOWNLOAD_POOL_IDLE_TIMEOUT,
+            max_streamed_response_size: MAX_AUDIO_RESPONSE_SIZE,
+        }
+    }
+}
 
 /// 专辑列表查询返回的基础条目。
 ///
@@ -164,8 +223,11 @@ struct ApiResponse<T> {
 #[derive(Clone)]
 pub struct ApiClient {
     client: Arc<RwLock<Client>>,
+    profile: ApiClientProfile,
     base_url: String,
     response_cache: Arc<Mutex<LruCache<String, Vec<u8>>>>,
+    inflight_api_requests: Arc<Mutex<HashMap<String, Arc<InflightApiRequest>>>>,
+    inflight_download_requests: Arc<Mutex<HashMap<String, Arc<InflightDownloadRequest>>>>,
 }
 
 impl ApiClient {
@@ -174,25 +236,58 @@ impl ApiClient {
     /// 适用于生产环境默认接入；返回值为可复用的客户端实例。若 HTTP 客户端构造
     /// 失败，会直接返回错误。
     pub fn new() -> Result<Self> {
-        Self::new_with_config(DEFAULT_BASE_URL.to_string(), DEFAULT_CACHE_CAPACITY)
+        Self::new_with_profile(
+            DEFAULT_BASE_URL.to_string(),
+            DEFAULT_CACHE_CAPACITY,
+            ApiClientProfile::app(),
+        )
     }
 
-    fn new_with_config(base_url: String, capacity: usize) -> Result<Self> {
-        let client = Self::build_client()?;
+    /// 创建视觉辅助资源客户端。
+    ///
+    /// 该客户端用于封面、主题色和歌词等低优先级小资源，使用更短超时和更小的下载大小上限。
+    pub fn new_image() -> Result<Self> {
+        Self::new_with_profile(
+            DEFAULT_BASE_URL.to_string(),
+            DEFAULT_CACHE_CAPACITY,
+            ApiClientProfile::image(),
+        )
+    }
+
+    /// 创建下载任务客户端。
+    ///
+    /// 该客户端用于下载任务准备、封面落盘、歌词侧车和音频大文件下载，独立于普通 UI 与播放客户端。
+    pub fn new_download() -> Result<Self> {
+        Self::new_with_profile(
+            DEFAULT_BASE_URL.to_string(),
+            DEFAULT_CACHE_CAPACITY,
+            ApiClientProfile::download(),
+        )
+    }
+
+    fn new_with_profile(
+        base_url: String,
+        capacity: usize,
+        profile: ApiClientProfile,
+    ) -> Result<Self> {
+        let client = Self::build_client(profile)?;
         let capacity = NonZeroUsize::new(capacity).expect("cache capacity must be non-zero");
         Ok(Self {
             client: Arc::new(RwLock::new(client)),
+            profile,
             base_url: base_url.trim_end_matches('/').to_string(),
             response_cache: Arc::new(Mutex::new(LruCache::new(capacity))),
+            inflight_api_requests: Arc::new(Mutex::new(HashMap::new())),
+            inflight_download_requests: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
-    fn build_client() -> Result<Client> {
+    fn build_client(profile: ApiClientProfile) -> Result<Client> {
         Ok(Client::builder()
             .user_agent("Mozilla/5.0 (compatible; harubble)")
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+            .connect_timeout(profile.connect_timeout)
+            .timeout(profile.request_timeout)
+            .pool_idle_timeout(profile.pool_idle_timeout)
             .build()?)
     }
 
@@ -209,9 +304,9 @@ impl ApiClient {
     /// 与代理配置。调用此方法会丢弃旧客户端并以当前系统环境重新构建，使后续请求
     /// 能够正确路由。若重建失败则保留原有客户端不变。
     pub fn reset_http_client(&self) -> Result<()> {
-        let new_client = Self::build_client()?;
+        let new_client = Self::build_client(self.profile)?;
         *self.client.write().unwrap_or_else(|e| e.into_inner()) = new_client;
-        self.clear_response_cache();
+        self.clear_completed_response_cache();
         Ok(())
     }
 
@@ -233,6 +328,115 @@ impl ApiClient {
     fn write_cached_bytes(&self, cache_key: String, bytes: &[u8]) {
         if let Ok(mut cache) = self.response_cache.lock() {
             cache.put(cache_key, bytes.to_vec());
+        }
+    }
+
+    fn clear_completed_response_cache(&self) {
+        if let Ok(mut cache) = self.response_cache.lock() {
+            cache.clear();
+        }
+    }
+
+    fn get_or_create_inflight_download_request(
+        &self,
+        cache_key: &str,
+        url: &str,
+    ) -> Arc<InflightDownloadRequest> {
+        let mut requests = self
+            .inflight_download_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if let Some(request) = requests.get(cache_key) {
+            return request.clone();
+        }
+
+        let client = ApiClient::clone(self);
+        let url = url.to_string();
+        let fetch = async move {
+            client
+                .fetch_streamed_bytes(&url, |_, _| {})
+                .await
+                .map(Arc::new)
+                .map_err(|e| e.to_string())
+        }
+        .boxed()
+        .shared();
+        let request = Arc::new(InflightDownloadRequest { fetch });
+        requests.insert(cache_key.to_string(), request.clone());
+        request
+    }
+
+    fn finish_inflight_download_request(
+        &self,
+        cache_key: &str,
+        request: &Arc<InflightDownloadRequest>,
+    ) {
+        let mut requests = self
+            .inflight_download_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if requests
+            .get(cache_key)
+            .is_some_and(|current| Arc::ptr_eq(current, request))
+        {
+            requests.remove(cache_key);
+        }
+    }
+
+    fn get_or_create_inflight_api_request(&self, cache_key: &str, path: &str) -> CachedApiRequest {
+        let mut requests = self
+            .inflight_api_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if let Some(request) = requests.get(cache_key) {
+            return CachedApiRequest::Inflight(request.clone());
+        }
+
+        if let Some(bytes) = self.read_cached_bytes(cache_key) {
+            return CachedApiRequest::Cached(bytes);
+        }
+
+        let client = ApiClient::clone(self);
+        let url = self.api_url(path);
+        let fetch = async move {
+            client
+                .fetch_response_bytes(&url, true)
+                .await
+                .map(Arc::new)
+                .map_err(|e| e.to_string())
+        }
+        .boxed()
+        .shared();
+        let request = Arc::new(InflightApiRequest { fetch });
+        requests.insert(cache_key.to_string(), request.clone());
+
+        CachedApiRequest::Inflight(request)
+    }
+
+    fn finish_inflight_api_request(
+        &self,
+        cache_key: &str,
+        request: &Arc<InflightApiRequest>,
+        bytes: Option<&[u8]>,
+    ) {
+        let mut requests = self
+            .inflight_api_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if requests
+            .get(cache_key)
+            .is_some_and(|current| Arc::ptr_eq(current, request))
+        {
+            if let Some(bytes) = bytes {
+                if let Ok(mut cache) = self.response_cache.lock() {
+                    cache.put(cache_key.to_string(), bytes.to_vec());
+                }
+            }
+            requests.remove(cache_key);
         }
     }
 
@@ -318,6 +522,7 @@ impl ApiClient {
         use futures::StreamExt;
 
         let mut last_error = None;
+        let max_response_size = self.profile.max_streamed_response_size;
 
         for attempt in 0..=max_retries {
             match self.http_client().get(url).send().await {
@@ -326,8 +531,8 @@ impl ApiClient {
                         let total = response.content_length();
                         if let Some(len) = total {
                             anyhow::ensure!(
-                                len <= MAX_AUDIO_RESPONSE_SIZE,
-                                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
+                                len <= max_response_size,
+                                "response too large: {len} bytes exceeds limit of {max_response_size}"
                             );
                         }
                         let mut stream = response.bytes_stream();
@@ -338,8 +543,8 @@ impl ApiClient {
                             let chunk = chunk?;
                             downloaded += chunk.len() as u64;
                             anyhow::ensure!(
-                                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
-                                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
+                                downloaded <= max_response_size,
+                                "download exceeded size limit of {max_response_size} bytes"
                             );
                             bytes.extend_from_slice(&chunk);
                             on_progress(downloaded, total);
@@ -383,9 +588,26 @@ impl ApiClient {
             return Self::decode_api_response(&bytes);
         }
 
-        let bytes = self.fetch_response_bytes(&self.api_url(path), true).await?;
-        let data = Self::decode_api_response(&bytes)?;
-        self.write_cached_bytes(cache_key, &bytes);
+        let request = match self.get_or_create_inflight_api_request(&cache_key, path) {
+            CachedApiRequest::Cached(bytes) => return Self::decode_api_response(&bytes),
+            CachedApiRequest::Inflight(request) => request,
+        };
+
+        let bytes = match request.fetch.clone().await {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                self.finish_inflight_api_request(&cache_key, &request, None);
+                return Err(anyhow::anyhow!(message));
+            }
+        };
+        let data = match Self::decode_api_response(bytes.as_slice()) {
+            Ok(data) => data,
+            Err(error) => {
+                self.finish_inflight_api_request(&cache_key, &request, None);
+                return Err(error);
+            }
+        };
+        self.finish_inflight_api_request(&cache_key, &request, Some(bytes.as_slice()));
         Ok(data)
     }
 
@@ -394,9 +616,13 @@ impl ApiClient {
     /// 适用于上游资源已更新、需要强制重新拉取，或测试场景下希望消除缓存影响时
     /// 调用。该操作只影响内存缓存，不会触发任何网络请求。
     pub fn clear_response_cache(&self) {
-        if let Ok(mut cache) = self.response_cache.lock() {
-            cache.clear();
+        if let Ok(mut requests) = self.inflight_api_requests.lock() {
+            requests.clear();
         }
+        if let Ok(mut requests) = self.inflight_download_requests.lock() {
+            requests.clear();
+        }
+        self.clear_completed_response_cache();
     }
 
     /// 获取专辑列表。
@@ -444,6 +670,7 @@ impl ApiClient {
 
         let mut last_error = None;
         let max_retries = 1;
+        let max_response_size = self.profile.max_streamed_response_size;
 
         for attempt in 0..=max_retries {
             match self.http_client().get(url).send().await {
@@ -452,8 +679,8 @@ impl ApiClient {
                         let total = resp.content_length();
                         if let Some(len) = total {
                             anyhow::ensure!(
-                                len <= MAX_AUDIO_RESPONSE_SIZE,
-                                "response too large: {len} bytes exceeds limit of {MAX_AUDIO_RESPONSE_SIZE}"
+                                len <= max_response_size,
+                                "response too large: {len} bytes exceeds limit of {max_response_size}"
                             );
                         }
                         let mut stream = resp.bytes_stream();
@@ -463,10 +690,79 @@ impl ApiClient {
                             let chunk = chunk?;
                             downloaded += chunk.len() as u64;
                             anyhow::ensure!(
-                                downloaded <= MAX_AUDIO_RESPONSE_SIZE,
-                                "download exceeded size limit of {MAX_AUDIO_RESPONSE_SIZE} bytes"
+                                downloaded <= max_response_size,
+                                "download exceeded size limit of {max_response_size} bytes"
                             );
                             if !on_chunk(&chunk, downloaded, total)? {
+                                break;
+                            }
+                        }
+
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        last_error = Some(e.into());
+                    }
+                },
+                Err(e) => {
+                    let is_connection_error = e.is_connect() || e.is_timeout();
+                    last_error = Some(e.into());
+
+                    if is_connection_error && attempt < max_retries {
+                        let _ = self.reset_http_client();
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(err) = last_error {
+                return Err(err);
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Request failed after retries")))
+    }
+
+    /// 以流式方式下载远端资源，并把每个分块以拥有所有权的 `Vec<u8>` 交给异步回调。
+    ///
+    /// 适用于回调本身还需要执行异步操作的场景，例如把下载分块交给异步文件写入任务。
+    /// 与 [`ApiClient::download_stream`] 一样，该方法会执行下载 URL 校验、大小限制与一次连接错误重试。
+    pub async fn download_stream_owned<F, Fut>(&self, url: &str, mut on_chunk: F) -> Result<()>
+    where
+        F: FnMut(Vec<u8>, u64, Option<u64>) -> Fut,
+        Fut: std::future::Future<Output = Result<bool>>,
+    {
+        use futures::StreamExt;
+
+        crate::url_validator::validate_download_url(url)?;
+
+        let mut last_error = None;
+        let max_retries = 1;
+        let max_response_size = self.profile.max_streamed_response_size;
+
+        for attempt in 0..=max_retries {
+            match self.http_client().get(url).send().await {
+                Ok(resp) => match resp.error_for_status() {
+                    Ok(resp) => {
+                        let total = resp.content_length();
+                        if let Some(len) = total {
+                            anyhow::ensure!(
+                                len <= max_response_size,
+                                "response too large: {len} bytes exceeds limit of {max_response_size}"
+                            );
+                        }
+                        let mut stream = resp.bytes_stream();
+                        let mut downloaded = 0_u64;
+
+                        while let Some(chunk) = stream.next().await {
+                            let chunk = chunk?;
+                            downloaded += chunk.len() as u64;
+                            anyhow::ensure!(
+                                downloaded <= max_response_size,
+                                "download exceeded size limit of {max_response_size} bytes"
+                            );
+                            if !on_chunk(chunk.to_vec(), downloaded, total).await? {
                                 break;
                             }
                         }
@@ -522,6 +818,32 @@ impl ApiClient {
         Ok(bytes)
     }
 
+    /// 下载完整字节内容，并让同一 URL 的并发调用共享同一个网络请求。
+    ///
+    /// 适用于封面、主题提取等没有逐块进度展示的展示资源，避免专辑切换时同一图片
+    /// 被多个界面增强任务重复下载。需要精确进度回调的下载任务应继续使用
+    /// [`ApiClient::download_bytes`]。
+    pub async fn download_bytes_coalesced(&self, url: &str) -> Result<Vec<u8>> {
+        crate::url_validator::validate_download_url(url)?;
+
+        let cache_key = Self::cache_key("GET", url);
+        if let Some(bytes) = self.read_cached_bytes(&cache_key) {
+            return Ok(bytes);
+        }
+
+        let request = self.get_or_create_inflight_download_request(&cache_key, url);
+        let bytes = match request.fetch.clone().await {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                self.finish_inflight_download_request(&cache_key, &request);
+                return Err(anyhow::anyhow!(message));
+            }
+        };
+        self.finish_inflight_download_request(&cache_key, &request);
+        self.write_cached_bytes(cache_key, &bytes);
+        Ok(bytes.as_ref().clone())
+    }
+
     /// 下载文本内容，并自动移除 UTF-8 BOM。
     ///
     /// 入参 `url` 为文本资源地址；返回值为按 UTF-8 宽松解码后的字符串内容。
@@ -539,12 +861,25 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::ApiClient;
+    use super::{ApiClient, ApiClientProfile};
     use httpmock::prelude::*;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     impl ApiClient {
         fn new_for_test(base_url: String, capacity: usize) -> anyhow::Result<Self> {
-            Self::new_with_config(base_url, capacity)
+            Self::new_with_profile(base_url, capacity, ApiClientProfile::app())
+        }
+
+        fn new_small_image_for_test(base_url: String, capacity: usize) -> anyhow::Result<Self> {
+            Self::new_with_profile(
+                base_url,
+                capacity,
+                ApiClientProfile {
+                    max_streamed_response_size: 8,
+                    ..ApiClientProfile::image()
+                },
+            )
         }
     }
 
@@ -576,6 +911,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn coalesces_concurrent_album_detail_requests_into_single_network_call() {
+        let server = MockServer::start();
+        let album_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/alpha/detail");
+            then.status(200)
+                .header("content-type", "application/json")
+                .delay(Duration::from_millis(100))
+                .body(album_detail_body("alpha", "Alpha"));
+        });
+
+        let client = Arc::new(
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client"),
+        );
+
+        let calls = (0..8)
+            .map(|_| {
+                let client = Arc::clone(&client);
+                tokio::spawn(async move { client.get_album_detail("alpha").await })
+            })
+            .collect::<Vec<_>>();
+
+        for call in calls {
+            let album = call.await.expect("task should complete").expect("api call");
+            assert_eq!(album.cid, "alpha");
+            assert_eq!(album.name, "Alpha");
+        }
+        album_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn reset_http_client_keeps_inflight_api_requests_coalesced() {
+        let server = MockServer::start();
+        let album_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/alpha/detail");
+            then.status(200)
+                .header("content-type", "application/json")
+                .delay(Duration::from_millis(100))
+                .body(album_detail_body("alpha", "Alpha"));
+        });
+
+        let client = Arc::new(
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client"),
+        );
+        let first_client = Arc::clone(&client);
+        let first = tokio::spawn(async move { first_client.get_album_detail("alpha").await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        client.reset_http_client().expect("reset should succeed");
+        let second = client.get_album_detail("alpha").await.expect("second call");
+        let first = first
+            .await
+            .expect("first task should complete")
+            .expect("first call");
+
+        assert_eq!(first.cid, "alpha");
+        assert_eq!(second.cid, "alpha");
+        album_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
     async fn does_not_cache_failed_upstream_response() {
         let server = MockServer::start();
         let failure_mock = server.mock(|when, then| {
@@ -587,6 +982,34 @@ mod tests {
             ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client");
 
         assert!(client.get_album_detail("beta").await.is_err());
+        assert!(client.get_album_detail("beta").await.is_err());
+        failure_mock.assert_hits(2);
+    }
+
+    #[tokio::test]
+    async fn coalesced_failed_requests_are_not_cached() {
+        let server = MockServer::start();
+        let failure_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/beta/detail");
+            then.status(500).delay(Duration::from_millis(100));
+        });
+
+        let client = Arc::new(
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client"),
+        );
+
+        let calls = (0..4)
+            .map(|_| {
+                let client = Arc::clone(&client);
+                tokio::spawn(async move { client.get_album_detail("beta").await })
+            })
+            .collect::<Vec<_>>();
+
+        for call in calls {
+            assert!(call.await.expect("task should complete").is_err());
+        }
+        failure_mock.assert_hits(1);
+
         assert!(client.get_album_detail("beta").await.is_err());
         failure_mock.assert_hits(2);
     }
@@ -619,6 +1042,59 @@ mod tests {
 
         alpha_mock.assert_hits(2);
         beta_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn image_client_rejects_oversized_downloads() {
+        let server = MockServer::start();
+        let image_mock = server.mock(|when, then| {
+            when.method(GET).path("/cover.jpg");
+            then.status(200)
+                .header("content-length", "9")
+                .body(vec![0_u8; 9]);
+        });
+        let url = format!("{}/cover.jpg", server.base_url());
+
+        let client = ApiClient::new_small_image_for_test(format!("{}/api", server.base_url()), 100)
+            .expect("client");
+
+        let error = client
+            .fetch_streamed_bytes(&url, |_, _| {})
+            .await
+            .expect_err("oversized image should fail");
+
+        assert!(
+            error.to_string().contains("response too large"),
+            "unexpected error: {error:#}"
+        );
+        image_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn reset_http_client_preserves_image_download_limit() {
+        let server = MockServer::start();
+        let image_mock = server.mock(|when, then| {
+            when.method(GET).path("/cover-after-reset.jpg");
+            then.status(200)
+                .header("content-length", "9")
+                .body(vec![0_u8; 9]);
+        });
+        let url = format!("{}/cover-after-reset.jpg", server.base_url());
+
+        let client = ApiClient::new_small_image_for_test(format!("{}/api", server.base_url()), 100)
+            .expect("client");
+        client.reset_http_client().expect("reset should succeed");
+
+        let error = client
+            .fetch_streamed_bytes(&url, |_, _| {})
+            .await
+            .expect_err("oversized image should still fail after reset");
+
+        assert!(
+            error.to_string().contains("response too large"),
+            "unexpected error: {error:#}"
+        );
+        image_mock.assert_hits(1);
     }
 
     #[tokio::test]

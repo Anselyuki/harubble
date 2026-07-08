@@ -221,6 +221,12 @@ jobs:
               .readFileSync(cargoPath, "utf8")
               .replace(/^version = ".*"$/m, `version = "${releaseVersion}"`)
             fs.writeFileSync(cargoPath, cargoToml)
+
+            const coreCargoPath = "crates/harubble-core/Cargo.toml"
+            const coreCargoToml = fs
+              .readFileSync(coreCargoPath, "utf8")
+              .replace(/^version = ".*"$/m, `version = "${releaseVersion}"`)
+            fs.writeFileSync(coreCargoPath, coreCargoToml)
           '
 
       - name: Install Linux system dependencies

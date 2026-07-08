@@ -3,13 +3,18 @@
 //! 该模块实现播放器主控制器、前后端共享的播放队列上下文，以及播放、暂停、跳转、
 //! 上下曲切换与系统媒体控制绑定等核心编排能力。
 
-use crate::player::backend::{create_backend, PlaybackBackend};
-use crate::player::events::{emit_progress, emit_progress_snapshot, emit_state};
+use crate::player::backend::{
+    create_backend, AudioCallbackMetrics, AudioMetricsHandler, OutputFormat, PlaybackBackend,
+};
+use crate::player::events::{
+    emit_ended, emit_progress, emit_progress_snapshot, emit_state, PlaybackEndedEvent,
+};
 use crate::player::media::MediaSession;
-use crate::player::state::PlayerState;
-use crate::player::stream::{AudioFormat, SampleBuffer};
+use crate::player::state::{PlaybackFormatState, PlayerState};
+use crate::player::stream::{AudioFormat, SampleBuffer, SampleWaitOutcome};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use souvlaki::MediaControlEvent;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,6 +28,7 @@ use tauri::{AppHandle, Manager};
 /// 如此高频更新。播放进度事件统一由独立的发射线程按该间隔节流广播，避免高频
 /// 全量状态序列化灌满 WebView 事件通道导致界面逐渐卡死。
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+const REBUFFER_TARGET_SECONDS: usize = 3;
 
 /// 前后端共享的播放队列条目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,27 +88,54 @@ impl PlaybackQueueState {
         self.current_index = Some(0);
     }
 
-    fn select_next(&mut self) -> Option<PlaybackQueueEntry> {
-        let next_index = self
-            .current_index
-            .and_then(|index| (index + 1 < self.entries.len()).then_some(index + 1))?;
-        self.current_index = Some(next_index);
-        self.entries.get(next_index).cloned()
+    fn peek_next(&self) -> Option<PlaybackQueueEntry> {
+        self.peek_next_with_index().map(|(_, entry)| entry)
     }
 
-    fn select_previous(&mut self) -> Option<PlaybackQueueEntry> {
-        let previous_index = self.current_index.and_then(|index| index.checked_sub(1))?;
-        self.current_index = Some(previous_index);
-        self.entries.get(previous_index).cloned()
+    fn peek_previous(&self) -> Option<PlaybackQueueEntry> {
+        self.peek_previous_with_index().map(|(_, entry)| entry)
+    }
+
+    fn peek_next_with_index(&self) -> Option<(usize, PlaybackQueueEntry)> {
+        if self.entries.len() <= 1 {
+            return None;
+        }
+        let next_index = self
+            .current_index
+            .map(|index| (index + 1) % self.entries.len())
+            .unwrap_or(0);
+        self.entries
+            .get(next_index)
+            .cloned()
+            .map(|entry| (next_index, entry))
+    }
+
+    fn peek_previous_with_index(&self) -> Option<(usize, PlaybackQueueEntry)> {
+        if self.entries.len() <= 1 {
+            return None;
+        }
+        let previous_index = self
+            .current_index
+            .map(|index| {
+                if index == 0 {
+                    self.entries.len() - 1
+                } else {
+                    index - 1
+                }
+            })
+            .unwrap_or(0);
+        self.entries
+            .get(previous_index)
+            .cloned()
+            .map(|entry| (previous_index, entry))
     }
 
     fn has_previous(&self) -> bool {
-        self.current_index.is_some_and(|index| index > 0)
+        self.current_index.is_some() && self.entries.len() > 1
     }
 
     fn has_next(&self) -> bool {
-        self.current_index
-            .is_some_and(|index| index + 1 < self.entries.len())
+        self.current_index.is_some() && self.entries.len() > 1
     }
 }
 
@@ -116,10 +149,12 @@ pub struct AudioPlayer {
     backend: Mutex<Box<dyn PlaybackBackend>>,
     media_session: Arc<Mutex<Option<MediaSession>>>,
     queue: Arc<Mutex<PlaybackQueueState>>,
-    volume: Arc<Mutex<f64>>,
+    volume: Arc<AtomicU64>,
     active_session_id: Arc<AtomicU64>,
-    stop_flag: Arc<AtomicBool>,
-    pause_flag: Arc<AtomicBool>,
+    active_request_id: AtomicU64,
+    rebuffering: AtomicBool,
+    stop_flag: Mutex<Arc<AtomicBool>>,
+    pause_flag: Mutex<Arc<AtomicBool>>,
 }
 
 impl AudioPlayer {
@@ -135,10 +170,12 @@ impl AudioPlayer {
             backend: Mutex::new(backend),
             media_session: Arc::new(Mutex::new(None)),
             queue: Arc::new(Mutex::new(PlaybackQueueState::default())),
-            volume: Arc::new(Mutex::new(1.0)),
+            volume: Arc::new(AtomicU64::new(1.0_f64.to_bits())),
             active_session_id: Arc::new(AtomicU64::new(0)),
-            stop_flag: Arc::new(AtomicBool::new(false)),
-            pause_flag: Arc::new(AtomicBool::new(false)),
+            active_request_id: AtomicU64::new(0),
+            rebuffering: AtomicBool::new(false),
+            stop_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
+            pause_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
         })
     }
 
@@ -181,24 +218,14 @@ impl AudioPlayer {
         self.sync_navigation_flags();
     }
 
-    /// 选择下一首队列条目并更新导航标志。
-    pub fn select_next_entry(&self) -> Option<PlaybackQueueEntry> {
-        let next = {
-            let mut queue = self.queue.lock().unwrap();
-            queue.select_next()
-        };
-        self.sync_navigation_flags();
-        next
+    /// 读取下一首队列条目但不移动队列游标。
+    pub fn peek_next_entry(&self) -> Option<PlaybackQueueEntry> {
+        self.queue.lock().unwrap().peek_next()
     }
 
-    /// 选择上一首队列条目并更新导航标志。
-    pub fn select_previous_entry(&self) -> Option<PlaybackQueueEntry> {
-        let previous = {
-            let mut queue = self.queue.lock().unwrap();
-            queue.select_previous()
-        };
-        self.sync_navigation_flags();
-        previous
+    /// 读取上一首队列条目但不移动队列游标。
+    pub fn peek_previous_entry(&self) -> Option<PlaybackQueueEntry> {
+        self.queue.lock().unwrap().peek_previous()
     }
 
     /// 初始化新的加载会话并替换当前播放状态。
@@ -218,15 +245,15 @@ impl AudioPlayer {
         self.stop_active_backend()?;
 
         let session_id = self.active_session_id.fetch_add(1, Ordering::SeqCst) + 1;
-        self.stop_flag.store(false, Ordering::SeqCst);
-        self.pause_flag.store(false, Ordering::SeqCst);
+        self.install_session_flags();
         let initial_progress = initial_progress.max(0.0);
         let initial_duration = initial_duration.unwrap_or(0.0).max(initial_progress);
 
         let (has_previous, has_next) = self.queue_navigation_flags();
-        let volume = *self.volume.lock().unwrap();
+        let volume = atomic_volume_load(&self.volume);
         {
             let mut state = self.state.lock().unwrap();
+            state.session_id = session_id;
             state.song_cid = Some(song_cid);
             state.song_name = Some(song_name);
             state.artists = artists;
@@ -237,6 +264,7 @@ impl AudioPlayer {
             state.progress = initial_progress;
             state.duration = initial_duration;
             state.volume = volume;
+            state.playback_format = None;
             state.has_previous = has_previous;
             state.has_next = has_next;
         }
@@ -249,11 +277,38 @@ impl AudioPlayer {
     ///
     /// 传入的 `source_format` 通常来自解码器探测结果，返回值表示当前音频设备或
     /// 后端实现可稳定消费的实际输出格式。
-    pub fn negotiate_output_format(&self, source_format: AudioFormat) -> Result<AudioFormat> {
+    pub fn negotiate_output_format(&self, source_format: AudioFormat) -> Result<OutputFormat> {
         self.backend
             .lock()
             .unwrap()
             .negotiate_output_format(source_format)
+    }
+
+    /// 更新当前会话的输入与输出音频格式摘要。
+    pub fn set_playback_format(
+        &self,
+        session_id: u64,
+        source_format: AudioFormat,
+        output_format: &OutputFormat,
+    ) {
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.session_id != session_id {
+                return;
+            }
+            state.playback_format = Some(PlaybackFormatState {
+                source_sample_rate: source_format.sample_rate,
+                source_channels: source_format.channels,
+                source_bits_per_sample: source_format.bits_per_sample,
+                output_sample_rate: output_format.audio_format.sample_rate,
+                output_channels: output_format.audio_format.channels,
+                output_bits_per_sample: output_format.audio_format.bits_per_sample,
+                output_sample_format: output_format.sample_format.as_str().to_string(),
+                resampling: source_format.sample_rate != output_format.audio_format.sample_rate,
+                channel_remix: source_format.channels != output_format.audio_format.channels,
+            });
+        }
+        emit_state_and_sync(&self.app, &self.state, &self.media_session);
     }
 
     /// 启动当前会话的流式播放并返回最终时长。
@@ -263,7 +318,7 @@ impl AudioPlayer {
     pub fn start_stream_playback(
         &self,
         session_id: u64,
-        format: AudioFormat,
+        format: OutputFormat,
         samples: SampleBuffer,
         initial_progress: f64,
     ) -> Result<f64> {
@@ -271,16 +326,17 @@ impl AudioPlayer {
             anyhow::bail!("Playback session expired");
         }
 
-        self.pause_flag.store(false, Ordering::SeqCst);
-        let initial_progress = if format.duration_secs > 0.0 {
-            initial_progress.clamp(0.0, format.duration_secs)
+        self.pause_signal().store(false, Ordering::SeqCst);
+        let audio_format = format.audio_format;
+        let initial_progress = if audio_format.duration_secs > 0.0 {
+            initial_progress.clamp(0.0, audio_format.duration_secs)
         } else {
             initial_progress.max(0.0)
         };
 
         let did_update_timing = {
             let mut state = self.state.lock().unwrap();
-            let next_duration = format.duration_secs.max(initial_progress);
+            let next_duration = audio_format.duration_secs.max(initial_progress);
             let mut did_update = false;
 
             if (state.progress - initial_progress).abs() > 0.001 {
@@ -301,6 +357,9 @@ impl AudioPlayer {
         let progress_callback = self.build_progress_callback(session_id, initial_progress);
         let finish_callback = self.build_finish_callback(session_id);
         let error_handler = self.build_error_callback(session_id);
+        let metrics_handler = self.build_audio_metrics_callback(session_id);
+        let underrun_handler =
+            self.build_audio_underrun_callback(session_id, samples.clone(), audio_format);
 
         self.backend
             .lock()
@@ -308,13 +367,20 @@ impl AudioPlayer {
             .play_stream(
                 format,
                 samples,
-                Arc::clone(&self.stop_flag),
+                self.stop_signal(),
                 Arc::clone(&self.volume),
                 progress_callback,
                 finish_callback,
                 error_handler,
+                metrics_handler,
+                underrun_handler,
             )
             .context("Failed to start audio backend")?;
+
+        if !self.is_session_active(session_id) {
+            let _ = self.backend.lock().unwrap().stop();
+            anyhow::bail!("Playback session expired");
+        }
 
         {
             let mut state = self.state.lock().unwrap();
@@ -322,8 +388,8 @@ impl AudioPlayer {
             state.is_playing = true;
             state.is_paused = false;
             state.progress = initial_progress;
-            if format.duration_secs > 0.0 {
-                state.duration = format.duration_secs;
+            if audio_format.duration_secs > 0.0 {
+                state.duration = audio_format.duration_secs;
             }
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
@@ -337,31 +403,13 @@ impl AudioPlayer {
         session_id: u64,
         initial_progress: f64,
     ) -> Arc<dyn Fn(f64, f64) + Send + Sync> {
-        let state_for_progress = Arc::clone(&self.state);
-        let active_session = Arc::clone(&self.active_session_id);
-        let stop_flag = Arc::clone(&self.stop_flag);
-
-        // 该回调运行在音频实时输出线程上，按驱动缓冲帧率高频触发，因此只做最廉价的
-        // 状态写入：更新进度与时长。事件广播与系统媒体会话同步交由独立的节流发射
-        // 线程处理（见 `spawn_progress_emitter`），避免在实时音频线程上执行 IPC /
-        // 平台调用或高频全量序列化。
-        Arc::new(move |progress, duration| {
-            if active_session.load(Ordering::SeqCst) != session_id
-                || stop_flag.load(Ordering::SeqCst)
-            {
-                return;
-            }
-            let mut state = state_for_progress.lock().unwrap();
-            let absolute_progress = if duration > 0.0 {
-                (initial_progress + progress).min(duration)
-            } else {
-                initial_progress + progress
-            };
-            state.progress = absolute_progress;
-            if duration > 0.0 {
-                state.duration = duration.max(initial_progress);
-            }
-        })
+        build_progress_callback(
+            Arc::clone(&self.state),
+            Arc::clone(&self.active_session_id),
+            self.stop_signal(),
+            session_id,
+            initial_progress,
+        )
     }
 
     /// 启动当前会话的进度发射线程。
@@ -374,7 +422,7 @@ impl AudioPlayer {
         let app = self.app.clone();
         let media_session = Arc::clone(&self.media_session);
         let active_session = Arc::clone(&self.active_session_id);
-        let stop_flag = Arc::clone(&self.stop_flag);
+        let stop_flag = self.stop_signal();
 
         let spawn_result = thread::Builder::new()
             .name("player-progress-emitter".into())
@@ -409,37 +457,213 @@ impl AudioPlayer {
     }
 
     fn build_finish_callback(&self, session_id: u64) -> Arc<dyn Fn() + Send + Sync> {
-        let state_for_finish = Arc::clone(&self.state);
         let app_for_finish = self.app.clone();
-        let media_for_finish = Arc::clone(&self.media_session);
-        let active_session = Arc::clone(&self.active_session_id);
-        let stop_flag = Arc::clone(&self.stop_flag);
-        let pause_flag = Arc::clone(&self.pause_flag);
 
         Arc::new(move || {
-            if active_session.load(Ordering::SeqCst) != session_id
-                || stop_flag.load(Ordering::SeqCst)
-            {
+            if let Some(state) = app_for_finish.try_state::<crate::app_state::AppState>() {
+                state.player.finish_session(session_id);
+            }
+        })
+    }
+
+    fn build_audio_metrics_callback(&self, session_id: u64) -> AudioMetricsHandler {
+        let active_session = Arc::clone(&self.active_session_id);
+        let app_for_metrics = self.app.clone();
+
+        Arc::new(move |metrics: AudioCallbackMetrics| {
+            if active_session.load(Ordering::SeqCst) != session_id {
                 return;
             }
-            pause_flag.store(false, Ordering::SeqCst);
-            {
-                let mut state = state_for_finish.lock().unwrap();
+            if let Some(state) = app_for_metrics.try_state::<crate::app_state::AppState>() {
+                state.log_center.record(
+                    crate::logging::LogPayload::new(
+                        crate::logging::LogLevel::Debug,
+                        "player",
+                        "audio.callback_metrics",
+                        "Audio callback metrics",
+                    )
+                    .context(json!({
+                        "command.domain": "RealtimeAudio",
+                        "command.priority": "Realtime",
+                        "playback.session_id": session_id,
+                        "audio.callback_silence_due_to_lock": metrics.silence_due_to_lock,
+                        "audio.callback_underrun_frames": metrics.underrun_frames,
+                    })),
+                );
+            }
+        })
+    }
+
+    fn build_audio_underrun_callback(
+        &self,
+        session_id: u64,
+        sample_buffer: SampleBuffer,
+        audio_format: AudioFormat,
+    ) -> crate::player::backend::AudioUnderrunHandler {
+        let active_session = Arc::clone(&self.active_session_id);
+        let app_for_underrun = self.app.clone();
+
+        Arc::new(move || {
+            if active_session.load(Ordering::SeqCst) != session_id {
+                return;
+            }
+            if let Some(state) = app_for_underrun.try_state::<crate::app_state::AppState>() {
+                state
+                    .player
+                    .start_rebuffering(session_id, sample_buffer.clone(), audio_format);
+            }
+        })
+    }
+
+    fn start_rebuffering(
+        &self,
+        session_id: u64,
+        sample_buffer: SampleBuffer,
+        audio_format: AudioFormat,
+    ) {
+        if !self.is_session_active(session_id) {
+            return;
+        }
+        if self
+            .rebuffering
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+
+        let Some(app_state) = self.app.try_state::<crate::app_state::AppState>() else {
+            self.rebuffering.store(false, Ordering::SeqCst);
+            return;
+        };
+
+        let should_rebuffer = {
+            let mut state = self.state.lock().unwrap();
+            if state.session_id != session_id || !state.is_playing || state.is_loading {
+                false
+            } else {
                 state.is_playing = false;
                 state.is_paused = false;
-                state.is_loading = false;
-                if state.duration <= 0.0 {
-                    state.duration = state.progress;
-                }
-                state.progress = state.duration;
+                state.is_loading = true;
+                true
             }
-            emit_state_and_sync(&app_for_finish, &state_for_finish, &media_for_finish);
-        })
+        };
+
+        if !should_rebuffer {
+            self.rebuffering.store(false, Ordering::SeqCst);
+            return;
+        }
+
+        if let Err(error) = self.backend.lock().unwrap().pause() {
+            {
+                let mut state = self.state.lock().unwrap();
+                if state.session_id == session_id && state.is_loading {
+                    state.is_loading = false;
+                    state.is_playing = true;
+                    state.is_paused = false;
+                }
+            }
+            self.rebuffering.store(false, Ordering::SeqCst);
+            app_state.log_center.record(
+                crate::logging::LogPayload::new(
+                    crate::logging::LogLevel::Warn,
+                    "player",
+                    "player.rebuffer_pause_failed",
+                    "Failed to pause output stream for rebuffering",
+                )
+                .details(format!("{error:#}")),
+            );
+            emit_state_and_sync(&self.app, &self.state, &self.media_session);
+            return;
+        }
+        emit_state_and_sync(&self.app, &self.state, &self.media_session);
+
+        let player = Arc::clone(&app_state.player);
+        let playback_runtime = Arc::clone(&app_state.playback_runtime);
+        let log_center = Arc::clone(&app_state.log_center);
+        let stop_flag = self.stop_signal();
+        let target_samples = rebuffer_target_samples(audio_format);
+
+        playback_runtime.clone().spawn(async move {
+            let wait_buffer = sample_buffer.clone();
+            let wait_stop = Arc::clone(&stop_flag);
+            let wait_result = playback_runtime
+                .handle()
+                .spawn_blocking(move || {
+                    wait_buffer.wait_for_samples_or_end(target_samples, &wait_stop)
+                })
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))
+                .and_then(|result| result);
+
+            if stop_flag.load(Ordering::SeqCst) || !player.is_session_active(session_id) {
+                player.rebuffering.store(false, Ordering::SeqCst);
+                return;
+            }
+
+            match wait_result {
+                Ok(SampleWaitOutcome::Ready) => {}
+                Ok(SampleWaitOutcome::Ended) => {
+                    player.rebuffering.store(false, Ordering::SeqCst);
+                    player.finish_session(session_id);
+                    return;
+                }
+                Err(error) => {
+                    player.rebuffering.store(false, Ordering::SeqCst);
+                    log_center.record(
+                        crate::logging::LogPayload::new(
+                            crate::logging::LogLevel::Warn,
+                            "player",
+                            "player.rebuffer_wait_failed",
+                            "Failed while waiting for playback buffer to recover",
+                        )
+                        .details(format!("{error:#}")),
+                    );
+                    player.fail_session(session_id);
+                    return;
+                }
+            }
+
+            let should_resume = {
+                let state = player.state.lock().unwrap();
+                state.session_id == session_id && state.is_loading && !state.is_paused
+            };
+            if !should_resume {
+                player.rebuffering.store(false, Ordering::SeqCst);
+                return;
+            }
+
+            if let Err(error) = player.backend.lock().unwrap().resume() {
+                player.rebuffering.store(false, Ordering::SeqCst);
+                log_center.record(
+                    crate::logging::LogPayload::new(
+                        crate::logging::LogLevel::Error,
+                        "player",
+                        "player.rebuffer_resume_failed",
+                        "Failed to resume output stream after rebuffering",
+                    )
+                    .details(format!("{error:#}")),
+                );
+                player.fail_session(session_id);
+                return;
+            }
+
+            {
+                let mut state = player.state.lock().unwrap();
+                if state.session_id == session_id && state.is_loading {
+                    state.is_loading = false;
+                    state.is_playing = true;
+                    state.is_paused = false;
+                }
+            }
+            emit_state_and_sync(&player.app, &player.state, &player.media_session);
+            player.rebuffering.store(false, Ordering::SeqCst);
+        });
     }
 
     fn build_error_callback(&self, session_id: u64) -> Arc<dyn Fn(String) + Send + Sync> {
         let active_session = Arc::clone(&self.active_session_id);
-        let stop_flag = Arc::clone(&self.stop_flag);
+        let stop_flag = self.stop_signal();
         let app_for_error = self.app.clone();
 
         Arc::new(move |message: String| {
@@ -449,15 +673,29 @@ impl AudioPlayer {
                 return;
             }
             if let Some(state) = app_for_error.try_state::<crate::app_state::AppState>() {
-                state.log_center.record(
-                    crate::logging::LogPayload::new(
-                        crate::logging::LogLevel::Error,
-                        "player",
-                        "player.output_stream_failed",
-                        "Audio output stream failed",
-                    )
-                    .details(message),
-                );
+                let log_center = Arc::clone(&state.log_center);
+                let player = Arc::clone(&state.player);
+                let playback_runtime = Arc::clone(&state.playback_runtime);
+                let message_for_log = message.clone();
+                let active_session_for_error = Arc::clone(&active_session);
+                let stop_flag_for_error = Arc::clone(&stop_flag);
+                playback_runtime.spawn(async move {
+                    if stop_flag_for_error.load(Ordering::SeqCst)
+                        || active_session_for_error.load(Ordering::SeqCst) != session_id
+                    {
+                        return;
+                    }
+                    log_center.record(
+                        crate::logging::LogPayload::new(
+                            crate::logging::LogLevel::Error,
+                            "player",
+                            "player.output_stream_failed",
+                            "Audio output stream failed",
+                        )
+                        .details(message_for_log),
+                    );
+                    player.fail_session(session_id);
+                });
             }
         })
     }
@@ -466,6 +704,24 @@ impl AudioPlayer {
     ///
     /// 仅当播放器处于非加载中的播放态时才会真正调用后端暂停；否则直接返回成功。
     pub fn pause(&self) -> Result<()> {
+        if self.rebuffering.load(Ordering::SeqCst) {
+            let did_pause_rebuffer = {
+                let mut state = self.state.lock().unwrap();
+                if state.is_loading && state.song_cid.is_some() {
+                    state.is_loading = false;
+                    state.is_playing = false;
+                    state.is_paused = true;
+                    true
+                } else {
+                    false
+                }
+            };
+            if did_pause_rebuffer {
+                emit_state_and_sync(&self.app, &self.state, &self.media_session);
+            }
+            return Ok(());
+        }
+
         let should_pause = {
             let state = self.state.lock().unwrap();
             state.is_playing && !state.is_loading
@@ -479,7 +735,7 @@ impl AudioPlayer {
             .unwrap()
             .pause()
             .context("Failed to pause audio backend")?;
-        self.pause_flag.store(true, Ordering::SeqCst);
+        self.pause_signal().store(true, Ordering::SeqCst);
 
         {
             let mut state = self.state.lock().unwrap();
@@ -494,6 +750,24 @@ impl AudioPlayer {
     ///
     /// 仅当播放器仍保留歌曲上下文且状态为已暂停时才会真正调用后端恢复；否则直接返回成功。
     pub fn resume(&self) -> Result<()> {
+        if self.rebuffering.load(Ordering::SeqCst) {
+            let did_request_rebuffer_resume = {
+                let mut state = self.state.lock().unwrap();
+                if state.is_paused && state.song_cid.is_some() {
+                    state.is_loading = true;
+                    state.is_playing = false;
+                    state.is_paused = false;
+                    true
+                } else {
+                    false
+                }
+            };
+            if did_request_rebuffer_resume {
+                emit_state_and_sync(&self.app, &self.state, &self.media_session);
+            }
+            return Ok(());
+        }
+
         let should_resume = {
             let state = self.state.lock().unwrap();
             state.is_paused && state.song_cid.is_some()
@@ -507,7 +781,7 @@ impl AudioPlayer {
             .unwrap()
             .resume()
             .context("Failed to resume audio backend")?;
-        self.pause_flag.store(false, Ordering::SeqCst);
+        self.pause_signal().store(false, Ordering::SeqCst);
 
         {
             let mut state = self.state.lock().unwrap();
@@ -540,31 +814,76 @@ impl AudioPlayer {
             return;
         }
 
-        self.stop_flag.store(true, Ordering::SeqCst);
-        self.pause_flag.store(false, Ordering::SeqCst);
+        self.stop_signal().store(true, Ordering::SeqCst);
+        self.pause_signal().store(false, Ordering::SeqCst);
+        self.rebuffering.store(false, Ordering::SeqCst);
         self.active_session_id.fetch_add(1, Ordering::SeqCst);
         let _ = self.backend.lock().unwrap().stop();
 
         {
             let mut state = self.state.lock().unwrap();
             *state = PlayerState::default();
-            state.volume = *self.volume.lock().unwrap();
+            state.session_id = self.active_session_id.load(Ordering::SeqCst);
+            state.volume = atomic_volume_load(&self.volume);
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
+    }
+
+    /// 将指定会话标记为自然结束并释放当前输出流。
+    ///
+    /// 对外快照保留刚结束的 `session_id`，便于前端用 `player-ended` 匹配自动续播；
+    /// 内部活跃会话会立即推进，使进度线程、输出错误和迟到回调都被视为过期。
+    pub fn finish_session(&self, session_id: u64) {
+        let next_session_id = session_id.saturating_add(1);
+        if !claim_finished_session(&self.active_session_id, session_id, next_session_id) {
+            return;
+        }
+
+        self.stop_signal().store(true, Ordering::SeqCst);
+        self.pause_signal().store(false, Ordering::SeqCst);
+        self.rebuffering.store(false, Ordering::SeqCst);
+
+        let ended_event = {
+            let mut state = self.state.lock().unwrap();
+            if state.session_id != session_id {
+                None
+            } else {
+                state.is_playing = false;
+                state.is_paused = false;
+                state.is_loading = false;
+                if state.duration <= 0.0 {
+                    state.duration = state.progress;
+                }
+                state.progress = state.duration;
+                state.song_cid.clone().map(|song_cid| PlaybackEndedEvent {
+                    session_id,
+                    song_cid,
+                    progress: state.progress,
+                    duration: state.duration,
+                })
+            }
+        };
+
+        let _ = self.backend.lock().unwrap().stop();
+
+        if let Some(event) = ended_event {
+            emit_state_and_sync(&self.app, &self.state, &self.media_session);
+            emit_ended(&self.app, event);
+        }
     }
 
     /// 返回当前播放会话共享的停止信号。
     ///
     /// 后台下载、解码或输出线程可通过该标志感知会话是否已被停止。
     pub fn stop_signal(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.stop_flag)
+        Arc::clone(&self.stop_flag.lock().unwrap())
     }
 
     /// 返回当前播放会话共享的暂停信号。
     ///
     /// 后台解码线程可通过该标志在不销毁会话的前提下暂时挂起处理。
     pub fn pause_signal(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.pause_flag)
+        Arc::clone(&self.pause_flag.lock().unwrap())
     }
 
     /// 判断给定会话是否仍为当前活跃播放会话。
@@ -572,7 +891,35 @@ impl AudioPlayer {
     /// 当会话 ID 不匹配或已收到停止信号时返回 `false`。
     pub fn is_session_active(&self, session_id: u64) -> bool {
         self.active_session_id.load(Ordering::SeqCst) == session_id
-            && !self.stop_flag.load(Ordering::SeqCst)
+            && !self.stop_signal().load(Ordering::SeqCst)
+    }
+
+    /// 判断播放请求是否仍为最新请求。
+    pub fn is_playback_request_active(&self, request_id: u64) -> bool {
+        self.active_request_id.load(Ordering::SeqCst) == request_id
+    }
+
+    /// 让当前播放启动请求立即失效。
+    ///
+    /// 该方法不会停止已经进入播放中的会话，只用于调度层在提交新 play/seek/next/previous
+    /// transition 前让旧的异步启动任务尽快返回 `Superseded`。
+    pub fn supersede_playback_request(&self) -> u64 {
+        self.active_request_id.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// 如果当前会话仍处于加载阶段，则立即让它失效。
+    ///
+    /// 已经进入 `Playing` 的会话不会被提前打断；新的 transition 会在完成准备并调用
+    /// `begin_loading_session` 时按正常路径切换输出。
+    pub fn supersede_loading_session(&self) {
+        if !self.get_state().is_loading {
+            return;
+        }
+
+        self.stop_signal().store(true, Ordering::SeqCst);
+        self.pause_signal().store(false, Ordering::SeqCst);
+        self.active_session_id.fetch_add(1, Ordering::SeqCst);
+        let _ = self.backend.lock().unwrap().stop();
     }
 
     /// 停止当前播放并将播放器状态重置为默认值。
@@ -584,17 +931,25 @@ impl AudioPlayer {
         {
             let mut state = self.state.lock().unwrap();
             *state = PlayerState::default();
-            state.volume = *self.volume.lock().unwrap();
+            state.session_id = self.active_session_id.load(Ordering::SeqCst);
+            state.volume = atomic_volume_load(&self.volume);
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
         Ok(())
     }
 
     fn stop_active_backend(&self) -> Result<()> {
-        self.stop_flag.store(true, Ordering::SeqCst);
-        self.pause_flag.store(false, Ordering::SeqCst);
+        self.stop_signal().store(true, Ordering::SeqCst);
+        self.pause_signal().store(false, Ordering::SeqCst);
+        self.rebuffering.store(false, Ordering::SeqCst);
         self.active_session_id.fetch_add(1, Ordering::SeqCst);
         self.backend.lock().unwrap().stop()
+    }
+
+    fn install_session_flags(&self) {
+        self.rebuffering.store(false, Ordering::SeqCst);
+        *self.stop_flag.lock().unwrap() = Arc::new(AtomicBool::new(false));
+        *self.pause_flag.lock().unwrap() = Arc::new(AtomicBool::new(false));
     }
 
     /// 返回当前播放器状态快照。
@@ -606,8 +961,8 @@ impl AudioPlayer {
     ///
     /// 输入音量会被限制在 `0.0..=1.0` 范围内，同时同步更新对外状态与媒体会话。
     pub fn set_volume(&self, volume: f64) -> f64 {
-        let safe_volume = volume.clamp(0.0, 1.0);
-        *self.volume.lock().unwrap() = safe_volume;
+        let safe_volume = normalize_volume(volume);
+        atomic_volume_store(&self.volume, safe_volume);
 
         {
             let mut state = self.state.lock().unwrap();
@@ -622,8 +977,8 @@ impl AudioPlayer {
     ///
     /// 仅用于应用启动阶段从偏好恢复音量，此时 Tauri 状态尚未注册，无法发送事件。
     pub fn set_volume_silent(&self, volume: f64) {
-        let safe_volume = volume.clamp(0.0, 1.0);
-        *self.volume.lock().unwrap() = safe_volume;
+        let safe_volume = normalize_volume(volume);
+        atomic_volume_store(&self.volume, safe_volume);
         self.state.lock().unwrap().volume = safe_volume;
     }
 
@@ -687,5 +1042,198 @@ fn sync_media_session_snapshot(
 ) {
     if let Some(session) = media_session.lock().unwrap().as_ref() {
         session.sync_state(snapshot, progress_only);
+    }
+}
+
+fn build_progress_callback(
+    state_for_progress: Arc<Mutex<PlayerState>>,
+    active_session: Arc<AtomicU64>,
+    stop_flag: Arc<AtomicBool>,
+    session_id: u64,
+    initial_progress: f64,
+) -> Arc<dyn Fn(f64, f64) + Send + Sync> {
+    // 该回调运行在音频实时输出线程上，按驱动缓冲帧率高频触发，因此只做最廉价的
+    // 非阻塞状态写入。事件广播与系统媒体会话同步交由独立的节流发射线程处理
+    // （见 `spawn_progress_emitter`），避免在实时音频线程上执行 IPC / 平台调用或等待共享锁。
+    Arc::new(move |progress, duration| {
+        if active_session.load(Ordering::SeqCst) != session_id || stop_flag.load(Ordering::SeqCst) {
+            return;
+        }
+        let Ok(mut state) = state_for_progress.try_lock() else {
+            return;
+        };
+        let absolute_progress = if duration > 0.0 {
+            (initial_progress + progress).min(duration)
+        } else {
+            initial_progress + progress
+        };
+        state.progress = absolute_progress;
+        if duration > 0.0 {
+            state.duration = duration.max(initial_progress);
+        }
+    })
+}
+
+fn rebuffer_target_samples(audio_format: AudioFormat) -> usize {
+    let sample_rate = audio_format.sample_rate.max(1) as usize;
+    let channels = audio_format.channels.max(1) as usize;
+    let target = sample_rate * channels * REBUFFER_TARGET_SECONDS;
+    let minimum = channels * 4096;
+    let maximum = SampleBuffer::max_capacity_samples() / 2;
+
+    target.max(minimum).min(maximum)
+}
+
+fn atomic_volume_load(volume: &AtomicU64) -> f64 {
+    normalize_volume(f64::from_bits(volume.load(Ordering::SeqCst)))
+}
+
+fn atomic_volume_store(volume: &AtomicU64, value: f64) {
+    volume.store(normalize_volume(value).to_bits(), Ordering::SeqCst);
+}
+
+fn normalize_volume(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn claim_finished_session(
+    active_session_id: &AtomicU64,
+    session_id: u64,
+    next_session_id: u64,
+) -> bool {
+    active_session_id
+        .compare_exchange(
+            session_id,
+            next_session_id,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
+        .is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_progress_callback, claim_finished_session, normalize_volume, rebuffer_target_samples,
+        PlaybackQueueEntry, PlaybackQueueState,
+    };
+    use crate::player::stream::{AudioFormat, SampleBuffer};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    fn entry(cid: &str) -> PlaybackQueueEntry {
+        PlaybackQueueEntry {
+            cid: cid.to_string(),
+            name: cid.to_string(),
+            artists: Vec::new(),
+            cover_url: None,
+        }
+    }
+
+    #[test]
+    fn queue_navigation_peeks_across_boundaries_without_moving_cursor() {
+        let queue = PlaybackQueueState {
+            entries: vec![entry("a"), entry("b")],
+            current_index: Some(1),
+        };
+
+        assert_eq!(queue.peek_next().map(|entry| entry.cid), Some("a".into()));
+        assert_eq!(
+            queue.peek_previous().map(|entry| entry.cid),
+            Some("a".into())
+        );
+        assert_eq!(queue.current_index, Some(1));
+    }
+
+    #[test]
+    fn single_entry_queue_has_no_navigation_targets() {
+        let queue = PlaybackQueueState {
+            entries: vec![entry("a")],
+            current_index: Some(0),
+        };
+
+        assert!(!queue.has_next());
+        assert!(!queue.has_previous());
+        assert!(queue.peek_next().is_none());
+        assert!(queue.peek_previous().is_none());
+    }
+
+    #[test]
+    fn normalize_volume_handles_out_of_range_and_non_finite_values() {
+        assert_eq!(normalize_volume(-1.0), 0.0);
+        assert_eq!(normalize_volume(0.4), 0.4);
+        assert_eq!(normalize_volume(2.0), 1.0);
+        assert_eq!(normalize_volume(f64::NAN), 0.0);
+        assert_eq!(normalize_volume(f64::INFINITY), 0.0);
+    }
+
+    #[test]
+    fn finished_session_can_only_be_claimed_once() {
+        let active_session_id = AtomicU64::new(7);
+
+        assert!(claim_finished_session(&active_session_id, 7, 8));
+        assert!(!claim_finished_session(&active_session_id, 7, 8));
+        assert_eq!(active_session_id.load(Ordering::SeqCst), 8);
+    }
+
+    #[test]
+    fn superseding_request_invalidates_older_request_ids() {
+        let active_request_id = AtomicU64::new(0);
+
+        let first = active_request_id.fetch_add(1, Ordering::SeqCst) + 1;
+        let superseding = active_request_id.fetch_add(1, Ordering::SeqCst) + 1;
+
+        assert_eq!(first, 1);
+        assert_eq!(superseding, 2);
+        assert_ne!(active_request_id.load(Ordering::SeqCst), first);
+        assert_eq!(active_request_id.load(Ordering::SeqCst), superseding);
+    }
+
+    #[test]
+    fn rebuffer_target_samples_uses_three_seconds_with_capacity_cap() {
+        let stereo_48k = AudioFormat {
+            channels: 2,
+            sample_rate: 48_000,
+            duration_secs: 60.0,
+            bits_per_sample: None,
+        };
+        assert_eq!(rebuffer_target_samples(stereo_48k), 288_000);
+
+        let high_rate = AudioFormat {
+            channels: 2,
+            sample_rate: 768_000,
+            duration_secs: 60.0,
+            bits_per_sample: None,
+        };
+        assert_eq!(
+            rebuffer_target_samples(high_rate),
+            SampleBuffer::max_capacity_samples() / 2
+        );
+    }
+
+    #[test]
+    fn progress_callback_skips_update_when_state_lock_is_busy() {
+        let state = Arc::new(Mutex::new(crate::player::state::PlayerState::default()));
+        let active_session = Arc::new(AtomicU64::new(1));
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let callback =
+            build_progress_callback(Arc::clone(&state), active_session, stop_flag, 1, 0.0);
+
+        {
+            let _guard = state.lock().unwrap();
+            callback(12.0, 120.0);
+        }
+
+        assert_eq!(state.lock().unwrap().progress, 0.0);
+
+        callback(12.0, 120.0);
+
+        let snapshot = state.lock().unwrap();
+        assert_eq!(snapshot.progress, 12.0);
+        assert_eq!(snapshot.duration, 120.0);
     }
 }

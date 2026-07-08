@@ -30,6 +30,7 @@
         searchController: runtime.searchController,
         handleSelectAlbum: runtime.handleSelectAlbum,
         prefersReducedMotion: runtime.prefersReducedMotion,
+        loadingAlbumCid: runtime.loadingAlbumCid,
       }}
     />
   {:else if runtime.currentView === 'tagEditor'}
@@ -63,6 +64,7 @@
     <AlbumOverview
       albums={runtime.albums}
       selectedAlbumCid={runtime.selectedAlbumCid}
+      loadingAlbumCid={runtime.loadingAlbumCid}
       reducedMotion={runtime.prefersReducedMotion}
       searchQuery={runtime.librarySearchQuery}
       searchLoading={runtime.librarySearchLoading}

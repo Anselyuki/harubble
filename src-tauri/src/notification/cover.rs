@@ -71,7 +71,7 @@ fn cleanup_cache(dir: &std::path::Path) {
 
 pub async fn download_to_temp(app: &AppHandle, cover_url: &str) -> Option<PathBuf> {
     let temp_dir = temp_dir();
-    std::fs::create_dir_all(&temp_dir).ok()?;
+    tokio::fs::create_dir_all(&temp_dir).await.ok()?;
 
     let cleanup_dir = temp_dir.clone();
     tauri::async_runtime::spawn(async move {
@@ -81,16 +81,16 @@ pub async fn download_to_temp(app: &AppHandle, cover_url: &str) -> Option<PathBu
     let url_hash = format!("{:x}", md5::compute(cover_url.as_bytes()));
     let temp_path = temp_dir.join(format!("{}.{}", url_hash, file_extension(cover_url)));
 
-    if temp_path.exists() {
+    if tokio::fs::try_exists(&temp_path).await.ok()? {
         return Some(temp_path);
     }
 
     let api = {
         let state = app.state::<AppState>();
-        state.api.clone()
+        state.image_api.clone()
     };
 
     let bytes = api.download_bytes(cover_url, |_, _| {}).await.ok()?;
-    std::fs::write(&temp_path, &bytes).ok()?;
+    tokio::fs::write(&temp_path, &bytes).await.ok()?;
     Some(temp_path)
 }

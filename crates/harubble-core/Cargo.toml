@@ -1,6 +1,6 @@
 [package]
 name = "harubble_core"
-version = "0.1.0"
+version = "2.2.0"
 edition = "2021"
 description = "Shared core library for Harubble"
 license = "MIT"
@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 anyhow = "1"
 flacenc = "0.5"
+fs2 = "0.4"
 futures = "0.3"
 hound = "3"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }

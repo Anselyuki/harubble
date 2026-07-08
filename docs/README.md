@@ -58,9 +58,9 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 前端架构、组件约定、域边界、运行时架构、UI 系统（设计 token、字体方案、动效规则）、国际化、交互模式与内容规范。
 
-#### [ui-album-overview-redesign.md](./reference/ui-album-overview-redesign.md) `已实现`
+#### [token-inventory.md](./reference/token-inventory.md)
 
-Sidebar 精简与 Album Overview 页改版方案。涵盖移除 `AlbumSidebarSection`、新增 `overview` AppView、卡片网格布局、搜索结果迁移到主内容区、Collections 作为播放列表语义入口的完整设计与实现指引。方案核心已落地，文档保留为设计背景记录（实现偏差见文首「as-built」小节），as-built 真相以 frontend-guide.md 为准。
+CSS token 盘点清单。列出 `:root` / `:root.light` / `:root.dark` 中所有 CSS 变量的迁移归属、运行时写入分析与 shadcn token 引用方向，作为主题系统迁移的可执行依据。
 
 #### [resource-update.md](./reference/resource-update.md)
 
@@ -69,6 +69,14 @@ Sidebar 精简与 Album Overview 页改版方案。涵盖移除 `AlbumSidebarSec
 #### [internationalization.md](./reference/internationalization.md)
 
 国际化架构决策、支持语言、品牌标识规范与翻译层技术选型。
+
+#### [playback-state-machine.md](./reference/playback-state-machine.md)
+
+播放控制面、音频数据面、输出面与前端同步面的状态机设计。包含状态/事件/守卫条件、音频安全不变量、错误恢复策略和播放链路验证清单。
+
+#### [playback-command-scheduling.md](./reference/playback-command-scheduling.md)
+
+播放资源隔离与 command 调度当前实现。包含 command domain/priority 划分、PlaybackActor、资源域、PlaybackLoadGate、降级策略、外部音乐播放器架构参考和验证指标。
 
 ### process/ — 项目规定
 

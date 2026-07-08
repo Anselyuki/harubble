@@ -38,6 +38,7 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 异步任务并抢占下载服务锁，会造成任务队列与锁竞争堆积。进度事件统一经此间隔
 /// 节流；状态切换与传输完成帧始终放行，保证阶段变化与最终进度能及时反映到前端。
 const DOWNLOAD_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(150);
+const PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL: Duration = Duration::from_millis(250);
 
 /// 包装下载进度回调，按 [`DOWNLOAD_PROGRESS_EMIT_INTERVAL`] 节流转发。
 ///
@@ -130,10 +131,12 @@ struct StartedJob {
 /// 关键状态迁移时持续发出 Tauri 事件。
 async fn execution_loop(app: &AppHandle, state: AppState) {
     let service = Arc::clone(&state.download_service);
-    let api = Arc::clone(&state.api);
+    let api = Arc::clone(&state.download_api);
 
     loop {
         tokio::time::sleep(Duration::from_millis(500)).await;
+
+        wait_for_playback_startup_to_settle(&state).await;
 
         let Some(started_job) = start_job(app, &service).await else {
             continue;
@@ -142,6 +145,8 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
         let mut pending_write: Option<tokio::sync::oneshot::Receiver<WriteResult>> = None;
 
         loop {
+            wait_for_playback_startup_to_settle(&state).await;
+
             let task = {
                 let mut svc = service.lock().await;
                 svc.pop_next_task(&started_job.job_id)
@@ -151,9 +156,11 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
                 break;
             };
 
-            state.persist_download_snapshot(&service.lock().await.manager_snapshot());
-            emit_download_job_updated(app, &preparing_snapshot);
             let manager_snapshot = service.lock().await.manager_snapshot();
+            state
+                .persist_download_snapshot_async(manager_snapshot.clone())
+                .await;
+            emit_download_job_updated(app, &preparing_snapshot);
             emit_download_manager_state_changed(app, &manager_snapshot);
 
             let task_id = task.id.clone();
@@ -213,7 +220,9 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
 
                     if let Some(update) = update {
                         let manager_snapshot = service.lock().await.manager_snapshot();
-                        state.persist_download_snapshot(&manager_snapshot);
+                        state
+                            .persist_download_snapshot_async(manager_snapshot.clone())
+                            .await;
                         emit_download_job_updated(app, &update.snapshot);
                         emit_download_manager_state_changed(app, &manager_snapshot);
                     }
@@ -228,6 +237,21 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+async fn wait_for_playback_startup_to_settle(state: &AppState) {
+    loop {
+        state
+            .wait_for_background_io_gate(
+                "download_execution_loop",
+                PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL,
+            )
+            .await;
+        if !state.player.get_state().is_loading {
+            return;
+        }
+        tokio::time::sleep(PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL).await;
+    }
+}
+
 async fn start_job(
     app: &AppHandle,
     service: &Arc<tokio::sync::Mutex<harubble_core::DownloadService>>,
@@ -239,7 +263,9 @@ async fn start_job(
 
     let manager_snapshot = service.lock().await.manager_snapshot();
     if let Some(state) = app.try_state::<AppState>() {
-        state.persist_download_snapshot(&manager_snapshot);
+        state
+            .persist_download_snapshot_async(manager_snapshot.clone())
+            .await;
     }
     emit_download_job_updated(app, &job_snapshot);
     emit_download_manager_state_changed(app, &manager_snapshot);
@@ -276,7 +302,9 @@ async fn start_job(
                                 if update.should_persist {
                                     let manager_snapshot = service.lock().await.manager_snapshot();
                                     if let Some(state) = app.try_state::<AppState>() {
-                                        state.persist_download_snapshot(&manager_snapshot);
+                                        state
+                                            .persist_download_snapshot_async(manager_snapshot)
+                                            .await;
                                     }
                                 }
                                 emit_download_job_updated(&app, &update.snapshot);
@@ -388,7 +416,9 @@ async fn run_download_phase(
                     if update.should_persist {
                         let manager_snapshot = service.lock().await.manager_snapshot();
                         if let Some(app_state) = app.try_state::<AppState>() {
-                            app_state.persist_download_snapshot(&manager_snapshot);
+                            app_state
+                                .persist_download_snapshot_async(manager_snapshot)
+                                .await;
                         }
                     }
                     emit_download_job_updated(&app, &update.snapshot);
@@ -426,7 +456,9 @@ async fn finalize_job(
     if let Some(s) = snapshot {
         let manager_snapshot = service.lock().await.manager_snapshot();
         if let Some(state) = app.try_state::<AppState>() {
-            state.persist_download_snapshot(&manager_snapshot);
+            state
+                .persist_download_snapshot_async(manager_snapshot.clone())
+                .await;
         }
         emit_download_job_updated(app, &s);
         emit_download_manager_state_changed(app, &manager_snapshot);
@@ -476,7 +508,9 @@ async fn collect_write_result(
 
     if let Some(update) = update {
         let manager_snapshot = state.download_service.lock().await.manager_snapshot();
-        state.persist_download_snapshot(&manager_snapshot);
+        state
+            .persist_download_snapshot_async(manager_snapshot.clone())
+            .await;
         emit_download_job_updated(app, &update.snapshot);
         emit_download_manager_state_changed(app, &manager_snapshot);
     }

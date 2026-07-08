@@ -5,6 +5,7 @@
   import LyricsBubble from '$lib/components/app/player/LyricsBubble.svelte';
   import VolumeCapsule from '$lib/components/app/player/VolumeCapsule.svelte';
   import type { LyricLine } from '$lib/features/player/lyrics';
+  import type { PlaybackFormatState } from '$lib/types';
   import {
     gsap,
     getMotionDuration,
@@ -28,6 +29,7 @@
     progress: number;
     duration: number;
     isLoading?: boolean;
+    isPlayTogglePending?: boolean;
     reducedMotion?: boolean;
     isShuffled?: boolean;
     repeatMode?: RepeatMode;
@@ -42,6 +44,7 @@
     downloadDisabled?: boolean;
     volume?: number;
     muted?: boolean;
+    playbackFormat?: PlaybackFormatState | null;
     onVolumeChange?: (gain: number) => void | Promise<void>;
     onToggleMute?: () => void;
     onPrevious?: () => void;
@@ -64,6 +67,7 @@
     progress,
     duration,
     isLoading = false,
+    isPlayTogglePending = false,
     reducedMotion = false,
     isShuffled = false,
     repeatMode = 'all',
@@ -78,6 +82,7 @@
     downloadDisabled = false,
     volume = 1,
     muted = false,
+    playbackFormat = null,
     onVolumeChange,
     onToggleMute,
     onPrevious,
@@ -106,6 +111,54 @@
     const second = Math.floor(seconds % 60);
     return `${minute}:${second.toString().padStart(2, '0')}`;
   }
+  function formatSampleRate(sampleRate: number): string {
+    if (!Number.isFinite(sampleRate) || sampleRate <= 0) return '--';
+    if (sampleRate % 1000 === 0) return `${sampleRate / 1000}k`;
+    return `${Math.round((sampleRate / 1000) * 10) / 10}k`;
+  }
+  function formatBitDepth(bitsPerSample: number | null | undefined): string {
+    if (
+      !bitsPerSample ||
+      !Number.isFinite(bitsPerSample) ||
+      bitsPerSample <= 0
+    ) {
+      return '--bit';
+    }
+    return `${bitsPerSample}bit`;
+  }
+  function formatBitrate(bitrateKbps: number | null | undefined): string {
+    if (!bitrateKbps || !Number.isFinite(bitrateKbps) || bitrateKbps <= 0) {
+      return '';
+    }
+    return `${Math.round(bitrateKbps)}kbps`;
+  }
+  function formatChannels(channels: number): string {
+    if (!Number.isFinite(channels) || channels <= 0) return '--';
+    return `${channels}ch`;
+  }
+  function formatPlaybackCore(
+    sampleRate: number,
+    bitsPerSample: number | null | undefined
+  ): string {
+    return `${formatSampleRate(sampleRate)}/${formatBitDepth(bitsPerSample)}`;
+  }
+  function formatPlaybackEndpoint(
+    sampleRate: number,
+    bitsPerSample: number | null | undefined,
+    channels: number,
+    bitrateKbps?: number | null
+  ): string {
+    return [
+      formatPlaybackCore(sampleRate, bitsPerSample),
+      formatChannels(channels),
+      formatBitrate(bitrateKbps),
+    ]
+      .filter(Boolean)
+      .join('/');
+  }
+  function normalizeSampleFormat(sampleFormat: string): string {
+    return sampleFormat.trim().toLowerCase();
+  }
   function nextRepeatMode(mode: RepeatMode): RepeatMode {
     return mode === 'all' ? 'one' : 'all';
   }
@@ -131,6 +184,39 @@
   const progressRatio = $derived.by(() =>
     clamp(shownProgress / safeDuration, 0, 1)
   );
+  const compactFormatLabel = $derived.by(() => {
+    if (!playbackFormat) return '';
+    return formatPlaybackCore(
+      playbackFormat.sourceSampleRate,
+      playbackFormat.sourceBitsPerSample
+    );
+  });
+  const sourceFormatLabel = $derived.by(() => {
+    if (!playbackFormat) return '';
+    return formatPlaybackEndpoint(
+      playbackFormat.sourceSampleRate,
+      playbackFormat.sourceBitsPerSample,
+      playbackFormat.sourceChannels,
+      playbackFormat.sourceBitrateKbps
+    );
+  });
+  const outputFormatLabel = $derived.by(() => {
+    if (!playbackFormat) return '';
+    return `${formatPlaybackEndpoint(
+      playbackFormat.outputSampleRate,
+      playbackFormat.outputBitsPerSample,
+      playbackFormat.outputChannels
+    )} ${normalizeSampleFormat(playbackFormat.outputSampleFormat)}`;
+  });
+  const playbackFormatTitle = $derived.by(() => {
+    if (!playbackFormat) return '';
+    const operations = [
+      playbackFormat.resampling ? 'resample' : null,
+      playbackFormat.channelRemix ? 'remix' : null,
+    ].filter(Boolean);
+    const suffix = operations.length ? ` (${operations.join(', ')})` : '';
+    return `Input ${sourceFormatLabel} -> output ${outputFormatLabel}${suffix}`;
+  });
   const labels = $derived.by(() => {
     void localeState.current;
     return {
@@ -171,8 +257,15 @@
     repeatMode === 'one' ? labels.repeatOne : labels.repeatAll
   );
   const playerState = $derived.by(() =>
-    isLoading ? 'loading' : isPlaying ? 'playing' : isPaused ? 'paused' : 'idle'
+    isLoading || isPlayTogglePending
+      ? 'loading'
+      : isPlaying
+        ? 'playing'
+        : isPaused
+          ? 'paused'
+          : 'idle'
   );
+  const playButtonLoading = $derived(isLoading || isPlayTogglePending);
   const detailPanel = $derived.by(() =>
     lyricsActive ? 'lyrics' : playlistActive ? 'playlist' : 'none'
   );
@@ -212,6 +305,11 @@
   );
   let capsuleOpen = $state(false);
   let rightControlsRef = $state<HTMLElement | null>(null);
+  let formatPopoverOpen = $state(false);
+  let formatPopoverVisible = $state(false);
+  let formatPopoverClosing = $state(false);
+  let formatPopoverEl: HTMLDivElement | undefined = $state();
+  let formatReadoutShellRef = $state<HTMLElement | null>(null);
   const remainingLabel = $derived.by(() =>
     duration > 0 ? `-${formatTime(remainingProgress)}` : '0:00'
   );
@@ -352,7 +450,21 @@
     if (!playEl || !pauseEl) return;
     killTweens(playEl);
     killTweens(pauseEl);
-    if (isPlaying) {
+    if (playButtonLoading) {
+      gsap.to(playEl, {
+        x: 0.5,
+        scale: 0.82,
+        opacity: 0,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios',
+      });
+      gsap.to(pauseEl, {
+        scale: 0.82,
+        opacity: 0,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios',
+      });
+    } else if (isPlaying) {
       gsap.to(playEl, {
         x: 0.5,
         scale: 0.82,
@@ -381,6 +493,197 @@
         ease: 'ios',
       });
     }
+  });
+
+  function gsapFormatReadout(node: HTMLElement) {
+    const readout = node.querySelector<HTMLElement>('.format-readout');
+    const compact = node.querySelector<HTMLElement>('.format-pill-compact');
+    const details = node.querySelector<HTMLElement>('.format-details');
+    if (!readout || !compact || !details) return {};
+
+    const collapsedWidth = 88;
+    const maxExpandedWidth = 286;
+    let hoverOpen = false;
+    let focusOpen = false;
+    let expandedWidth = maxExpandedWidth;
+    let frame = 0;
+
+    const measureExpandedWidth = () => {
+      const prevShellWidth = node.style.width;
+      const prevCompact = compact.style.display;
+      const prevDetails = details.style.display;
+      node.style.width = 'auto';
+      compact.style.display = 'none';
+      details.style.display = '';
+      const shellStyle = getComputedStyle(node);
+      const shellBorder =
+        Number.parseFloat(shellStyle.borderLeftWidth) +
+        Number.parseFloat(shellStyle.borderRightWidth);
+      expandedWidth = clamp(
+        Math.ceil(readout.scrollWidth + shellBorder),
+        collapsedWidth,
+        maxExpandedWidth
+      );
+      node.style.width = prevShellWidth;
+      compact.style.display = prevCompact;
+      details.style.display = prevDetails;
+    };
+
+    const applyState = (open: boolean, animate: boolean) => {
+      measureExpandedWidth();
+      killTweens(node);
+      killTweens(compact);
+      killTweens(details);
+      const duration = animate ? getMotionDuration(MOTION.BASE) : 0;
+
+      if (open) {
+        compact.style.display = 'none';
+        details.style.display = '';
+        gsap.fromTo(
+          details,
+          { opacity: 0 },
+          { opacity: 1, duration, ease: 'ios-out' }
+        );
+      } else {
+        details.style.display = 'none';
+        compact.style.display = '';
+        gsap.fromTo(
+          compact,
+          { opacity: 0 },
+          { opacity: 1, duration, ease: 'ios-out' }
+        );
+      }
+
+      gsap.to(node, {
+        width: open ? expandedWidth : collapsedWidth,
+        duration,
+        ease: open ? 'ios-spring' : 'ios',
+      });
+    };
+
+    const updateState = (animate = true) => {
+      applyState(hoverOpen || focusOpen || formatPopoverOpen, animate);
+    };
+    const handleEnter = () => {
+      hoverOpen = true;
+      if (!formatPopoverOpen) updateState(true);
+    };
+    const handleLeave = () => {
+      hoverOpen = false;
+      if (!formatPopoverOpen) updateState(true);
+    };
+    const handleFocusIn = () => {
+      focusOpen = true;
+      if (!formatPopoverOpen) updateState(true);
+    };
+    const handleFocusOut = () => {
+      focusOpen = false;
+      if (!formatPopoverOpen) updateState(true);
+    };
+
+    const handlePopoverChange = () => {
+      updateState(true);
+    };
+
+    gsap.set(node, { width: collapsedWidth });
+    details.style.display = 'none';
+    frame = requestAnimationFrame(() => updateState(false));
+
+    node.addEventListener('pointerenter', handleEnter);
+    node.addEventListener('pointerleave', handleLeave);
+    node.addEventListener('focusin', handleFocusIn);
+    node.addEventListener('focusout', handleFocusOut);
+    node.addEventListener('format-popover-change', handlePopoverChange);
+
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+        node.removeEventListener('pointerenter', handleEnter);
+        node.removeEventListener('pointerleave', handleLeave);
+        node.removeEventListener('focusin', handleFocusIn);
+        node.removeEventListener('focusout', handleFocusOut);
+        node.removeEventListener('format-popover-change', handlePopoverChange);
+        killTweens(node);
+        killTweens(compact);
+        killTweens(details);
+      },
+    };
+  }
+
+  $effect(() => {
+    void formatPopoverOpen;
+    if (!formatReadoutShellRef) return;
+    formatReadoutShellRef.dispatchEvent(new Event('format-popover-change'));
+  });
+
+  function handleFormatReadoutClick() {
+    if (formatPopoverClosing) return;
+    if (formatPopoverOpen) {
+      closeFormatPopover();
+    } else {
+      formatPopoverOpen = true;
+      formatPopoverVisible = true;
+    }
+  }
+
+  function closeFormatPopover() {
+    if (!formatPopoverEl || formatPopoverClosing) {
+      formatPopoverOpen = false;
+      formatPopoverVisible = false;
+      return;
+    }
+    formatPopoverClosing = true;
+    killTweens(formatPopoverEl);
+    gsap.to(formatPopoverEl, {
+      opacity: 0,
+      y: 6,
+      scale: 0.96,
+      duration: getMotionDuration(MOTION.FAST),
+      ease: 'ios-in',
+      onComplete: () => {
+        formatPopoverOpen = false;
+        formatPopoverVisible = false;
+        formatPopoverClosing = false;
+      },
+    });
+  }
+
+  $effect(() => {
+    if (!formatPopoverEl) return;
+    killTweens(formatPopoverEl);
+    gsap.fromTo(
+      formatPopoverEl,
+      { opacity: 0, y: 6, scale: 0.96 },
+      {
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        duration: getMotionDuration(MOTION.BASE),
+        ease: 'ios-out',
+      }
+    );
+  });
+
+  $effect(() => {
+    if (!formatPopoverOpen) return;
+    function handleClickOutside(e: PointerEvent) {
+      if (
+        formatPopoverEl?.contains(e.target as Node) ||
+        formatReadoutShellRef?.contains(e.target as Node)
+      ) {
+        return;
+      }
+      closeFormatPopover();
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') closeFormatPopover();
+    }
+    document.addEventListener('pointerdown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('pointerdown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   });
 
   $effect(() => {
@@ -418,7 +721,7 @@
     class="am-player"
     aria-label={labels.ariaControls}
     style={playerStyle}
-    data-loading={isLoading ? 'true' : 'false'}
+    data-loading={isLoading || isPlayTogglePending ? 'true' : 'false'}
     data-state={playerState}
     data-panel={detailPanel}
     data-dragging={draggingSeek ? 'true' : 'false'}
@@ -481,15 +784,31 @@
           type="button"
           class="icon-button play-button"
           class:playing={isPlaying}
-          aria-label={isPlaying
-            ? labels.ariaPause
-            : isPaused
-              ? labels.ariaResume
-              : labels.ariaPlay}
-          disabled={isLoading || !onTogglePlay}
+          aria-label={playButtonLoading
+            ? labels.statusLoading
+            : isPlaying
+              ? labels.ariaPause
+              : isPaused
+                ? labels.ariaResume
+                : labels.ariaPlay}
+          disabled={playButtonLoading || !onTogglePlay}
           onclick={() => onTogglePlay?.()}
         >
           <span class="play-glyph" aria-hidden="true">
+            {#if playButtonLoading}
+              <svg
+                class="control-icon play-icon play-icon-loading spin-icon"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  d="M12 5a7 7 0 1 1-6.3 4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                ></path>
+              </svg>
+            {/if}
             <svg
               class="control-icon play-icon play-icon-pause"
               viewBox="0 0 24 24"
@@ -614,6 +933,167 @@
         <span class="time-separator" aria-hidden="true">/</span>
         <span class="time time-remaining">{remainingLabel}</span>
       </div>
+
+      {#if compactFormatLabel && sourceFormatLabel && outputFormatLabel}
+        <div class="format-readout-anchor">
+          <div
+            class="format-readout-shell"
+            use:gsapFormatReadout
+            bind:this={formatReadoutShellRef}
+          >
+            <button
+              type="button"
+              class="format-readout"
+              aria-label={playbackFormatTitle}
+              title={playbackFormatTitle}
+              aria-expanded={formatPopoverOpen}
+              onclick={handleFormatReadoutClick}
+            >
+              <span class="format-pill format-pill-compact">
+                <span class="format-swatch" aria-hidden="true"></span>
+                <span class="format-text">{compactFormatLabel}</span>
+              </span>
+              <span class="format-details" aria-hidden="true">
+                <span class="format-pill">
+                  <span class="format-swatch" aria-hidden="true"></span>
+                  <span class="format-text">{sourceFormatLabel}</span>
+                </span>
+                <span class="format-arrow" aria-hidden="true">-&gt;</span>
+                <span class="format-pill format-pill-output">
+                  <span
+                    class="format-swatch format-swatch-output"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="format-text">{outputFormatLabel}</span>
+                </span>
+              </span>
+            </button>
+          </div>
+          {#if formatPopoverVisible}
+            <div
+              class="format-popover-content"
+              bind:this={formatPopoverEl}
+              role="dialog"
+              aria-label={m.player_format_popover_title()}
+            >
+              <div class="format-popover-header">
+                {m.player_format_popover_title()}
+              </div>
+              <div class="format-popover-section-divider">
+                <span class="format-popover-section-badge"
+                  >{m.player_format_section_source()}</span
+                >
+              </div>
+              <div class="format-popover-rows">
+                <div class="format-popover-row">
+                  <span class="format-popover-label"
+                    >{m.player_format_label_sample_rate()}</span
+                  >
+                  <span class="format-popover-value"
+                    >{formatSampleRate(playbackFormat!.sourceSampleRate)}</span
+                  >
+                </div>
+                <div class="format-popover-row">
+                  <span class="format-popover-label"
+                    >{m.player_format_label_bit_depth()}</span
+                  >
+                  <span class="format-popover-value"
+                    >{formatBitDepth(playbackFormat!.sourceBitsPerSample)}</span
+                  >
+                </div>
+                <div class="format-popover-row">
+                  <span class="format-popover-label"
+                    >{m.player_format_label_channels()}</span
+                  >
+                  <span class="format-popover-value"
+                    >{formatChannels(playbackFormat!.sourceChannels)}</span
+                  >
+                </div>
+                {#if playbackFormat!.sourceBitrateKbps}
+                  <div class="format-popover-row">
+                    <span class="format-popover-label"
+                      >{m.player_format_label_bitrate()}</span
+                    >
+                    <span class="format-popover-value"
+                      >{formatBitrate(playbackFormat!.sourceBitrateKbps)}</span
+                    >
+                  </div>
+                {/if}
+              </div>
+              <div class="format-popover-section-divider">
+                <span class="format-popover-section-badge"
+                  >{m.player_format_section_output()}</span
+                >
+              </div>
+              <div class="format-popover-rows">
+                <div class="format-popover-row">
+                  <span class="format-popover-label"
+                    >{m.player_format_label_sample_rate()}</span
+                  >
+                  <span class="format-popover-value"
+                    >{formatSampleRate(playbackFormat!.outputSampleRate)}</span
+                  >
+                </div>
+                <div class="format-popover-row">
+                  <span class="format-popover-label"
+                    >{m.player_format_label_bit_depth()}</span
+                  >
+                  <span class="format-popover-value"
+                    >{formatBitDepth(playbackFormat!.outputBitsPerSample)}</span
+                  >
+                </div>
+                <div class="format-popover-row">
+                  <span class="format-popover-label"
+                    >{m.player_format_label_channels()}</span
+                  >
+                  <span class="format-popover-value"
+                    >{formatChannels(playbackFormat!.outputChannels)}</span
+                  >
+                </div>
+                <div class="format-popover-row">
+                  <span class="format-popover-label"
+                    >{m.player_format_label_sample_format()}</span
+                  >
+                  <span class="format-popover-value"
+                    >{normalizeSampleFormat(
+                      playbackFormat!.outputSampleFormat
+                    )}</span
+                  >
+                </div>
+              </div>
+              {#if playbackFormat!.resampling || playbackFormat!.channelRemix}
+                <div class="format-popover-section-divider">
+                  <span class="format-popover-section-badge-accent"
+                    >Processing</span
+                  >
+                </div>
+                <div class="format-popover-rows">
+                  {#if playbackFormat!.resampling}
+                    <div class="format-popover-row">
+                      <span class="format-popover-label"
+                        >{m.player_format_label_resampling()}</span
+                      >
+                      <span class="format-popover-value format-popover-flag"
+                        >{m.player_format_flag_yes()}</span
+                      >
+                    </div>
+                  {/if}
+                  {#if playbackFormat!.channelRemix}
+                    <div class="format-popover-row">
+                      <span class="format-popover-label"
+                        >{m.player_format_label_channel_remix()}</span
+                      >
+                      <span class="format-popover-value format-popover-flag"
+                        >{m.player_format_flag_yes()}</span
+                      >
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <div class="lyrics-toggle-anchor">
         <button
@@ -1156,6 +1636,202 @@
       0 8px 18px rgba(var(--album-accent-rgb), 0.12);
   }
 
+  .format-readout-anchor {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+
+  .format-readout-shell {
+    width: 88px;
+    height: 28px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    overflow: hidden;
+  }
+
+  .format-readout {
+    appearance: none;
+    min-width: 0;
+    height: 28px;
+    width: max-content;
+    padding: 0 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+    border: 0;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    background: transparent;
+    cursor: default;
+  }
+
+  .format-readout:focus-visible {
+    outline: 2px solid rgba(128, 128, 128, 0.35);
+    outline-offset: 2px;
+  }
+
+  .format-details {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+    pointer-events: none;
+  }
+
+  .format-pill {
+    min-width: 0;
+    height: 20px;
+    padding: 0 7px 0 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid rgba(128, 128, 128, 0.15);
+    border-radius: 999px;
+    background: rgba(128, 128, 128, 0.08);
+    overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  }
+
+  .format-pill-compact {
+    opacity: 1;
+  }
+
+  .format-pill-output {
+    background: rgba(128, 128, 128, 0.06);
+  }
+
+  .format-swatch {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: rgba(128, 128, 128, 0.7);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.38),
+      0 0 8px rgba(128, 128, 128, 0.3);
+  }
+
+  .format-swatch-output {
+    background: rgba(128, 128, 128, 0.55);
+  }
+
+  .format-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .format-arrow {
+    flex: 0 0 auto;
+    color: rgba(128, 128, 128, 0.5);
+    font-size: 9px;
+    line-height: 1;
+  }
+
+  .format-popover-content {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    z-index: var(--z-popover, 200);
+    width: 280px;
+    max-width: calc(100vw - 32px);
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--bg-primary);
+    border: 1px solid rgba(128, 128, 128, 0.14);
+    box-shadow:
+      0 8px 32px rgba(15, 23, 42, 0.12),
+      0 2px 8px rgba(15, 23, 42, 0.06);
+    transform-origin: bottom right;
+    opacity: 0;
+  }
+
+  .format-popover-header {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.1);
+  }
+
+  .format-popover-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .format-popover-section-divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 6px;
+  }
+
+  .format-popover-section-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(128, 128, 128, 0.1);
+  }
+
+  .format-popover-section-badge,
+  .format-popover-section-badge-accent {
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 3px 8px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+  }
+
+  .format-popover-section-badge {
+    background: rgba(128, 128, 128, 0.12);
+    color: var(--text-secondary);
+  }
+
+  .format-popover-section-badge-accent {
+    background: rgba(128, 128, 128, 0.08);
+    color: var(--text-secondary);
+  }
+
+  .format-popover-row {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+  }
+
+  .format-popover-label {
+    flex-shrink: 0;
+    min-width: 56px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .format-popover-value {
+    font-size: 11px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    line-height: 1.4;
+  }
+
+  .format-popover-flag {
+    color: rgba(128, 128, 128, 0.7);
+    font-weight: 600;
+  }
+
   .lyrics-toggle-anchor {
     position: relative;
   }
@@ -1222,6 +1898,12 @@
   .play-icon-pause {
     transform: scale(0.82);
     opacity: 0;
+  }
+
+  .play-icon-loading {
+    fill: none;
+    stroke: currentColor;
+    opacity: 1;
   }
 
   .icon-button:focus-visible,

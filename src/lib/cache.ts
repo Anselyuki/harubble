@@ -29,6 +29,7 @@ interface TieredCacheOptions {
   ttlMs: number;
   maxEntries: number;
   persistent: boolean;
+  persistTouchOnHit?: boolean;
 }
 
 type CacheLookup<T> =
@@ -72,9 +73,10 @@ const CACHE_OPTIONS: Record<CacheType, TieredCacheOptions> = {
     persistent: false,
   },
   covers: {
-    ttlMs: 6 * HOUR_MS,
+    ttlMs: 24 * HOUR_MS,
     maxEntries: 100,
-    persistent: false,
+    persistent: true,
+    persistTouchOnHit: false,
   },
 };
 
@@ -177,7 +179,7 @@ class TieredCache<T> {
         };
         this.memory.delete(key);
         this.memory.set(key, refreshed);
-        if (this.options.persistent) {
+        if (this.shouldPersistTouchOnHit()) {
           await this.persistEntry(key, refreshed);
         }
         return { found: true, data: refreshed.data };
@@ -218,7 +220,9 @@ class TieredCache<T> {
     this.hitsState[this.type] += 1;
     this.memory.set(key, refreshed);
     this.registerTags(key, refreshed.tags);
-    await this.persistEntry(key, refreshed);
+    if (this.shouldPersistTouchOnHit()) {
+      await this.persistEntry(key, refreshed);
+    }
     await this.trimMemory();
     return { found: true, data: refreshed.data };
   }
@@ -329,6 +333,10 @@ class TieredCache<T> {
     if (this.type === 'albums') {
       await cacheManager.syncLatestAlbumKeys();
     }
+  }
+
+  private shouldPersistTouchOnHit(): boolean {
+    return this.options.persistent && this.options.persistTouchOnHit !== false;
   }
 
   private registerTags(key: string, tags: string[]): void {

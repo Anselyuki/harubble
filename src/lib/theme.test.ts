@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_THEME_PRESET_ID,
   HARUBBLE_CLASSIC_COLORS,
@@ -133,6 +133,10 @@ describe('theme presets', () => {
 });
 
 describe('theme CSS variables', () => {
+  beforeEach(() => {
+    document.documentElement.removeAttribute('style');
+  });
+
   it('derives rgb, hover, readable foreground, and semantic slot variables', () => {
     const variables = deriveThemeCssVariables(HARUBBLE_CLASSIC_COLORS);
 
@@ -171,6 +175,11 @@ describe('theme CSS variables', () => {
           [17, 34, 51],
           [68, 85, 102],
         ],
+        surfaceHex: '#DDDDDD',
+        textPrimaryHex: '#111111',
+        textSecondaryHex: '#555555',
+        tintHex: '#667788',
+        dangerHex: '#CC3333',
       },
       HARUBBLE_CLASSIC_COLORS
     );

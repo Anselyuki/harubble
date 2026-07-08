@@ -140,13 +140,19 @@
   .view-transition-container {
     position: relative;
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
   }
 
   .view-slot {
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   :global(.view-transition-container > .view-slot--outgoing) {

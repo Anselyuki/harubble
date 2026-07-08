@@ -1,0 +1,61 @@
+import { describe, expect, it } from 'vitest';
+import { PlaybackCommandError } from '$lib/api';
+import {
+  shouldApplyPlaybackEnded,
+  shouldIgnorePlaybackError,
+} from './playback-contract';
+
+describe('playback contract helpers', () => {
+  it('suppresses superseded playback command errors', () => {
+    const error = new PlaybackCommandError({
+      code: 'superseded',
+      message: 'Playback request was superseded',
+      retryable: false,
+      sessionId: 4,
+    });
+
+    expect(shouldIgnorePlaybackError(error, 2, 2)).toBe(true);
+  });
+
+  it('suppresses stale playback request errors', () => {
+    expect(shouldIgnorePlaybackError(new Error('late failure'), 1, 2)).toBe(
+      true
+    );
+  });
+
+  it('keeps current non-superseded playback errors visible', () => {
+    expect(shouldIgnorePlaybackError(new Error('decode failed'), 2, 2)).toBe(
+      false
+    );
+  });
+
+  it('accepts matching playback-ended events for the current or newer session', () => {
+    expect(
+      shouldApplyPlaybackEnded(
+        { sessionId: 8, songCid: 'song-a', progress: 10, duration: 10 },
+        'song-a',
+        { cid: 'song-a', active: true, sessionId: 7 }
+      )
+    ).toBe(true);
+  });
+
+  it('rejects stale playback-ended events', () => {
+    expect(
+      shouldApplyPlaybackEnded(
+        { sessionId: 6, songCid: 'song-a', progress: 10, duration: 10 },
+        'song-a',
+        { cid: 'song-a', active: true, sessionId: 7 }
+      )
+    ).toBe(false);
+  });
+
+  it('rejects playback-ended events for another song', () => {
+    expect(
+      shouldApplyPlaybackEnded(
+        { sessionId: 8, songCid: 'song-b', progress: 10, duration: 10 },
+        'song-a',
+        { cid: 'song-a', active: true, sessionId: 8 }
+      )
+    ).toBe(false);
+  });
+});

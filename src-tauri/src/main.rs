@@ -42,9 +42,13 @@
 
 use anyhow::Context;
 use harubble::{
-    commands, initialize_download_bridge, spawn_belong_warmup, spawn_inventory_scan,
-    spawn_network_monitor, spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
+    commands,
+    desktop_lifecycle::{self, DesktopLifecycleState},
+    initialize_download_bridge, spawn_belong_warmup, spawn_inventory_scan, spawn_network_monitor,
+    spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
 };
+#[cfg(target_os = "macos")]
+use tauri::WebviewWindowBuilder;
 use tauri::{LogicalSize, Manager, RunEvent, WebviewWindow};
 
 const PLAYER_BAR_SAFE_WINDOW_WIDTH: f64 = 1120.0;
@@ -91,6 +95,127 @@ fn fit_main_window_to_monitor<R: tauri::Runtime>(window: &WebviewWindow<R>) -> t
     Ok(())
 }
 
+fn attach_main_window_lifecycle<R: tauri::Runtime>(window: &WebviewWindow<R>) {
+    let lifecycle_window = window.clone();
+    window.on_window_event(move |event| {
+        desktop_lifecycle::handle_main_window_event(&lifecycle_window, event);
+    });
+}
+
+fn configure_main_window<R: tauri::Runtime>(window: &WebviewWindow<R>, state: &AppState) {
+    attach_main_window_lifecycle(window);
+    if let Err(error) = fit_main_window_to_monitor(window) {
+        state.record_log(
+            LogPayload::new(
+                LogLevel::Warn,
+                "window",
+                "window.fit_monitor_failed",
+                "Failed to fit main window to monitor",
+            )
+            .details(error.to_string()),
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        window.open_devtools();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn create_main_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> anyhow::Result<WebviewWindow<R>> {
+    if let Some(window) = app.get_webview_window(desktop_lifecycle::MAIN_WINDOW_LABEL) {
+        return Ok(window);
+    }
+
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == desktop_lifecycle::MAIN_WINDOW_LABEL)
+        .context("Failed to locate main window config")?;
+    WebviewWindowBuilder::from_config(app, config)?
+        .build()
+        .context("Failed to create main window")
+}
+
+#[cfg(target_os = "macos")]
+fn restore_or_create_main_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> anyhow::Result<()> {
+    if app
+        .get_webview_window(desktop_lifecycle::MAIN_WINDOW_LABEL)
+        .is_some()
+    {
+        desktop_lifecycle::restore_main_window(app).context("Failed to restore main window")?;
+        return Ok(());
+    }
+
+    let window = create_main_window(app)?;
+    if let Some(state) = app.try_state::<AppState>() {
+        configure_main_window(&window, &state);
+    } else {
+        attach_main_window_lifecycle(&window);
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn handle_macos_dock_reopen<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    has_visible_windows: bool,
+) {
+    let main_window = app.get_webview_window(desktop_lifecycle::MAIN_WINDOW_LABEL);
+    let main_window_focused = main_window
+        .as_ref()
+        .is_some_and(|window| window.is_focused().unwrap_or(false));
+
+    match desktop_lifecycle::dock_reopen_action(
+        desktop_lifecycle::current_platform(),
+        has_visible_windows,
+        main_window_focused,
+    ) {
+        desktop_lifecycle::DockReopenAction::Ignore => {}
+        desktop_lifecycle::DockReopenAction::FocusVisibleWindow
+        | desktop_lifecycle::DockReopenAction::RestoreOrCreateWindow => {
+            if let Err(error) = restore_or_create_main_window(app) {
+                record_desktop_lifecycle_log(
+                    app,
+                    "desktop_lifecycle.dock_reopen_failed",
+                    "Failed to reopen main window from Dock",
+                    error.to_string(),
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn record_desktop_lifecycle_log<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    event: &'static str,
+    message: &'static str,
+    details: String,
+) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state.record_log(
+            LogPayload::new(LogLevel::Warn, "desktop-lifecycle", event, message).details(details),
+        );
+    }
+}
+
+fn flush_logs_on_exit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Err(error) = state.flush_logs_on_exit() {
+            eprintln!("[logging] failed to flush session logs: {error}");
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -103,17 +228,8 @@ fn main() {
                 .context("Failed to locate main window")?;
             let state =
                 AppState::new(app.handle().clone()).expect("Failed to initialize app state");
-            if let Err(error) = fit_main_window_to_monitor(&window) {
-                state.record_log(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "window",
-                        "window.fit_monitor_failed",
-                        "Failed to fit main window to monitor",
-                    )
-                    .details(error.to_string()),
-                );
-            }
+            app.manage(DesktopLifecycleState::default());
+            configure_main_window(&window, &state);
             if let Err(error) = state.bind_media_controls() {
                 state.record_log(
                     LogPayload::new(
@@ -136,10 +252,18 @@ fn main() {
             spawn_tag_registry_sync(&state);
             spawn_network_monitor(&state);
             app.manage(state);
-
-            #[cfg(debug_assertions)]
-            {
-                window.open_devtools();
+            if let Err(error) = desktop_lifecycle::install_background_entrypoint(app.handle()) {
+                if let Some(state) = app.handle().try_state::<AppState>() {
+                    state.record_log(
+                        LogPayload::new(
+                            LogLevel::Warn,
+                            "desktop-lifecycle",
+                            "desktop_lifecycle.entrypoint_install_failed",
+                            "Failed to install desktop background entrypoint",
+                        )
+                        .details(error.to_string()),
+                    );
+                }
             }
             Ok(())
         })
@@ -170,6 +294,7 @@ fn main() {
             commands::playback::play_previous,
             commands::playback::get_player_state,
             commands::playback::set_playback_volume,
+            commands::window::show_main_window,
             commands::preferences::get_preferences,
             commands::preferences::set_preferences,
             commands::preferences::export_preferences,
@@ -196,6 +321,7 @@ fn main() {
             commands::homepage::get_latest_albums,
             commands::homepage::get_albums_by_series,
             commands::homepage::get_recent_history,
+            commands::homepage::record_song_heat,
             commands::homepage::clear_listening_history,
             commands::homepage::get_homepage_status,
             commands::tag_registry::get_tag_dimensions,
@@ -214,12 +340,18 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
-            RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-                if let Some(state) = app_handle.try_state::<AppState>() {
-                    if let Err(error) = state.flush_logs_on_exit() {
-                        eprintln!("[logging] failed to flush session logs: {error}");
-                    }
-                }
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } => {
+                handle_macos_dock_reopen(app_handle, has_visible_windows);
+            }
+            RunEvent::ExitRequested { .. } => {
+                flush_logs_on_exit(app_handle);
+            }
+            RunEvent::Exit => {
+                flush_logs_on_exit(app_handle);
             }
             _ => {}
         });

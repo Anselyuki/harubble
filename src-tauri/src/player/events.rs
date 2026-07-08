@@ -4,6 +4,7 @@
 //! 广播入口，供播放器控制器在状态变化后通知前端。
 
 use crate::player::state::PlayerState;
+use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
@@ -16,6 +17,20 @@ pub const PLAYER_STATE_CHANGED: &str = "player-state-changed";
 /// 事件载荷同样是完整的 [`PlayerState`] 快照，便于前端用统一结构同步时间、时长
 /// 与当前歌曲元数据。
 pub const PLAYER_PROGRESS: &str = "player-progress";
+/// 当前歌曲自然播放到结尾时发出的 Tauri 事件名。
+///
+/// 事件载荷为 [`PlaybackEndedEvent`]，调用方无需再从状态快照里推断结束原因。
+pub const PLAYER_ENDED: &str = "player-ended";
+
+/// 播放结束事件载荷。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackEndedEvent {
+    pub session_id: u64,
+    pub song_cid: String,
+    pub progress: f64,
+    pub duration: f64,
+}
 
 /// 以当前播放器快照发出 [`PLAYER_STATE_CHANGED`] 事件。
 pub fn emit_state(app: &AppHandle, state: &Arc<Mutex<PlayerState>>) {
@@ -32,4 +47,9 @@ pub fn emit_progress(app: &AppHandle, state: &Arc<Mutex<PlayerState>>) {
 /// 适用于调用方已经持有状态快照（例如节流后的进度发射线程），可避免重复加锁与克隆。
 pub fn emit_progress_snapshot(app: &AppHandle, snapshot: &PlayerState) {
     let _ = app.emit(PLAYER_PROGRESS, snapshot.clone());
+}
+
+/// 发出明确的播放结束事件。
+pub fn emit_ended(app: &AppHandle, event: PlaybackEndedEvent) {
+    let _ = app.emit(PLAYER_ENDED, event);
 }

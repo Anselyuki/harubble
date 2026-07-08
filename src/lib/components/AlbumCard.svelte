@@ -16,6 +16,7 @@
     album: Album;
     layout?: 'list' | 'grid';
     selected?: boolean;
+    loading?: boolean;
     reducedMotion?: boolean;
     onclick?: () => void;
   }
@@ -24,6 +25,7 @@
     album,
     layout = 'list',
     selected = false,
+    loading = false,
     reducedMotion = false,
     onclick,
   }: Props = $props();
@@ -133,6 +135,11 @@
   >
     <div class="album-cover-placeholder">♪</div>
     <img class="album-cover-img" alt={album.name} />
+    {#if loading}
+      <div class="album-cover-loading" aria-hidden="true">
+        <span class="album-cover-spinner"></span>
+      </div>
+    {/if}
   </div>
   <div class="album-info">
     <div class="album-name">{album.name}</div>
@@ -236,6 +243,26 @@
     border-radius: 8px;
     opacity: 0;
     transform: scale(1.04);
+  }
+
+  .album-cover-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(2px);
+  }
+
+  .album-cover-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: motion-spin 0.9s linear infinite;
   }
 
   .album-info {

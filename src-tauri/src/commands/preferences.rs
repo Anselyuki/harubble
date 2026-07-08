@@ -6,7 +6,7 @@
 use crate::app_state::AppState;
 use crate::local_inventory::spawn_inventory_scan;
 use crate::preferences::AppPreferences;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::State;
 use tauri_plugin_notification::NotificationExt;
 
@@ -34,9 +34,7 @@ pub async fn set_preferences(
     let locale = preferences.locale;
     preferences.validate(locale)?;
     let previous = state.preferences();
-    let store = state.preferences_store();
-    store.save(&preferences, locale)?;
-    state.set_preferences(preferences.clone());
+    state.persist_preferences(preferences.clone()).await?;
     if previous.output_dir != preferences.output_dir {
         spawn_inventory_scan(
             app,
@@ -61,7 +59,13 @@ pub async fn export_preferences(
     let prefs = state.preferences();
     let locale = prefs.locale;
     let store = state.preferences_store();
-    store.export_to(&prefs, Path::new(&output_path), locale)?;
+    let path = PathBuf::from(output_path);
+    let prefs_to_export = prefs.clone();
+    tokio::task::spawn_blocking(move || {
+        store.export_to(&prefs_to_export, Path::new(&path), locale)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     Ok(prefs)
 }
 
@@ -79,9 +83,15 @@ pub async fn import_preferences(
     let previous = state.preferences();
     let locale = previous.locale;
     let store = state.preferences_store();
-    let imported = store.import_from(Path::new(&input_path), locale)?;
-    store.save(&imported, locale)?;
-    state.set_preferences(imported.clone());
+    let input_path = PathBuf::from(input_path);
+    let imported = {
+        let store = store.clone();
+        tokio::task::spawn_blocking(move || store.import_from(Path::new(&input_path), locale))
+            .await
+            .map_err(|e| e.to_string())??
+    };
+    let imported_to_save = imported.clone();
+    state.persist_preferences(imported_to_save).await?;
     if previous.output_dir != imported.output_dir {
         spawn_inventory_scan(
             app,

@@ -58,11 +58,18 @@ impl LocalInventoryProvenanceStore {
         task: &InternalDownloadTask,
         completed: &CompletedTaskArtifacts,
     ) -> Result<()> {
-        let output_path = Path::new(&completed.output_path);
-        let relative_path = normalize_relative_path(root_output_dir, output_path)?;
-        let metadata = std::fs::metadata(output_path)
-            .with_context(|| format!("failed to stat {}", output_path.display()))?;
-        let final_artifact_checksum = checksum_path(output_path)?;
+        let root_output_dir = root_output_dir.to_path_buf();
+        let output_path = PathBuf::from(&completed.output_path);
+        let relative_path = tokio::task::spawn_blocking(move || {
+            let relative_path = normalize_relative_path(&root_output_dir, &output_path)?;
+            let metadata = std::fs::metadata(&output_path)
+                .with_context(|| format!("failed to stat {}", output_path.display()))?;
+            let final_artifact_checksum = checksum_path(&output_path)?;
+            Ok::<_, anyhow::Error>((relative_path, metadata.len(), final_artifact_checksum))
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))??;
+        let (relative_path, final_artifact_size, final_artifact_checksum) = relative_path;
         let record = LocalInventoryProvenanceRecord {
             song_cid: task.song_cid.clone(),
             album_cid: task.album_cid.clone(),
@@ -71,21 +78,27 @@ impl LocalInventoryProvenanceStore {
             source_audio_checksum: completed.provenance_seed.source_audio_checksum.clone(),
             processing_fingerprint: completed.provenance_seed.processing_fingerprint.clone(),
             final_artifact_checksum,
-            final_artifact_size: metadata.len(),
+            final_artifact_size,
             recorded_at: OffsetDateTime::now_utc()
                 .format(&Iso8601::DEFAULT)
                 .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
         };
 
-        let mut records = self.records.lock().await;
-        records.retain(|existing| {
-            existing.relative_path != relative_path
-                && !(existing.song_cid == record.song_cid
-                    && existing.album_cid == record.album_cid
-                    && existing.processing_fingerprint == record.processing_fingerprint)
-        });
-        records.push(record);
-        save_records(&self.path, &records)
+        let records = {
+            let mut records = self.records.lock().await;
+            records.retain(|existing| {
+                existing.relative_path != relative_path
+                    && !(existing.song_cid == record.song_cid
+                        && existing.album_cid == record.album_cid
+                        && existing.processing_fingerprint == record.processing_fingerprint)
+            });
+            records.push(record);
+            records.clone()
+        };
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || save_records(&path, &records))
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
     }
 
     pub(crate) async fn snapshot_records(&self) -> Vec<LocalInventoryProvenanceRecord> {

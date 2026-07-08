@@ -120,6 +120,7 @@
 
   function handleMouseEnter() {
     collapseTimer.cancel();
+    if (!open) onopen?.();
   }
 
   function handleIconClick() {
@@ -151,7 +152,7 @@
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
-  <WaveGlassPanel {open} />
+  <WaveGlassPanel open={open && isDragging} />
 
   <div
     class="volume-wrapper"
@@ -198,8 +199,6 @@
       aria-expanded={open}
       onclick={handleIconClick}
       ondblclick={() => onToggleMute?.()}
-      onpointerenter={() => animator.hoverIconIn()}
-      onpointerleave={() => animator.hoverIconOut()}
     >
       <svg class="capsule-icon" viewBox="0 0 24 24" aria-hidden="true">
         {#if volumeIcon === 'muted'}
@@ -221,7 +220,30 @@
 
 <style>
   .volume-hover-zone {
-    --capsule-track-bg: #f2f2f7;
+    --capsule-track-bg: color-mix(
+      in srgb,
+      var(--surface, var(--player-shell-bg)) 96%,
+      transparent
+    );
+    --volume-shell-surface: color-mix(
+      in srgb,
+      var(--surface, var(--player-shell-bg)) 28%,
+      transparent
+    );
+    --volume-shell-border: var(--surface-border, var(--player-shell-border));
+    --volume-shell-shadow:
+      0 4px 16px color-mix(in srgb, var(--surface-border) 62%, transparent),
+      0 1px 4px color-mix(in srgb, var(--surface-border) 40%, transparent);
+    --volume-shell-highlight: color-mix(
+      in srgb,
+      var(--surface-highlight) 22%,
+      transparent
+    );
+    --volume-shell-highlight-soft: color-mix(
+      in srgb,
+      var(--surface-highlight) 6%,
+      transparent
+    );
     position: absolute;
     right: 0;
     top: 0;
@@ -242,10 +264,6 @@
     z-index: 20;
   }
 
-  :global(.dark) .volume-hover-zone {
-    --capsule-track-bg: #2c2c2e;
-  }
-
   .capsule-track {
     position: relative;
     display: flex;
@@ -258,9 +276,7 @@
     padding-right: calc(var(--control-button-size, 34px) + 4px);
     border-radius: 999px;
     white-space: nowrap;
-    box-shadow:
-      0 4px 16px rgba(0, 0, 0, 0.12),
-      0 1px 4px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--volume-shell-shadow);
   }
 
   .capsule-icon-btn {
@@ -310,10 +326,10 @@
     font-family: var(--font-brand);
     font-size: 36px;
     letter-spacing: 1px;
-    color: #fff;
+    color: var(--album-accent-readable-foreground);
     -webkit-text-stroke: 4px var(--icon-active);
     paint-order: stroke fill;
-    -webkit-text-fill-color: #fff;
+    -webkit-text-fill-color: var(--album-accent-readable-foreground);
     pointer-events: none;
     transform: translateY(100%);
   }
@@ -334,8 +350,8 @@
       to right,
       var(--icon-active) 0%,
       var(--icon-active) var(--volume-percent),
-      var(--surface-highlight, rgba(120, 120, 128, 0.28)) var(--volume-percent),
-      var(--surface-highlight, rgba(120, 120, 128, 0.28)) 100%
+      var(--capsule-track-bg) var(--volume-percent),
+      var(--capsule-track-bg) 100%
     );
     outline: none;
     cursor: pointer;

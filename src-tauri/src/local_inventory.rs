@@ -14,7 +14,7 @@ use harubble_core::{
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use time::format_description::well_known::Iso8601;
 use time::OffsetDateTime;
@@ -217,6 +217,10 @@ pub fn spawn_inventory_scan(
     verification_mode: Option<VerificationMode>,
 ) {
     tauri::async_runtime::spawn(async move {
+        state
+            .wait_for_background_io_gate("local_inventory_scan", Duration::from_millis(250))
+            .await;
+
         let mode = match verification_mode {
             Some(mode) => mode,
             None => state.local_inventory_service.verification_mode().await,
@@ -234,15 +238,24 @@ pub fn spawn_inventory_scan(
 
         let inventory_version = started.inventory_version.clone();
         let locale = state.preferences().locale;
-        let scan_result = collect_local_audio_evidence(
-            Path::new(&root_output_dir),
-            &root_output_dir,
-            &inventory_version,
-            &provenance_records,
-            &state.local_inventory_service.cancel_flag,
-            locale,
-            |event| emit_local_inventory_scan_progress(&app, &event),
-        );
+        let app_for_scan = app.clone();
+        let cancel_flag = state.local_inventory_service.cancel_flag.clone();
+        let root_output_dir_for_scan = root_output_dir.clone();
+        let inventory_version_for_scan = inventory_version.clone();
+        let scan_result = tokio::task::spawn_blocking(move || {
+            collect_local_audio_evidence(
+                Path::new(&root_output_dir_for_scan),
+                &root_output_dir_for_scan,
+                &inventory_version_for_scan,
+                &provenance_records,
+                &cancel_flag,
+                locale,
+                |event| emit_local_inventory_scan_progress(&app_for_scan, &event),
+            )
+        })
+        .await
+        .map_err(|error| format!("inventory scan worker failed: {error}"))
+        .and_then(|result| result);
 
         let finished = match scan_result {
             Ok(ScanCollectionOutcome::Completed(result)) => {

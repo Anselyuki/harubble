@@ -9,6 +9,7 @@ use crate::downloads::events::{emit_download_job_updated, emit_download_manager_
 use harubble_core::download::model::{
     CreateDownloadJobRequest, DownloadJobSnapshot, DownloadManagerSnapshot,
 };
+use harubble_core::prepare_job;
 use tauri::{AppHandle, State};
 
 fn emit_download_state(app: &AppHandle, manager_snapshot: &DownloadManagerSnapshot) {
@@ -34,9 +35,10 @@ pub fn clear_audio_cache(state: State<'_, AppState>) -> Result<u64, String> {
 /// 适用于希望强制下次请求重新命中上游接口、排查缓存脏数据，或在调试时手动刷新后端响应缓存的场景。
 /// 成功时返回空值。
 /// 该接口只影响内存中的 API 响应缓存，不会删除已完成下载的文件，也不会影响下载任务历史。
+/// 普通业务、播放、视觉资源与下载链路使用独立客户端，因此会同时清理全部资源域的响应缓存。
 #[tauri::command]
 pub fn clear_response_cache(state: State<'_, AppState>) -> Result<(), String> {
-    state.api.clear_response_cache();
+    state.clear_api_response_caches();
     Ok(())
 }
 
@@ -45,9 +47,10 @@ pub fn clear_response_cache(state: State<'_, AppState>) -> Result<(), String> {
 /// 当系统代理设置变更、网络接口切换或网络恢复后，已有的 HTTP 客户端可能持有过期的
 /// 连接池与代理配置，导致后续请求失败。调用此接口会以当前系统环境重新构建客户端。
 /// 成功时返回空值；若重建失败则保留原有客户端不变并返回错误。
+/// 普通业务、播放、视觉资源与下载链路使用独立客户端，因此会同时重建全部 HTTP 客户端。
 #[tauri::command]
 pub fn reset_http_client(state: State<'_, AppState>) -> Result<(), String> {
-    state.api.reset_http_client().map_err(|e| e.to_string())
+    state.reset_http_clients()
 }
 
 /// 创建新的下载批次，并按当前偏好覆盖输出目录。
@@ -61,7 +64,7 @@ pub async fn create_download_job(
     state: State<'_, AppState>,
     request: CreateDownloadJobRequest,
 ) -> Result<DownloadJobSnapshot, String> {
-    let api = state.api.clone();
+    let api = state.download_api.clone();
     let preferences = state.preferences();
     let normalized_request = CreateDownloadJobRequest {
         options: harubble_core::download::model::DownloadOptions {
@@ -70,16 +73,23 @@ pub async fn create_download_job(
         },
         ..request
     };
+    let _creation_guard = state.download_job_creation_lock.lock().await;
+    let id_generator = {
+        let service = state.download_service.lock().await;
+        service.id_generator()
+    };
+    let prepared = prepare_job(&id_generator, &api, normalized_request)
+        .await
+        .map_err(|e| e.to_string())?;
     let (job_snapshot, manager_snapshot) = {
         let mut service = state.download_service.lock().await;
-        let job_snapshot = service
-            .create_job(&api, normalized_request)
-            .await
-            .map_err(|e| e.to_string())?;
+        let job_snapshot = service.register_prepared_job(prepared);
         let manager_snapshot = service.manager_snapshot();
         (job_snapshot, manager_snapshot)
     };
-    state.persist_download_snapshot(&manager_snapshot);
+    state
+        .persist_download_snapshot_async(manager_snapshot.clone())
+        .await;
 
     emit_download_job_updated(&app, &job_snapshot);
     emit_download_manager_state_changed(&app, &manager_snapshot);
@@ -133,7 +143,9 @@ pub async fn cancel_download_job(
     };
 
     if let Some(job_snapshot) = &snapshot {
-        state.persist_download_snapshot(&manager_snapshot);
+        state
+            .persist_download_snapshot_async(manager_snapshot.clone())
+            .await;
         emit_download_job_updated(&app, job_snapshot);
         emit_download_manager_state_changed(&app, &manager_snapshot);
     }
@@ -161,7 +173,9 @@ pub async fn cancel_download_task(
     };
 
     if let Some(job_snapshot) = &snapshot {
-        state.persist_download_snapshot(&manager_snapshot);
+        state
+            .persist_download_snapshot_async(manager_snapshot.clone())
+            .await;
         emit_download_job_updated(&app, job_snapshot);
         emit_download_manager_state_changed(&app, &manager_snapshot);
     }
@@ -188,7 +202,9 @@ pub async fn retry_download_job(
     };
 
     if let Some(job_snapshot) = &snapshot {
-        state.persist_download_snapshot(&manager_snapshot);
+        state
+            .persist_download_snapshot_async(manager_snapshot.clone())
+            .await;
         emit_download_job_updated(&app, job_snapshot);
         emit_download_manager_state_changed(&app, &manager_snapshot);
     }
@@ -216,7 +232,9 @@ pub async fn retry_download_task(
     };
 
     if let Some(job_snapshot) = &snapshot {
-        state.persist_download_snapshot(&manager_snapshot);
+        state
+            .persist_download_snapshot_async(manager_snapshot.clone())
+            .await;
         emit_download_job_updated(&app, job_snapshot);
         emit_download_manager_state_changed(&app, &manager_snapshot);
     }
@@ -240,7 +258,9 @@ pub async fn clear_download_history(
         let manager_snapshot = service.manager_snapshot();
         (removed_count, manager_snapshot)
     };
-    state.persist_download_snapshot(&manager_snapshot);
+    state
+        .persist_download_snapshot_async(manager_snapshot.clone())
+        .await;
 
     emit_download_state(&app, &manager_snapshot);
 

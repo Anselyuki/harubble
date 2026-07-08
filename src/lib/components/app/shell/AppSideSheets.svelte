@@ -28,6 +28,7 @@
     themePresetId?: string;
     themeCustomColors?: Partial<ThemeColorSlots>;
     colorScheme?: ColorScheme;
+    dynamicAlbumAccent?: boolean;
     settingsLogRefreshToken: number;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
@@ -49,6 +50,7 @@
     themePresetId = $bindable(DEFAULT_THEME_PRESET_ID),
     themeCustomColors = $bindable<Partial<ThemeColorSlots>>({}),
     colorScheme = $bindable<ColorScheme>('auto'),
+    dynamicAlbumAccent = $bindable<boolean>(true),
     settingsLogRefreshToken,
     notifyInfo,
     notifyError,
@@ -71,6 +73,7 @@
     bind:themePresetId
     bind:themeCustomColors
     bind:colorScheme
+    bind:dynamicAlbumAccent
     logRefreshToken={settingsLogRefreshToken}
     {notifyInfo}
     {notifyError}

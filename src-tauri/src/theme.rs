@@ -8,7 +8,7 @@ const MIN_ALPHA: u8 = 96;
 const SAMPLE_SIZE: u32 = 64;
 const QUANT_STEP: u8 = 24;
 
-/// 从专辑封面中提取出的主题强调色集合。
+/// 从专辑封面中提取出的完整主题色卡。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemePalette {
@@ -22,6 +22,16 @@ pub struct ThemePalette {
     pub accent_hover_rgb: [u8; 3],
     /// 从封面中提取的多个代表色（用于波形可视化等场景），最多 4 个。
     pub wave_colors: Vec<[u8; 3]>,
+    /// 表面/背景底色（十六进制）。
+    pub surface_hex: String,
+    /// 主要文本色（十六进制）。
+    pub text_primary_hex: String,
+    /// 次要文本色（十六进制）。
+    pub text_secondary_hex: String,
+    /// 淡色强调/辅助色（十六进制）。
+    pub tint_hex: String,
+    /// 危险/警告色（十六进制）。
+    pub danger_hex: String,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -53,18 +63,22 @@ impl BucketAccumulator {
     }
 }
 
-/// 从原始图片字节中提取可用于界面的强调色方案。
+/// 从原始图片字节中提取可用于界面的完整 6 槽色卡。
 ///
 /// 该算法会先对图片降采样、忽略近乎透明的像素，偏向选择饱和度较高的中间色，
-/// 再对结果做对比度归一化，以保证在应用的浅色播放器表面上仍具备可读性。
+/// 再对结果做对比度归一化。从提取的色桶中推导出语义化的 6 色色卡：
+/// accent（主强调）、surface（背景底色）、textPrimary（深色文本）、
+/// textSecondary（浅色文本）、tint（辅助色调）、danger（暖警告色）。
 pub fn extract_theme_palette(bytes: &[u8]) -> Result<ThemePalette> {
     let image = image::load_from_memory(bytes)
         .context("Failed to decode album artwork")?
         .to_rgba8();
     let sampled = image::imageops::resize(&image, SAMPLE_SIZE, SAMPLE_SIZE, FilterType::Triangle);
-    let (accent_rgb, wave_colors) = select_colors(&sampled);
+    let (accent_rgb, wave_colors, sorted_colors) = select_colors_extended(&sampled);
     let accent_rgb = accent_rgb.unwrap_or(DEFAULT_ACCENT_RGB);
     let accent_hover_rgb = derive_hover_color(accent_rgb);
+
+    let slots = derive_full_slots(accent_rgb, &sorted_colors);
 
     Ok(ThemePalette {
         accent_hex: rgb_to_hex(accent_rgb),
@@ -72,12 +86,25 @@ pub fn extract_theme_palette(bytes: &[u8]) -> Result<ThemePalette> {
         accent_rgb,
         accent_hover_rgb,
         wave_colors,
+        surface_hex: rgb_to_hex(slots.surface),
+        text_primary_hex: rgb_to_hex(slots.text_primary),
+        text_secondary_hex: rgb_to_hex(slots.text_secondary),
+        tint_hex: rgb_to_hex(slots.tint),
+        danger_hex: rgb_to_hex(slots.danger),
     })
 }
 
 const WAVE_COLOR_COUNT: usize = 4;
 
-fn select_colors(image: &RgbaImage) -> (Option<[u8; 3]>, Vec<[u8; 3]>) {
+struct DerivedSlots {
+    surface: [u8; 3],
+    text_primary: [u8; 3],
+    text_secondary: [u8; 3],
+    tint: [u8; 3],
+    danger: [u8; 3],
+}
+
+fn select_colors_extended(image: &RgbaImage) -> (Option<[u8; 3]>, Vec<[u8; 3]>, Vec<[u8; 3]>) {
     let mut buckets: HashMap<(u8, u8, u8), BucketAccumulator> = HashMap::new();
     let mut fallback = BucketAccumulator::default();
 
@@ -129,7 +156,82 @@ fn select_colors(image: &RgbaImage) -> (Option<[u8; 3]>, Vec<[u8; 3]>) {
         wave_colors
     };
 
-    (accent, wave_colors)
+    let sorted_colors: Vec<[u8; 3]> = sorted_buckets
+        .iter()
+        .take(12)
+        .filter_map(|b| b.average_rgb())
+        .collect();
+
+    (accent, wave_colors, sorted_colors)
+}
+
+fn derive_full_slots(accent: [u8; 3], palette_colors: &[[u8; 3]]) -> DerivedSlots {
+    let (accent_hue, _, _) = rgb_to_hsl(accent);
+
+    let palette_hsl: Vec<([u8; 3], f32, f32, f32)> = palette_colors
+        .iter()
+        .map(|&c| {
+            let (h, s, l) = rgb_to_hsl(c);
+            (c, h, s, l)
+        })
+        .collect();
+
+    let surface = derive_surface(accent_hue, &palette_hsl);
+    let text_primary = derive_text_primary(accent_hue);
+    let text_secondary = derive_text_secondary(accent_hue);
+    let tint = derive_tint(accent_hue, &palette_hsl);
+    let danger = derive_danger(accent_hue, &palette_hsl);
+
+    DerivedSlots {
+        surface,
+        text_primary,
+        text_secondary,
+        tint,
+        danger,
+    }
+}
+
+fn derive_surface(accent_hue: f32, palette_hsl: &[([u8; 3], f32, f32, f32)]) -> [u8; 3] {
+    for &(color, _, sat, light) in palette_hsl {
+        if sat < 0.3 && light > 0.7 {
+            return color;
+        }
+    }
+    hsl_to_rgb(accent_hue, 0.08, 0.88)
+}
+
+fn derive_text_primary(accent_hue: f32) -> [u8; 3] {
+    hsl_to_rgb(accent_hue, 0.08, 0.22)
+}
+
+fn derive_text_secondary(accent_hue: f32) -> [u8; 3] {
+    hsl_to_rgb(accent_hue, 0.06, 0.38)
+}
+
+fn derive_tint(accent_hue: f32, palette_hsl: &[([u8; 3], f32, f32, f32)]) -> [u8; 3] {
+    for &(color, hue, sat, light) in palette_hsl.iter().skip(1) {
+        let hue_diff = ((hue - accent_hue).abs()).min(1.0 - (hue - accent_hue).abs());
+        if hue_diff > 0.05 && sat > 0.15 && (0.4..=0.7).contains(&light) {
+            return color;
+        }
+    }
+    hsl_to_rgb(accent_hue, 0.2, 0.6)
+}
+
+fn derive_danger(accent_hue: f32, palette_hsl: &[([u8; 3], f32, f32, f32)]) -> [u8; 3] {
+    for &(color, hue, sat, light) in palette_hsl {
+        let is_warm = hue < 0.08 || hue > 0.92;
+        if is_warm && sat > 0.4 && (0.3..=0.55).contains(&light) {
+            return color;
+        }
+    }
+
+    let danger_hue = if (accent_hue - 0.0).abs() < 0.1 || (accent_hue - 1.0).abs() < 0.1 {
+        0.08
+    } else {
+        0.0
+    };
+    hsl_to_rgb(danger_hue, 0.6, 0.42)
 }
 
 fn normalize_accent(rgb: [u8; 3]) -> [u8; 3] {

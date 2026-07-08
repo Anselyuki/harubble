@@ -192,6 +192,7 @@
           <AlbumCard
             {album}
             selected={runtime.selectedAlbumCid === album.cid}
+            loading={runtime.loadingAlbumCid === album.cid}
             reducedMotion={runtime.prefersReducedMotion}
             onclick={() => runtime.handleSelectAlbum(album)}
           />

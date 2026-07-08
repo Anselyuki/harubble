@@ -4,7 +4,7 @@
 //! 主要服务于前端播放器、系统媒体控制和播放进度交互。
 
 use crate::app_state::AppState;
-use crate::player::{PlaybackContext, PlayerState};
+use crate::player::{PlaybackContext, PlaybackError, PlaybackStartResult, PlayerState};
 use tauri::State;
 
 /// 播放指定歌曲，并可携带封面地址与播放队列上下文。
@@ -18,9 +18,13 @@ pub async fn play_song(
     song_cid: String,
     cover_url: Option<String>,
     playback_context: Option<PlaybackContext>,
-) -> Result<f64, String> {
+) -> Result<PlaybackStartResult, PlaybackError> {
     state
-        .play_song_internal(song_cid, cover_url, playback_context)
+        .dispatch_playback_transition("play_song", move |state, request_id| async move {
+            state
+                .play_song_for_request(request_id, song_cid, cover_url, playback_context)
+                .await
+        })
         .await
 }
 
@@ -53,28 +57,47 @@ pub fn resume_playback(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn seek_current_playback(
     state: State<'_, AppState>,
     position_secs: f64,
-) -> Result<f64, String> {
-    state.seek_current_internal(position_secs).await
+) -> Result<PlaybackStartResult, PlaybackError> {
+    state
+        .dispatch_playback_transition(
+            "seek_current_playback",
+            move |state, request_id| async move {
+                state
+                    .seek_current_for_request(request_id, position_secs)
+                    .await
+            },
+        )
+        .await
 }
 
 /// 播放队列中的下一首歌曲。
 ///
 /// 适用于播放器“下一首”操作或系统媒体会话的 next 控制。
 /// 返回值为切换后歌曲的总时长（秒）。
-/// 该接口依赖当前会话已建立可导航的队列上下文；若当前不是队列播放或已位于末尾，将返回错误。
+/// 该接口依赖当前会话已建立可导航的队列上下文；队列中多于一首时会循环前进，否则返回错误。
 #[tauri::command]
-pub async fn play_next(state: State<'_, AppState>) -> Result<f64, String> {
-    state.play_next_internal().await
+pub async fn play_next(state: State<'_, AppState>) -> Result<PlaybackStartResult, PlaybackError> {
+    state
+        .dispatch_playback_transition("play_next", move |state, request_id| async move {
+            state.play_next_for_request(request_id).await
+        })
+        .await
 }
 
 /// 播放队列中的上一首歌曲。
 ///
 /// 适用于播放器“上一首”操作或系统媒体会话的 previous 控制。
 /// 返回值为切换后歌曲的总时长（秒）。
-/// 该接口依赖当前会话已建立可导航的队列上下文；若当前不是队列播放或已位于开头，将返回错误。
+/// 该接口依赖当前会话已建立可导航的队列上下文；队列中多于一首时会循环后退，否则返回错误。
 #[tauri::command]
-pub async fn play_previous(state: State<'_, AppState>) -> Result<f64, String> {
-    state.play_previous_internal().await
+pub async fn play_previous(
+    state: State<'_, AppState>,
+) -> Result<PlaybackStartResult, PlaybackError> {
+    state
+        .dispatch_playback_transition("play_previous", move |state, request_id| async move {
+            state.play_previous_for_request(request_id).await
+        })
+        .await
 }
 
 /// 获取当前播放器状态快照。
@@ -94,15 +117,14 @@ pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerState, Strin
 /// 该接口具备幂等性：传入相同有效音量时结果稳定；若传入越界值会被自动裁剪，调用方不应假设返回值一定等于原始输入。
 /// 音量变化会自动持久化到偏好文件，下次启动时恢复。
 #[tauri::command]
-pub fn set_playback_volume(state: State<'_, AppState>, volume: f64) -> Result<f64, String> {
+pub async fn set_playback_volume(state: State<'_, AppState>, volume: f64) -> Result<f64, String> {
     let actual = state.player.set_volume(volume);
-    let mut prefs = state.preferences();
-    if (prefs.volume - actual).abs() > 0.001 {
-        prefs.volume = actual;
-        let locale = prefs.locale;
-        let store = state.preferences_store();
-        let _ = store.save(&prefs, locale);
-        state.set_preferences(prefs);
+    if (state.preferences().volume - actual).abs() > 0.001 {
+        state
+            .update_preferences(|prefs| {
+                prefs.volume = actual;
+            })
+            .await?;
     }
     Ok(actual)
 }

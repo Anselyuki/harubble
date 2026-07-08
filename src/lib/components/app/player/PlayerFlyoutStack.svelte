@@ -174,6 +174,7 @@
         progress={player.progress}
         duration={player.duration}
         isLoading={player.isLoading}
+        isPlayTogglePending={player.isPlayTogglePending}
         isShuffled={player.shuffleEnabled}
         repeatMode={player.repeatMode}
         lyricsActive={player.lyricsOpen}
@@ -187,6 +188,7 @@
         {downloadDisabled}
         volume={player.volume}
         muted={player.muted}
+        playbackFormat={player.playbackFormat}
         onVolumeChange={player.setVolume}
         onToggleMute={player.toggleMute}
         reducedMotion={shell.prefersReducedMotion}
