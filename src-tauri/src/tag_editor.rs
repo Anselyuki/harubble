@@ -187,11 +187,11 @@ impl TagEditorService {
         {
             let remote = self.remote.read().expect("poisoned");
             if remote.tag_dimensions.iter().any(|d| d.key == key) {
-                anyhow::bail!("维度 key '{key}' 已存在于远端注册表中");
+                anyhow::bail!("dimension key '{key}' already exists in remote registry");
             }
             let mut local = self.local.write().expect("poisoned");
             if local.tag_dimensions.iter().any(|d| d.key == key) {
-                anyhow::bail!("维度 key '{key}' 已存在于本地注册表中");
+                anyhow::bail!("dimension key '{key}' already exists in local registry");
             }
             local.tag_dimensions.push(TagDimension {
                 key: key.to_string(),

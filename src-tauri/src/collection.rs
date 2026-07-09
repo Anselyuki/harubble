@@ -186,10 +186,11 @@ impl CollectionService {
     ///
     /// 调用 `initialize_schema()` 确保数据库表结构存在。
     pub fn new(db_path: &Path, official_json: &[u8]) -> Result<Self, String> {
-        let conn = Connection::open(db_path).map_err(|e| format!("打开合集数据库失败: {e}"))?;
+        let conn = Connection::open(db_path)
+            .map_err(|e| format!("failed to open collection database: {e}"))?;
 
         let file: OfficialCollectionsFile = serde_json::from_slice(official_json)
-            .map_err(|e| format!("解析官方合集 JSON 失败: {e}"))?;
+            .map_err(|e| format!("failed to parse official collections JSON: {e}"))?;
 
         let official: Vec<OfficialCollectionEntry> = file
             .collections

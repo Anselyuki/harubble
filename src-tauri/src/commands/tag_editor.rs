@@ -140,13 +140,13 @@ pub async fn import_tag_editor_registry(
     let editor = state.tag_editor.clone();
     let path = PathBuf::from(path);
     tokio::task::spawn_blocking(move || {
-        let content =
-            std::fs::read_to_string(Path::new(&path)).map_err(|e| format!("读取文件失败: {e}"))?;
+        let content = std::fs::read_to_string(Path::new(&path))
+            .map_err(|e| format!("failed to read file: {e}"))?;
         let registry: TagRegistry =
-            serde_json::from_str(&content).map_err(|e| format!("JSON 解析失败: {e}"))?;
+            serde_json::from_str(&content).map_err(|e| format!("failed to parse JSON: {e}"))?;
         if registry.schema_version != CURRENT_SCHEMA_VERSION {
             return Err(format!(
-                "schema 版本不匹配: 文件为 {}，当前支持 {}",
+                "schema version mismatch: file is {}, current is {}",
                 registry.schema_version, CURRENT_SCHEMA_VERSION
             ));
         }

@@ -20,6 +20,7 @@
     SkipBack,
     SkipForward,
   } from '@lucide/svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   type PendingAction = 'play' | 'previous' | 'next' | 'seek';
   type PlayToggleTarget = 'playing' | 'paused';
@@ -50,7 +51,9 @@
   const hasSong = $derived(Boolean(playerState.songCid));
   const title = $derived(playerState.songName || 'Harubble');
   const artists = $derived(
-    playerState.artists.length ? playerState.artists.join(' / ') : 'No track'
+    playerState.artists.length
+      ? playerState.artists.join(' / ')
+      : m.mini_player_no_track()
   );
   const duration = $derived(Math.max(0, playerState.duration || 0));
   const progress = $derived(Math.max(0, playerState.progress || 0));
@@ -63,7 +66,11 @@
     playerState.isLoading || pendingPlayTarget !== null
   );
   const playLabel = $derived(
-    playButtonLoading ? 'Loading' : playerState.isPlaying ? 'Pause' : 'Play'
+    playButtonLoading
+      ? m.player_status_loading()
+      : playerState.isPlaying
+        ? m.player_aria_pause()
+        : m.player_aria_play()
   );
 
   function applySystemTheme() {
@@ -234,7 +241,7 @@
 </svelte:head>
 
 <main class="mini-player">
-  <section class="track-row" aria-label="Current track">
+  <section class="track-row" aria-label={m.mini_player_track_section_aria()}>
     <div class="cover-shell" aria-hidden="true" data-tauri-drag-region>
       {#if playerState.coverUrl}
         <img class="cover-art" src={playerState.coverUrl} alt="" />
@@ -251,15 +258,15 @@
     <button
       type="button"
       class="icon-button open-button"
-      aria-label="Open Harubble"
-      title="Open Harubble"
+      aria-label={m.mini_player_open_aria()}
+      title={m.mini_player_open_aria()}
       onclick={openMainWindow}
     >
       <ExternalLink size={16} strokeWidth={1.8} />
     </button>
   </section>
 
-  <section class="progress-row" aria-label="Playback progress">
+  <section class="progress-row" aria-label={m.player_aria_timeline()}>
     <span class="time-label">{formatTime(shownProgress)}</span>
     <input
       class="progress-slider"
@@ -269,7 +276,7 @@
       step="0.1"
       value={shownProgress}
       disabled={!canSeek || pendingAction === 'seek'}
-      aria-label="Seek playback"
+      aria-label={m.player_aria_seek()}
       aria-valuetext={`${formatTime(shownProgress)} of ${formatTime(duration)}`}
       oninput={handleSeekInput}
       onchange={handleSeekCommit}
@@ -278,12 +285,12 @@
     <span class="time-label">{formatTime(duration)}</span>
   </section>
 
-  <section class="controls-row" aria-label="Playback controls">
+  <section class="controls-row" aria-label={m.player_aria_transport()}>
     <button
       type="button"
       class="icon-button"
-      aria-label="Previous track"
-      title="Previous track"
+      aria-label={m.mini_player_previous_aria()}
+      title={m.mini_player_previous_aria()}
       disabled={!playerState.hasPrevious || pendingAction !== null}
       onclick={handlePrevious}
     >
@@ -312,8 +319,8 @@
     <button
       type="button"
       class="icon-button"
-      aria-label="Next track"
-      title="Next track"
+      aria-label={m.mini_player_next_aria()}
+      title={m.mini_player_next_aria()}
       disabled={!playerState.hasNext || pendingAction !== null}
       onclick={handleNext}
     >

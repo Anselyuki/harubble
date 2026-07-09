@@ -15,7 +15,8 @@ pub(crate) struct ListeningHistoryService {
 
 impl ListeningHistoryService {
     pub(crate) fn new(db_path: &Path) -> Result<Self, String> {
-        let conn = Connection::open(db_path).map_err(|e| format!("打开收听历史数据库失败: {e}"))?;
+        let conn = Connection::open(db_path)
+            .map_err(|e| format!("failed to open listening history database: {e}"))?;
         let service = Self {
             conn: Mutex::new(conn),
         };

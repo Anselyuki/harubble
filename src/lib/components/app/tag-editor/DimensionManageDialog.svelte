@@ -86,7 +86,7 @@
         <div class="add-form">
           <Input
             bind:value={newDimKey}
-            placeholder="key"
+            placeholder={m.tag_editor_placeholder_dim_key()}
             class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
           />
           <Input

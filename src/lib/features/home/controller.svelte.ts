@@ -7,6 +7,7 @@ import type {
   TagGroup,
 } from '$lib/types';
 import { homeStore } from './store.svelte';
+import * as m from '$lib/paraglide/messages.js';
 
 interface HomeControllerDeps {
   getLatestAlbums: (limit: number) => Promise<Album[]>;
@@ -62,7 +63,9 @@ export function createHomeController(deps: HomeControllerDeps) {
     } else {
       const reason = results[0].reason;
       deps.notifyError(
-        `加载最新专辑失败: ${reason instanceof Error ? reason.message : String(reason)}`
+        m.home_error_load_albums({
+          error: reason instanceof Error ? reason.message : String(reason),
+        })
       );
     }
 
@@ -107,7 +110,9 @@ export function createHomeController(deps: HomeControllerDeps) {
       homeStore.tagGroups = groups;
     } catch (e: unknown) {
       deps.notifyError(
-        `加载标签分组失败: ${e instanceof Error ? e.message : String(e)}`
+        m.home_error_load_tag_groups({
+          error: e instanceof Error ? e.message : String(e),
+        })
       );
     }
   }
@@ -150,7 +155,9 @@ export function createHomeController(deps: HomeControllerDeps) {
       homeStore.recentHistory = [];
     } catch (e: unknown) {
       deps.notifyError(
-        `清除收听历史失败: ${e instanceof Error ? e.message : String(e)}`
+        m.home_error_clear_history({
+          error: e instanceof Error ? e.message : String(e),
+        })
       );
     }
   }

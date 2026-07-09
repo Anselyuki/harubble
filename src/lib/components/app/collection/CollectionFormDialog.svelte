@@ -2,6 +2,8 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import * as m from '$lib/paraglide/messages.js';
+  import { localeState } from '$lib/i18n';
 
   interface Props {
     open: boolean;
@@ -34,10 +36,18 @@
   });
 
   const isValid = $derived.by(() => name.trim().length > 0);
-  const title = $derived.by(() =>
-    mode === 'create' ? '新建合集' : '编辑合集'
-  );
-  const submitLabel = $derived.by(() => (mode === 'create' ? '创建' : '保存'));
+  const title = $derived.by(() => {
+    void localeState.current;
+    return mode === 'create'
+      ? m.collection_form_title_create()
+      : m.collection_form_title_edit();
+  });
+  const submitLabel = $derived.by(() => {
+    void localeState.current;
+    return mode === 'create'
+      ? m.collection_form_submit_create()
+      : m.collection_form_submit_save();
+  });
 
   async function handleSubmit() {
     if (!isValid || submitting) return;
@@ -65,25 +75,25 @@
     </Dialog.Header>
     <div class="dialog-body">
       <label class="settings-field">
-        <span>名称</span>
+        <span>{m.collection_form_label_name()}</span>
         <Input
           bind:value={name}
-          placeholder="输入合集名称"
+          placeholder={m.collection_form_placeholder_name()}
           class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
         />
       </label>
       <label class="settings-field">
-        <span>描述</span>
+        <span>{m.collection_form_label_description()}</span>
         <Input
           bind:value={description}
-          placeholder="输入合集描述（可选）"
+          placeholder={m.collection_form_placeholder_description()}
           class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
         />
       </label>
     </div>
     <Dialog.Footer>
       <Button variant="outline" onclick={onClose} disabled={submitting}>
-        取消
+        {m.collection_form_cancel()}
       </Button>
       <Button onclick={handleSubmit} disabled={!isValid || submitting}>
         {submitLabel}

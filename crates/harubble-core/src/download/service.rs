@@ -58,21 +58,21 @@ fn selection_job_title(
 ) -> String {
     let album_context = first_album_name
         .filter(|name| !name.is_empty())
-        .map(|name| format!("{name} · 已选 {song_count} 首"));
+        .map(|name| format!("{name} · {song_count} songs selected"));
 
     if song_count == 1 {
         return first_song_name
             .filter(|name| !name.is_empty())
             .map(|name| name.to_string())
             .or(album_context)
-            .unwrap_or_else(|| "已选 1 首".to_string());
+            .unwrap_or_else(|| "1 song selected".to_string());
     }
 
     if album_count <= 1 {
-        return album_context.unwrap_or_else(|| format!("已选 {song_count} 首"));
+        return album_context.unwrap_or_else(|| format!("{song_count} songs selected"));
     }
 
-    format!("已选 {song_count} 首 · {album_count} 张专辑")
+    format!("{song_count} songs selected · {album_count} albums")
 }
 
 #[derive(Default)]

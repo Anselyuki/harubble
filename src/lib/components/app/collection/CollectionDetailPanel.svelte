@@ -6,6 +6,8 @@
   import type { PartialOptions } from 'overlayscrollbars';
   import SongRow from '$lib/components/SongRow.svelte';
   import { getSongDetail, getAlbumDetail } from '$lib/api';
+  import * as m from '$lib/paraglide/messages.js';
+  import { localeState } from '$lib/i18n';
   import type {
     Collection,
     CollectionSummary,
@@ -69,7 +71,10 @@
     return sections.flatMap((s) => s.songIds);
   });
 
-  const songCountLabel = $derived.by(() => `${allSongIds.length} 首歌曲`);
+  const songCountLabel = $derived.by(() => {
+    void localeState.current;
+    return m.collection_song_count({ count: allSongIds.length });
+  });
 
   const sectionStartMap = $derived.by((): SvelteMap<string, string> => {
     const sections = props.collection?.sections;
@@ -257,11 +262,11 @@
 >
   {#if props.isLoading}
     <div class="collection-detail-loading" bind:this={loadingEl}>
-      <span>加载中…</span>
+      <span>{m.collection_detail_loading()}</span>
     </div>
   {:else if !props.collection}
     <div class="collection-detail-loading" bind:this={loadingEl}>
-      <span>请从侧边栏选择一个合集</span>
+      <span>{m.collection_detail_select_hint()}</span>
     </div>
   {:else}
     {@const collection = props.collection}
@@ -273,7 +278,9 @@
       <div class="collection-hero">
         <div class="collection-hero-info" bind:this={heroInfoEl}>
           {#if collection.isOfficial}
-            <span class="collection-official-tag">★ 官方合集</span>
+            <span class="collection-official-tag"
+              >{m.collection_official_badge()}</span
+            >
           {/if}
           <h1 class="collection-hero-title">{collection.name}</h1>
           {#if collection.description}
@@ -288,13 +295,13 @@
               class="btn btn-meta"
               onclick={() => props.onExport(collection.id)}
             >
-              导出
+              {m.collection_action_export()}
             </button>
           </div>
           {#if isEditable}
             <div class="controls collection-hero-actions">
               <button type="button" class="btn" onclick={props.onEdit}>
-                编辑
+                {m.collection_action_edit()}
               </button>
               <button
                 type="button"
@@ -302,14 +309,14 @@
                 onclick={() => {
                   if (
                     confirm(
-                      `确定要删除合集「${collection.name}」吗？此操作不可撤销。`
+                      m.collection_delete_confirm({ name: collection.name })
                     )
                   ) {
                     props.onDelete(collection.id);
                   }
                 }}
               >
-                删除
+                {m.collection_action_delete()}
               </button>
             </div>
           {/if}
@@ -320,7 +327,7 @@
 
       <div class="song-list" bind:this={songListEl}>
         {#if isResolvingSongs && resolvedSongs.length === 0}
-          <div class="song-list-loading">加载歌曲信息…</div>
+          <div class="song-list-loading">{m.collection_songs_loading()}</div>
         {:else if resolvedSongs.length > 0}
           {#each resolvedSongs as rs, index (rs.entry.cid)}
             {#if sectionStartMap.get(rs.entry.cid)}
@@ -383,8 +390,8 @@
                 <button
                   type="button"
                   class="remove-btn"
-                  title="移除"
-                  aria-label="从合集中移除"
+                  title={m.collection_song_remove_title()}
+                  aria-label={m.collection_song_remove_aria()}
                   onclick={(e) => {
                     e.stopPropagation();
                     props.onRemoveSongs(collection.id, [rs.entry.cid]);
@@ -397,7 +404,7 @@
           {/each}
         {:else if allSongIds.length === 0}
           <div class="empty-song-list">
-            暂无歌曲，从专辑详情页将歌曲添加到此合集
+            {m.collection_songs_empty()}
           </div>
         {/if}
       </div>

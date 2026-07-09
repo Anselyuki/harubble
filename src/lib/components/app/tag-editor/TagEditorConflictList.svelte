@@ -1,6 +1,7 @@
 <script lang="ts">
   import TagEditorConflictItem from './TagEditorConflictItem.svelte';
   import type { ConflictResolution, TagEditorMergeConflict } from '$lib/types';
+  import * as m from '$lib/paraglide/messages.js';
 
   interface Props {
     conflicts: TagEditorMergeConflict[];
@@ -14,7 +15,9 @@
 </script>
 
 <section class="conflict-section">
-  <h3 class="conflict-heading">冲突列表 ({conflicts.length})</h3>
+  <h3 class="conflict-heading">
+    {m.tag_editor_conflict_list_title({ count: conflicts.length })}
+  </h3>
   <div class="conflict-list">
     {#each conflicts as conflict (`${conflict.entityType}:${conflict.cid}:${conflict.dimensionKey}`)}
       <TagEditorConflictItem {conflict} {onResolve} />

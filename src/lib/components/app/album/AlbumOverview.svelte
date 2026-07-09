@@ -146,11 +146,13 @@
       {#if albums.length === 0}
         <div class="overview-empty">
           <div class="overview-empty-icon">♪</div>
-          <div class="overview-empty-text">暂无专辑</div>
+          <div class="overview-empty-text">{m.album_overview_empty()}</div>
         </div>
       {:else}
         <div class="overview-section">
-          <h2 class="overview-section-title">全部专辑 ({albums.length})</h2>
+          <h2 class="overview-section-title">
+            {m.album_overview_all_title({ count: albums.length })}
+          </h2>
           <div class="album-grid">
             {#each albums as album (album.cid)}
               <AlbumCard

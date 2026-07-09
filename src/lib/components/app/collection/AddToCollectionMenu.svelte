@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { CollectionSummary } from '$lib/types';
   import FolderPlusIcon from '@lucide/svelte/icons/folder-plus';
+  import * as m from '$lib/paraglide/messages.js';
 
   interface Props {
     collections: CollectionSummary[];
@@ -46,8 +47,8 @@
   <button
     type="button"
     class="add-to-collection-btn"
-    title="添加到合集"
-    aria-label="添加到合集"
+    title={m.collection_menu_add_aria()}
+    aria-label={m.collection_menu_add_aria()}
     aria-expanded={open}
     onclick={toggle}
   >
@@ -57,7 +58,7 @@
   {#if open}
     <div class="add-to-collection-menu" role="menu">
       {#if userCollections.length === 0}
-        <div class="menu-empty">暂无自定义合集</div>
+        <div class="menu-empty">{m.collection_menu_empty()}</div>
       {:else}
         {#each userCollections as col (col.id)}
           <button

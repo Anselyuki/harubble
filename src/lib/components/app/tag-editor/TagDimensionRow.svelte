@@ -2,6 +2,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
   import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
   import type { TagEditorLocalizedValue } from '$lib/types';
+  import * as m from '$lib/paraglide/messages.js';
 
   interface Props {
     dimensionKey: string;
@@ -153,7 +154,7 @@
             type="button"
             class="chip-delete"
             onclick={() => handleRemoveValue(idx)}
-            aria-label="删除标签">×</button
+            aria-label={m.tag_editor_remove_tag_aria()}>×</button
           >
         </span>
       {/each}

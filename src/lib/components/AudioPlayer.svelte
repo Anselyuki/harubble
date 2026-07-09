@@ -1064,7 +1064,7 @@
               {#if playbackFormat!.resampling || playbackFormat!.channelRemix}
                 <div class="format-popover-section-divider">
                   <span class="format-popover-section-badge-accent"
-                    >Processing</span
+                    >{m.player_format_section_processing()}</span
                   >
                 </div>
                 <div class="format-popover-rows">

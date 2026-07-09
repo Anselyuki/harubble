@@ -18,6 +18,7 @@
     killTweens,
     MOTION,
   } from '$lib/design/gsap';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     ref = $bindable(null),
@@ -108,7 +109,7 @@
               {...props}
             >
               <XIcon />
-              <span class="sr-only">Close</span>
+              <span class="sr-only">{m.ui_close()}</span>
             </Button>
           {/snippet}
         </SheetPrimitive.Close>
