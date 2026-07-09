@@ -261,6 +261,16 @@
       seekPreview = null;
     }
   }
+
+  function handleLyricSeek(time: number) {
+    if (!canSeek) return;
+    seekPreview = time;
+    try {
+      player.seek(time);
+    } catch {
+      seekPreview = null;
+    }
+  }
 </script>
 
 <div
@@ -503,11 +513,23 @@
     {:else if player.lyricsLines.length > 0}
       <div class="fullscreen-lyrics" bind:this={lyricsListRef}>
         {#each player.lyricsLines as line, index (line.id)}
-          <p
-            class={`fullscreen-lyric-line${index === player.activeLyricIndex ? ' active' : ''}`}
-          >
-            {line.text}
-          </p>
+          {#if line.time !== null && canSeek}
+            <button
+              type="button"
+              class="fullscreen-lyric-line seekable"
+              class:active={index === player.activeLyricIndex}
+              onclick={() => handleLyricSeek(line.time!)}
+            >
+              {line.text}
+            </button>
+          {:else}
+            <p
+              class="fullscreen-lyric-line"
+              class:active={index === player.activeLyricIndex}
+            >
+              {line.text}
+            </p>
+          {/if}
         {/each}
       </div>
     {:else}

@@ -290,7 +290,8 @@ export function createNavigationManager(deps: NavigationManagerDeps) {
       artists: song.artists,
       coverUrl: getSelectedAlbumCoverUrl(selectedAlbum),
     };
-    const entries = sourceEntries.length ? sourceEntries : [fallbackEntry];
+    const isInSourceEntries = sourceEntries.some((e) => e.cid === song.cid);
+    const entries = isInSourceEntries ? sourceEntries : [fallbackEntry];
     deps.playerController.applyPlaybackQueue(entries, song.cid);
     const shuffleEnabled = deps.getShuffleEnabled();
     const playbackOrder = deps.getPlaybackOrder();

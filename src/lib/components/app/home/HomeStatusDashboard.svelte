@@ -171,16 +171,6 @@
     flex-shrink: 0;
   }
 
-  .np-cover.playing {
-    animation: motion-spin 8s linear infinite;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .np-cover.playing {
-      animation: none;
-    }
-  }
-
   .np-cover-placeholder {
     width: 48px;
     height: 48px;

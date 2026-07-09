@@ -276,6 +276,16 @@ body {
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 img[data-image-state='empty'],
@@ -2186,6 +2196,16 @@ img[data-image-state='error'] {
   line-height: 1.8;
   color: rgba(255, 255, 255, 0.3);
   border-radius: 12px;
+  background: none;
+  border: none;
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  transition:
+    font-size var(--motion-slow) var(--ease-ios),
+    color var(--motion-slow) var(--ease-ios),
+    transform var(--motion-slow) var(--ease-decelerate);
 }
 
 .fullscreen-lyric-line.active {
@@ -2193,6 +2213,30 @@ img[data-image-state='error'] {
   font-weight: 800;
   font-size: 26px;
   transform: translateX(4px);
+}
+
+.fullscreen-lyric-line.seekable {
+  cursor: pointer;
+  transition:
+    font-size var(--motion-slow) var(--ease-ios),
+    color var(--motion-fast) var(--ease-ios),
+    transform var(--motion-slow) var(--ease-decelerate),
+    background-color var(--motion-fast) var(--ease-ios),
+    opacity var(--motion-fast) var(--ease-ios);
+}
+
+.fullscreen-lyric-line.seekable:hover {
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.fullscreen-lyric-line.seekable:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.fullscreen-lyric-line.seekable:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline-offset: -2px;
 }
 
 .fullscreen-lyrics-empty {
