@@ -1072,7 +1072,7 @@ mod tests {
     fn adds_album_context_for_single_album_selection() {
         assert_eq!(
             selection_job_title(3, 1, Some("夜航星"), Some("前路未明")),
-            "前路未明 · 已选 3 首"
+            "前路未明 · 3 songs selected"
         );
     }
 
@@ -1080,7 +1080,7 @@ mod tests {
     fn falls_back_to_album_context_when_single_song_name_is_missing() {
         assert_eq!(
             selection_job_title(1, 1, Some(""), Some("前路未明")),
-            "前路未明 · 已选 1 首"
+            "前路未明 · 1 songs selected"
         );
     }
 
@@ -1088,7 +1088,7 @@ mod tests {
     fn shows_album_span_for_cross_album_selection() {
         assert_eq!(
             selection_job_title(5, 2, Some("夜航星"), Some("前路未明")),
-            "已选 5 首 · 2 张专辑"
+            "5 songs selected · 2 albums"
         );
     }
 }

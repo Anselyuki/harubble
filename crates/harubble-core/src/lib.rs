@@ -72,7 +72,9 @@ pub use downloader::{
     DownloadProvenanceSeed, MetaOverride, OwnedFlacMetadata, WritePayload,
 };
 /// 首页数据结构：系列分组、收听历史、收听事件与状态仪表盘。
-pub use homepage::{HistoryEntry, HomepageStatus, ListeningEvent, SeriesGroup, TagGroup};
+pub use homepage::{
+    derive_series_tags, HistoryEntry, HomepageStatus, ListeningEvent, SeriesGroup, TagGroup,
+};
 /// 本地库存扫描、徽标聚合与证据建模相关公共类型与工具。
 pub use local_inventory::{
     aggregate_album_download_badge, album_badge_for_status, album_badge_from_evidence,
