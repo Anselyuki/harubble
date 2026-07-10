@@ -113,6 +113,7 @@ pub trait PlaybackBackend: Send {
 }
 
 pub mod cpal;
+pub(crate) mod cpal_helpers;
 
 /// 创建默认播放后端实现。
 ///

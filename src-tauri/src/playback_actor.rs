@@ -117,6 +117,12 @@ impl PlaybackActor {
             command_name,
             CommandDomain::PlaybackTransition,
         );
+        // 先判断 actor 是否还接受消息。`begin_playback_transition` 会 supersede 当前
+        // 加载会话，一旦调用便无法撤销；如果这时通道已经关闭，我们会把播放器留在
+        // 已被打断的空态却又启动不了新会话。
+        if self.sender.is_closed() {
+            return Err(playback_actor_closed_error(command_name));
+        }
         let request_id = state.begin_playback_transition(command_name);
         let load_ticket = state.playback_load_gate.enter();
         self.sender

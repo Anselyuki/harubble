@@ -737,6 +737,7 @@ mod tests {
             "app_state/mod.rs",
             "app_state/playback.rs",
             "app_state/media_controls.rs",
+            "app_state/api_clients.rs",
             "commands/playback.rs",
             "network_monitor.rs",
             "playback_actor.rs",
@@ -750,6 +751,7 @@ mod tests {
 
         let image_allowed = [
             "app_state/mod.rs",
+            "app_state/api_clients.rs",
             "commands/library.rs",
             "network_monitor.rs",
             "notification/cover.rs",
@@ -758,6 +760,7 @@ mod tests {
 
         let download_allowed = [
             "app_state/mod.rs",
+            "app_state/api_clients.rs",
             "commands/downloads.rs",
             "downloads/bridge.rs",
             "network_monitor.rs",

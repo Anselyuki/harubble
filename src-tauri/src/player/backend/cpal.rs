@@ -3,9 +3,9 @@
 //! 该模块负责选择可用输出设备与格式、创建音频输出流，并把播放器解码后的样本缓冲
 //! 推送到系统音频设备，供桌面端实际发声使用。
 
+use super::cpal_helpers::*;
 use crate::player::backend::{
-    AudioCallbackMetrics, AudioMetricsHandler, AudioUnderrunHandler, OutputFormat,
-    OutputSampleFormat, PlaybackBackend,
+    AudioCallbackMetrics, AudioMetricsHandler, AudioUnderrunHandler, OutputFormat, PlaybackBackend,
 };
 use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
 use anyhow::{Context, Result};
@@ -18,8 +18,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-
-const OUTPUT_SMOOTHING_FRAMES: usize = 64;
 
 fn choose_negotiated_output_config(
     device: &cpal::Device,
@@ -168,91 +166,6 @@ impl From<OutputFormat> for ExactOutputFormat {
             sample_format: Some(cpal_sample_format(output_format.sample_format)),
         }
     }
-}
-
-fn is_supported_sample_format(format: SampleFormat) -> bool {
-    sample_format_priority(format).is_some()
-}
-
-fn is_supported_output_config(config: &SupportedStreamConfig) -> bool {
-    is_supported_sample_format(config.sample_format())
-        && config.channels() > 0
-        && config.sample_rate() > 0
-}
-
-fn sample_format_priority(format: SampleFormat) -> Option<usize> {
-    match format {
-        SampleFormat::F32 => Some(0),
-        SampleFormat::F64 => Some(1),
-        SampleFormat::I16 => Some(2),
-        SampleFormat::U16 => Some(3),
-        SampleFormat::I24 => Some(4),
-        SampleFormat::U24 => Some(5),
-        SampleFormat::I32 => Some(6),
-        SampleFormat::U32 => Some(7),
-        SampleFormat::I8 => Some(8),
-        SampleFormat::U8 => Some(9),
-        SampleFormat::I64 => Some(10),
-        SampleFormat::U64 => Some(11),
-        _ => None,
-    }
-}
-
-fn output_sample_format(format: SampleFormat) -> Option<OutputSampleFormat> {
-    match format {
-        SampleFormat::F32 => Some(OutputSampleFormat::F32),
-        SampleFormat::F64 => Some(OutputSampleFormat::F64),
-        SampleFormat::I8 => Some(OutputSampleFormat::I8),
-        SampleFormat::I16 => Some(OutputSampleFormat::I16),
-        SampleFormat::I24 => Some(OutputSampleFormat::I24),
-        SampleFormat::I32 => Some(OutputSampleFormat::I32),
-        SampleFormat::I64 => Some(OutputSampleFormat::I64),
-        SampleFormat::U8 => Some(OutputSampleFormat::U8),
-        SampleFormat::U16 => Some(OutputSampleFormat::U16),
-        SampleFormat::U24 => Some(OutputSampleFormat::U24),
-        SampleFormat::U32 => Some(OutputSampleFormat::U32),
-        SampleFormat::U64 => Some(OutputSampleFormat::U64),
-        _ => None,
-    }
-}
-
-fn output_dither_lsb(format: SampleFormat) -> f32 {
-    match format {
-        SampleFormat::F32 | SampleFormat::F64 => 0.0,
-        SampleFormat::I8 | SampleFormat::U8 => 1.0 / 128.0,
-        SampleFormat::I16 | SampleFormat::U16 => 1.0 / 32_768.0,
-        SampleFormat::I24 | SampleFormat::U24 => 1.0 / 8_388_608.0,
-        SampleFormat::I32 | SampleFormat::U32 => 1.0 / 2_147_483_648.0,
-        SampleFormat::I64 | SampleFormat::U64 => 1.0 / 9_223_372_036_854_775_808.0,
-        _ => 0.0,
-    }
-}
-
-fn cpal_sample_format(format: OutputSampleFormat) -> SampleFormat {
-    match format {
-        OutputSampleFormat::F32 => SampleFormat::F32,
-        OutputSampleFormat::F64 => SampleFormat::F64,
-        OutputSampleFormat::I8 => SampleFormat::I8,
-        OutputSampleFormat::I16 => SampleFormat::I16,
-        OutputSampleFormat::I24 => SampleFormat::I24,
-        OutputSampleFormat::I32 => SampleFormat::I32,
-        OutputSampleFormat::I64 => SampleFormat::I64,
-        OutputSampleFormat::U8 => SampleFormat::U8,
-        OutputSampleFormat::U16 => SampleFormat::U16,
-        OutputSampleFormat::U24 => SampleFormat::U24,
-        OutputSampleFormat::U32 => SampleFormat::U32,
-        OutputSampleFormat::U64 => SampleFormat::U64,
-    }
-}
-
-fn clamp_sample_rate(config: &SupportedStreamConfigRange, source_rate: u32) -> u32 {
-    source_rate
-        .max(config.min_sample_rate())
-        .min(config.max_sample_rate())
-}
-
-fn sample_rate_distance(config: &SupportedStreamConfigRange, source_rate: u32) -> u32 {
-    clamp_sample_rate(config, source_rate).abs_diff(source_rate)
 }
 
 #[derive(Default)]
@@ -566,15 +479,6 @@ impl OutputSmoother {
     }
 }
 
-fn step_toward(current: f32, target: f32) -> f32 {
-    let step = 1.0 / OUTPUT_SMOOTHING_FRAMES as f32;
-    if current < target {
-        (current + step).min(target)
-    } else {
-        (current - step).max(target)
-    }
-}
-
 struct TpdfDither {
     lsb: f32,
     state: u64,
@@ -733,14 +637,6 @@ fn output_gain(volume: &AtomicU64) -> f32 {
     let value = f64::from_bits(volume.load(Ordering::Relaxed));
     if value.is_finite() {
         value.clamp(0.0, 1.0) as f32
-    } else {
-        0.0
-    }
-}
-
-fn sanitize_output_sample(sample: f32) -> f32 {
-    if sample.is_finite() {
-        sample.clamp(-1.0, 1.0)
     } else {
         0.0
     }
