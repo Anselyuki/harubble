@@ -9,7 +9,6 @@ import type {
   TagEditorMergeResult,
   TagEditorRegistry,
 } from '$lib/types';
-import { open, save } from '@tauri-apps/plugin-dialog';
 import { tagEditorStore } from './store.svelte';
 import * as m from '$lib/paraglide/messages.js';
 
@@ -44,6 +43,8 @@ interface TagEditorControllerDeps {
   ) => Promise<void>;
   exportTagEditorRegistry: (path: string) => Promise<void>;
   importTagEditorRegistry: (path: string) => Promise<TagEditorMergeResult>;
+  pickSavePath: (defaultName: string) => Promise<string | null>;
+  pickOpenPath: () => Promise<string | null>;
   getAlbumDetail: (albumCid: string) => Promise<AlbumDetail>;
   getAlbums: () => Album[];
   notifyError: (message: string) => void;
@@ -299,10 +300,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
   }
 
   async function exportRegistry() {
-    const path = await save({
-      defaultPath: 'tag_registry.json',
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
+    const path = await deps.pickSavePath('tag_registry.json');
     if (!path) return;
 
     try {
@@ -317,9 +315,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
   }
 
   async function importRegistry() {
-    const path = await open({
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
+    const path = await deps.pickOpenPath();
     if (!path) return;
 
     try {

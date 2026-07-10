@@ -182,6 +182,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     }
 
     if (album.cid === selectedAlbumCid && !loadingDetail) {
+      options?.beforeReveal?.();
       return;
     }
 

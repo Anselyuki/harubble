@@ -5,25 +5,17 @@
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import type { PartialOptions } from 'overlayscrollbars';
   import SongRow from '$lib/components/SongRow.svelte';
-  import { getSongDetail, getAlbumDetail } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import type {
     Collection,
     CollectionSummary,
     SongEntry,
-    SongDetail,
     PlaybackQueueEntry,
   } from '$lib/types';
+  import type { ResolvedSong } from '$lib/features/collection/resolvedSongs.svelte';
 
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
-
-  interface ResolvedSong {
-    entry: SongEntry;
-    albumCid: string;
-    albumName: string;
-    coverUrl: string | null;
-  }
 
   interface Props {
     collection: Collection | null;
@@ -32,6 +24,9 @@
     currentSongCid: string | null;
     isPlaybackActive: boolean;
     isPlaybackPaused: boolean;
+    resolvedSongs: ResolvedSong[];
+    isResolvingSongs: boolean;
+    playbackQueue: PlaybackQueueEntry[];
     onEdit: () => void;
     onDelete: (id: string) => void;
     onExport: (id: string) => void;
@@ -87,92 +82,6 @@
     }
     return map;
   });
-
-  let resolvedSongs = $state<ResolvedSong[]>([]);
-  let isResolvingSongs = $state(false);
-  let lastResolvedKey = $state<string | null>(null);
-
-  const playbackQueue = $derived.by((): PlaybackQueueEntry[] =>
-    resolvedSongs.map((rs) => ({
-      cid: rs.entry.cid,
-      name: rs.entry.name,
-      artists: rs.entry.artists,
-      coverUrl: rs.coverUrl,
-    }))
-  );
-
-  $effect(() => {
-    const collection = props.collection;
-    if (!collection) {
-      resolvedSongs = [];
-      lastResolvedKey = null;
-      return;
-    }
-    const ids = collection.sections.flatMap((s) => s.songIds);
-    const key = `${collection.id}:${ids.join(',')}`;
-    if (key === lastResolvedKey) return;
-    void resolveSongs(ids, key);
-  });
-
-  async function resolveSongs(songIds: string[], key: string): Promise<void> {
-    lastResolvedKey = key;
-    isResolvingSongs = true;
-    resolvedSongs = [];
-
-    try {
-      const details = await Promise.all(
-        songIds.map((id) =>
-          getSongDetail(id).catch((): SongDetail | null => null)
-        )
-      );
-
-      const albumCidList: string[] = [];
-      for (const d of details) {
-        if (d && !albumCidList.includes(d.albumCid)) {
-          albumCidList.push(d.albumCid);
-        }
-      }
-
-      const albumMap: Partial<
-        Record<string, { name: string; coverUrl: string | null }>
-      > = {};
-      const albumResults = await Promise.all(
-        albumCidList.map((cid) => getAlbumDetail(cid).catch(() => null))
-      );
-      for (const album of albumResults) {
-        if (album) {
-          albumMap[album.cid] = {
-            name: album.name,
-            coverUrl: album.coverUrl,
-          };
-        }
-      }
-
-      const resolved: ResolvedSong[] = [];
-      for (const detail of details) {
-        if (!detail) continue;
-        const albumInfo = albumMap[detail.albumCid];
-        resolved.push({
-          entry: {
-            cid: detail.cid,
-            name: detail.name,
-            artists: detail.artists,
-            download: detail.download,
-            tags: detail.tags,
-          },
-          albumCid: detail.albumCid,
-          albumName: albumInfo?.name ?? '',
-          coverUrl: albumInfo?.coverUrl ?? null,
-        });
-      }
-
-      if (lastResolvedKey === key) {
-        resolvedSongs = resolved;
-      }
-    } finally {
-      isResolvingSongs = false;
-    }
-  }
 
   let loadingEl = $state<HTMLElement | undefined>();
   let cardEl = $state<HTMLElement | undefined>();
@@ -326,10 +235,10 @@
       <div class="collection-divider"></div>
 
       <div class="song-list" bind:this={songListEl}>
-        {#if isResolvingSongs && resolvedSongs.length === 0}
+        {#if props.isResolvingSongs && props.resolvedSongs.length === 0}
           <div class="song-list-loading">{m.collection_songs_loading()}</div>
-        {:else if resolvedSongs.length > 0}
-          {#each resolvedSongs as rs, index (rs.entry.cid)}
+        {:else if props.resolvedSongs.length > 0}
+          {#each props.resolvedSongs as rs, index (rs.entry.cid)}
             {#if sectionStartMap.get(rs.entry.cid)}
               <div
                 class="section-header"
@@ -381,7 +290,8 @@
                   reducedMotion={props.reducedMotion}
                   collections={props.collections}
                   onAddToCollection={props.onAddToCollection}
-                  onclick={() => props.onPlaySong(rs.entry, playbackQueue)}
+                  onclick={() =>
+                    props.onPlaySong(rs.entry, props.playbackQueue)}
                   onTogglePlay={() => props.onTogglePlay()}
                   onDownload={() => props.onDownloadSong(rs.entry.cid)}
                 />
