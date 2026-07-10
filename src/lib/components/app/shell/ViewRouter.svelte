@@ -6,6 +6,8 @@
   import AlbumOverview from '$lib/components/app/album/AlbumOverview.svelte';
   import SearchView from '$lib/components/app/search/SearchView.svelte';
   import ViewTransition from '$lib/components/ViewTransition.svelte';
+  import { createResolvedSongsStore } from '$lib/features/collection/resolvedSongs.svelte';
+  import { getSongDetail, getAlbumDetail } from '$lib/api';
   import type { AppRuntime } from '$lib/features/shell/appRuntime.svelte';
 
   interface Props {
@@ -13,6 +15,15 @@
   }
 
   let { runtime }: Props = $props();
+
+  const resolvedSongsStore = createResolvedSongsStore({
+    getSongDetail,
+    getAlbumDetail,
+  });
+
+  $effect(() => {
+    resolvedSongsStore.resolve(runtime.collectionController.selectedCollection);
+  });
 </script>
 
 <ViewTransition
@@ -43,6 +54,9 @@
       currentSongCid={runtime.currentSong?.cid ?? null}
       isPlaybackActive={runtime.isPlaying || runtime.isPaused}
       isPlaybackPaused={runtime.isPaused}
+      resolvedSongs={resolvedSongsStore.resolvedSongs}
+      isResolvingSongs={resolvedSongsStore.isResolvingSongs}
+      playbackQueue={resolvedSongsStore.playbackQueue}
       onEdit={runtime.collectionController.openEditDialog}
       onDelete={runtime.collectionController.handleDelete}
       onExport={runtime.collectionController.handleExport}

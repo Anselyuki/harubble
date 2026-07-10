@@ -9,6 +9,7 @@ import type {
   LocalInventorySnapshot,
   AppErrorEvent,
 } from '$lib/types';
+import type { AppEventMap } from '$lib/appEvents';
 import type { SettingsState } from '$lib/features/shell/settings.svelte';
 import * as m from '$lib/paraglide/messages.js';
 
@@ -243,16 +244,19 @@ export async function subscribeToTauriEvents(
     }
   };
 
-  async function register<T>(
-    eventName: string,
-    handler: (event: { payload: T }) => void | Promise<void>
+  async function register<K extends keyof AppEventMap>(
+    eventName: K,
+    handler: (event: { payload: AppEventMap[K] }) => void | Promise<void>
   ) {
-    const unlisten = await deps.listen<T>(eventName, async (event) => {
-      if (shouldDispose()) {
-        return;
+    const unlisten = await deps.listen<AppEventMap[K]>(
+      eventName,
+      async (event) => {
+        if (shouldDispose()) {
+          return;
+        }
+        await handler(event);
       }
-      await handler(event);
-    });
+    );
 
     if (shouldDispose()) {
       unlisten();
@@ -265,7 +269,7 @@ export async function subscribeToTauriEvents(
 
   try {
     if (
-      !(await register<PlayerState>('player-state-changed', (event) => {
+      !(await register('player-state-changed', (event) => {
         deps.setPlayerStateHydratedFromEvent(true);
         deps.playerController.syncPlayerState(event.payload);
       }))
@@ -274,32 +278,29 @@ export async function subscribeToTauriEvents(
     }
 
     if (
-      !(await register<PlayerState>('player-progress', (event) => {
+      !(await register('player-progress', (event) => {
         deps.playerController.syncPlayerProgress(event.payload);
       }))
     ) {
       return cleanup;
     }
     if (
-      !(await register<PlaybackEndedEvent>('player-ended', (event) => {
+      !(await register('player-ended', (event) => {
         deps.playerController.syncPlaybackEnded(event.payload);
       }))
     ) {
       return cleanup;
     }
     if (
-      !(await register<DownloadManagerSnapshot>(
-        'download-manager-state-changed',
-        (event) => {
-          deps.downloadController.applyManagerEvent(event.payload);
-        }
-      ))
+      !(await register('download-manager-state-changed', (event) => {
+        deps.downloadController.applyManagerEvent(event.payload);
+      }))
     ) {
       return cleanup;
     }
 
     if (
-      !(await register<DownloadJobSnapshot>('download-job-updated', (event) => {
+      !(await register('download-job-updated', (event) => {
         deps.downloadController.applyJobUpdate(event.payload);
       }))
     ) {
@@ -307,18 +308,15 @@ export async function subscribeToTauriEvents(
     }
 
     if (
-      !(await register<DownloadTaskProgressEvent>(
-        'download-task-progress',
-        (event) => {
-          deps.downloadController.applyTaskProgress(event.payload);
-        }
-      ))
+      !(await register('download-task-progress', (event) => {
+        deps.downloadController.applyTaskProgress(event.payload);
+      }))
     ) {
       return cleanup;
     }
 
     if (
-      !(await register<AppErrorEvent>('app-error-recorded', (event) => {
+      !(await register('app-error-recorded', (event) => {
         deps.handleAppErrorEvent(event.payload);
       }))
     ) {
@@ -326,27 +324,24 @@ export async function subscribeToTauriEvents(
     }
 
     if (
-      !(await register<LocalInventorySnapshot>(
-        'local-inventory-state-changed',
-        async (event) => {
-          await deps.libraryController.handleInventoryStateChanged(
-            event.payload,
-            {
-              shouldDispose,
-              invalidateInventoryCaches: deps.invalidateInventoryCaches,
-              onSelectionInvalidated: () => {
-                deps.clearSongSelection();
-                deps.setSelectionModeEnabled(false);
-              },
-            }
-          );
-        }
-      ))
+      !(await register('local-inventory-state-changed', async (event) => {
+        await deps.libraryController.handleInventoryStateChanged(
+          event.payload,
+          {
+            shouldDispose,
+            invalidateInventoryCaches: deps.invalidateInventoryCaches,
+            onSelectionInvalidated: () => {
+              deps.clearSongSelection();
+              deps.setSelectionModeEnabled(false);
+            },
+          }
+        );
+      }))
     ) {
       return cleanup;
     }
     if (
-      !(await register<void>('homepage-belong-ready', () => {
+      !(await register('homepage-belong-ready', () => {
         deps.homeController.handleBelongReady();
       }))
     ) {

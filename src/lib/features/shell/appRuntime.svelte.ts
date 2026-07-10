@@ -1,5 +1,9 @@
 import { tick } from 'svelte';
 import { listen } from '@tauri-apps/api/event';
+import {
+  open as openDialog,
+  save as saveDialog,
+} from '@tauri-apps/plugin-dialog';
 import type { PartialOptions } from 'overlayscrollbars';
 import { gsapScrollIntoView } from '$lib/design/gsap';
 import {
@@ -7,6 +11,8 @@ import {
   getAlbumDetail,
   getDefaultOutputDir,
   playSong,
+  playNext as playNextTrack,
+  playPrevious as playPreviousTrack,
   pausePlayback,
   resumePlayback,
   seekCurrentPlayback,
@@ -140,6 +146,12 @@ export function createAppRuntime() {
     playSong: async (songCid, coverUrl, context) => {
       await playSong(songCid, coverUrl ?? undefined, context ?? undefined);
     },
+    playNextTrack: async () => {
+      await playNextTrack();
+    },
+    playPreviousTrack: async () => {
+      await playPreviousTrack();
+    },
     pausePlayback,
     resumePlayback,
     seekCurrentPlayback: async (positionSecs) => {
@@ -149,9 +161,14 @@ export function createAppRuntime() {
     getPlayerState,
     getSongLyrics,
     recordSongHeat: (songCid, coverUrl) => {
-      void recordSongHeat(songCid, coverUrl).then(() => {
-        void homeController.refreshRecentHistory();
-      });
+      // 热度是尽力而为的统计信号（元数据抓取失败、Tauri IPC 断开等都可能触发），
+      // 失败时不能弹 toast 打扰用户，也不能变成 unhandled rejection——加一个显式
+      // catch 把异常吞掉。真实的播放链路错误由其它更权威的通道呈现。
+      void recordSongHeat(songCid, coverUrl)
+        .then(() => {
+          void homeController.refreshRecentHistory();
+        })
+        .catch(() => {});
     },
     notifyError,
   });
@@ -204,6 +221,15 @@ export function createAppRuntime() {
     resolveTagEditorConflict,
     exportTagEditorRegistry,
     importTagEditorRegistry,
+    pickSavePath: (defaultName) =>
+      saveDialog({
+        defaultPath: defaultName,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      }),
+    pickOpenPath: () =>
+      openDialog({
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      }),
     getAlbumDetail: (albumCid: string) => getAlbumDetail(albumCid),
     getAlbums: () => libraryController.albums,
     notifyError,
@@ -442,87 +468,30 @@ export function createAppRuntime() {
 
   // --- 设置 dirty tracking effects ---
 
+  const SCALAR_DIRTY_FIELDS = [
+    'format',
+    'outputDir',
+    'downloadLyrics',
+    'notifyOnDownloadComplete',
+    'notifyOnPlaybackChange',
+    'logLevel',
+    'locale',
+  ] as const;
   $effect(() => {
-    const value = settingsState.format;
+    const observed = lastObservedSettings as Record<string, unknown>;
+    const state = settingsState as unknown as Record<string, unknown>;
     if (settingsState.suspendDirtyTracking > 0) {
-      lastObservedSettings.format = value;
+      for (const field of SCALAR_DIRTY_FIELDS) {
+        observed[field] = state[field];
+      }
       return;
     }
-    if (value !== lastObservedSettings.format) {
-      settingsState.dirty.format = true;
-      lastObservedSettings.format = value;
-    }
-  });
-
-  $effect(() => {
-    const value = settingsState.outputDir;
-    if (settingsState.suspendDirtyTracking > 0) {
-      lastObservedSettings.outputDir = value;
-      return;
-    }
-    if (value !== lastObservedSettings.outputDir) {
-      settingsState.dirty.outputDir = true;
-      lastObservedSettings.outputDir = value;
-    }
-  });
-
-  $effect(() => {
-    const value = settingsState.downloadLyrics;
-    if (settingsState.suspendDirtyTracking > 0) {
-      lastObservedSettings.downloadLyrics = value;
-      return;
-    }
-    if (value !== lastObservedSettings.downloadLyrics) {
-      settingsState.dirty.downloadLyrics = true;
-      lastObservedSettings.downloadLyrics = value;
-    }
-  });
-
-  $effect(() => {
-    const value = settingsState.notifyOnDownloadComplete;
-    if (settingsState.suspendDirtyTracking > 0) {
-      lastObservedSettings.notifyOnDownloadComplete = value;
-      return;
-    }
-    if (value !== lastObservedSettings.notifyOnDownloadComplete) {
-      settingsState.dirty.notifyOnDownloadComplete = true;
-      lastObservedSettings.notifyOnDownloadComplete = value;
-    }
-  });
-
-  $effect(() => {
-    const value = settingsState.notifyOnPlaybackChange;
-    if (settingsState.suspendDirtyTracking > 0) {
-      lastObservedSettings.notifyOnPlaybackChange = value;
-      return;
-    }
-    if (value !== lastObservedSettings.notifyOnPlaybackChange) {
-      settingsState.dirty.notifyOnPlaybackChange = true;
-      lastObservedSettings.notifyOnPlaybackChange = value;
-    }
-  });
-
-  $effect(() => {
-    const value = settingsState.logLevel;
-    if (settingsState.suspendDirtyTracking > 0) {
-      lastObservedSettings.logLevel = value;
-      return;
-    }
-    if (value !== lastObservedSettings.logLevel) {
-      settingsState.dirty.logLevel = true;
-      lastObservedSettings.logLevel = value;
-    }
-  });
-
-  $effect(() => {
-    const value = settingsState.locale;
-    if (settingsState.suspendDirtyTracking > 0) {
-      lastObservedSettings.locale = value;
-      return;
-    }
-    if (value !== lastObservedSettings.locale) {
-      settingsState.dirty.locale = true;
-      lastObservedSettings.locale = value;
+    for (const field of SCALAR_DIRTY_FIELDS) {
+      const value = state[field];
+      if (value !== observed[field]) {
+        settingsState.dirty[field] = true;
+        observed[field] = value;
+      }
     }
   });
 

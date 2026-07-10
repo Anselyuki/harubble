@@ -21,6 +21,7 @@
     type SidebarResizeHandle,
   } from '$lib/design/sidebar-resize';
   import { MOTION } from '$lib/design/gsap';
+  import { syncBrandHeight } from '$lib/design/actions';
 
   const runtime = createAppRuntime();
 
@@ -36,7 +37,7 @@
   let bottomLabelEl: HTMLSpanElement | null = $state(null);
   let logoContainerEl: HTMLDivElement | null = $state(null);
   let logoSlabEl: HTMLElement | null = $state(null);
-  let brandRegionEl: HTMLElement | null = $state(null);
+
   let contentCollapsed = $state(runtime.sidebarCollapsed);
   let contentInteractive = $state(!runtime.sidebarCollapsed);
   let layoutCollapsed = $state(runtime.sidebarCollapsed);
@@ -200,50 +201,6 @@
     }
   });
   /* eslint-enable @typescript-eslint/no-unnecessary-condition */
-
-  /**
-   * 同步品牌浮层（logo + slab）的实际高度到 --brand-region-height。
-   *
-   * .brand-region 是 position:absolute 浮层，不参与侧栏 flex 流，
-   * 由 .sidebar-brand-spacer 用该变量预留等高安全区把导航推到浮层下方。
-   * 折叠态下字母竖排会显著增高，必须实时跟随，否则 spacer 停在 80px
-   * 兜底值，logo/slab 会直接覆盖在导航之上。
-   */
-  /* eslint-disable @typescript-eslint/no-unnecessary-condition -- $state(null) refs are populated by bind:this at runtime */
-  $effect(() => {
-    if (!shellEl || !brandRegionEl) return;
-    const shell = shellEl;
-    const region = brandRegionEl;
-
-    const syncHeight = () => {
-      shell.style.setProperty(
-        '--brand-region-height',
-        `${region.offsetHeight}px`
-      );
-    };
-
-    syncHeight();
-
-    if (typeof ResizeObserver === 'undefined') return;
-
-    let rafId = 0;
-    const observer = new ResizeObserver(() => {
-      // 延迟到下一帧再写回，避免回调内同步改动布局触发
-      // "ResizeObserver loop completed with undelivered notifications" 警告
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        rafId = 0;
-        syncHeight();
-      });
-    });
-    observer.observe(region);
-
-    return () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      observer.disconnect();
-    };
-  });
-  /* eslint-enable @typescript-eslint/no-unnecessary-condition */
 </script>
 
 {#if runtime.isMacOS}
@@ -262,7 +219,12 @@
     class:macos-overlay={runtime.isMacOS}
     bind:this={shellEl}
   >
-    <div class="brand-region" aria-hidden="true" bind:this={brandRegionEl}>
+    <div
+      class="brand-region"
+      aria-hidden="true"
+      use:syncBrandHeight
+      data-tauri-drag-region
+    >
       <BrandSlab bind:slabEl={logoSlabEl} />
       <BrandLogo
         isMacOS={runtime.isMacOS}

@@ -186,6 +186,10 @@ export function createSettingsController(deps: SettingsControllerDeps) {
     }
 
     const requestSnapshot = getSnapshot(state);
+    // volume 字段由播放器子系统（set_playback_volume）单独持久化，也不在设置面板
+    // UI 里编辑。后端 `set_preferences` 命令会忽略请求里的 volume 字段并保留当前
+    // 后端值，因此这里只把本地缓存的 `state.volume` 一并传上去做兜底，防止未来
+    // 后端语义改变时导致必填字段缺失。
     const prefs: AppPreferences = {
       outputFormat: state.format,
       outputDir: state.outputDir,
