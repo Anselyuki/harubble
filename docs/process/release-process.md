@@ -21,16 +21,23 @@
 - `pull_request` 到 `main`
 - `pull_request` 到 `develop`
 
-当前 CI 执行内容：
+CI 会先用 `dorny/paths-filter` 判断本次 PR 是否只改了 Markdown 文档；据此分流为两条互斥路径：
 
+- **仅文档变更**：只跑 `docs-lint` job，命令为 `bunx prettier --check "**/*.md"`。
+- **含代码变更**：跑 `quality` job（聚合命令 `bun run check`）与 `test` job（`cargo test --workspace`）。
+
+`bun run check` 聚合脚本一次性覆盖以下步骤：
+
+- `bun run i18n:generate`（Paraglide 生成）
 - `bun run format:check`
 - `bun run lint:eslint`
+- `bun run lint:rustfmt`（等价于 `cargo fmt --all --check`）
 - `bun run check:types`
 - `bun run check:svelte`
 - `bun run check:build`
-- `cargo fmt --all --check`
-- `cargo check --workspace`
-- `cargo test --workspace`
+- `bun run check:cargo`（等价于 `cargo check --workspace`）
+
+`cargo test --workspace` 单独作为 `test` job 执行。
 
 PR 阶段不会执行以下行为：
 

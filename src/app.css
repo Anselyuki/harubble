@@ -83,7 +83,8 @@
   --ease-ios: cubic-bezier(0.25, 0.1, 0.25, 1);
   /* hover/active 纯状态颜色反馈的受控 CSS transition（动效规则例外②，
      详见 docs/reference/frontend-guide.md）；位移/尺寸/布局动画仍必须走 GSAP */
-  --motion-hover: background-color var(--motion-fast) var(--ease-ios),
+  --motion-hover:
+    background-color var(--motion-fast) var(--ease-ios),
     color var(--motion-fast) var(--ease-ios),
     border-color var(--motion-fast) var(--ease-ios),
     opacity var(--motion-fast) var(--ease-ios),
@@ -1766,10 +1767,26 @@ img[data-image-state='error'] {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 90% 70% at 20% 25%, rgba(var(--album-accent-rgb), 0.12), transparent 65%),
-    radial-gradient(ellipse 80% 60% at 50% 50%, rgba(var(--album-accent-rgb), 0.06), transparent 60%),
-    radial-gradient(ellipse 70% 60% at 80% 75%, rgba(var(--album-accent-rgb), 0.08), transparent 60%),
-    radial-gradient(ellipse 140% 100% at 50% 50%, rgba(255, 255, 255, 0.02), transparent 50%);
+    radial-gradient(
+      ellipse 90% 70% at 20% 25%,
+      rgba(var(--album-accent-rgb), 0.12),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse 80% 60% at 50% 50%,
+      rgba(var(--album-accent-rgb), 0.06),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 70% 60% at 80% 75%,
+      rgba(var(--album-accent-rgb), 0.08),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 140% 100% at 50% 50%,
+      rgba(255, 255, 255, 0.02),
+      transparent 50%
+    );
   z-index: 2;
   pointer-events: none;
 }
@@ -1806,8 +1823,11 @@ img[data-image-state='error'] {
   height: 40px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.1),
+    rgba(255, 255, 255, 0.04)
+  );
   backdrop-filter: blur(20px) saturate(1.4);
   -webkit-backdrop-filter: blur(20px) saturate(1.4);
   box-shadow:
@@ -1821,8 +1841,11 @@ img[data-image-state='error'] {
 }
 
 .fullscreen-close:hover {
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08));
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0.08)
+  );
   color: #fff;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
@@ -1869,8 +1892,11 @@ img[data-image-state='error'] {
 .fullscreen-cover-fallback {
   display: grid;
   place-items: center;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.02)
+  );
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -1922,7 +1948,9 @@ img[data-image-state='error'] {
   -webkit-mask-image: none;
 }
 
-.fullscreen-meta-text:hover .fullscreen-title.overflowing .fullscreen-title-inner {
+.fullscreen-meta-text:hover
+  .fullscreen-title.overflowing
+  .fullscreen-title-inner {
   padding-right: 3em;
   animation: fs-marquee 8s linear infinite;
 }
@@ -1951,19 +1979,29 @@ img[data-image-state='error'] {
   -webkit-mask-image: none;
 }
 
-.fullscreen-meta-text:hover .fullscreen-artist.overflowing .fullscreen-artist-inner {
+.fullscreen-meta-text:hover
+  .fullscreen-artist.overflowing
+  .fullscreen-artist-inner {
   padding-right: 3em;
   animation: fs-marquee 8s linear infinite;
 }
 
 @keyframes fs-marquee {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-100%); }
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fullscreen-meta-text:hover .fullscreen-title.overflowing .fullscreen-title-inner,
-  .fullscreen-meta-text:hover .fullscreen-artist.overflowing .fullscreen-artist-inner {
+  .fullscreen-meta-text:hover
+    .fullscreen-title.overflowing
+    .fullscreen-title-inner,
+  .fullscreen-meta-text:hover
+    .fullscreen-artist.overflowing
+    .fullscreen-artist-inner {
     animation: none;
   }
 }
@@ -2074,8 +2112,11 @@ img[data-image-state='error'] {
   height: 44px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.03)
+  );
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
   box-shadow:
@@ -2088,8 +2129,11 @@ img[data-image-state='error'] {
 }
 
 .fs-btn:hover:not(:disabled) {
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06));
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.14),
+    rgba(255, 255, 255, 0.06)
+  );
   color: #fff;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
@@ -2129,8 +2173,11 @@ img[data-image-state='error'] {
 .fs-play {
   width: 56px;
   height: 56px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06));
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0.06)
+  );
   border-color: rgba(255, 255, 255, 0.16);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
@@ -2138,8 +2185,11 @@ img[data-image-state='error'] {
 }
 
 .fs-play.playing {
-  background:
-    linear-gradient(135deg, rgba(var(--album-accent-rgb), 0.28), rgba(var(--album-accent-rgb), 0.12));
+  background: linear-gradient(
+    135deg,
+    rgba(var(--album-accent-rgb), 0.28),
+    rgba(var(--album-accent-rgb), 0.12)
+  );
   border-color: rgba(var(--album-accent-rgb), 0.3);
   color: var(--album-accent);
   box-shadow:
