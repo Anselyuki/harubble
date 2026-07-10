@@ -490,7 +490,7 @@ impl AppState {
         song_cid: &str,
         session_id: Option<u64>,
     ) -> Result<harubble_core::SongDetail, PlaybackError> {
-        let api = Arc::clone(&self.playback_api);
+        let api = Arc::clone(&self.api_clients.playback_api);
         let song_cid = song_cid.to_string();
 
         self.playback_runtime
@@ -522,7 +522,7 @@ impl AppState {
         cache_path: PathBuf,
         pending_marker: PathBuf,
     ) {
-        let api = Arc::clone(&self.playback_api);
+        let api = Arc::clone(&self.api_clients.playback_api);
         let log_center = Arc::clone(&self.log_center);
         let download_runtime = Arc::clone(&self.playback_runtime);
         let cleanup_runtime = Arc::clone(&download_runtime);

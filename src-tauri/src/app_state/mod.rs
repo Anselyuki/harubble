@@ -1,5 +1,12 @@
+mod api_clients;
+mod download_subsystem;
 mod media_controls;
 mod playback;
+mod preferences;
+
+pub(crate) use api_clients::ApiClients;
+pub(crate) use download_subsystem::DownloadSubsystem;
+pub(crate) use preferences::PreferencesSubsystem;
 
 use crate::album_metadata_cache::AlbumMetadataCacheService;
 use crate::collection::CollectionService;
@@ -35,22 +42,15 @@ use tokio::sync::{Mutex, MutexGuard};
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) player: Arc<AudioPlayer>,
-    pub(crate) api: Arc<harubble_core::ApiClient>,
-    pub(crate) playback_api: Arc<harubble_core::ApiClient>,
-    pub(crate) image_api: Arc<harubble_core::ApiClient>,
-    pub(crate) download_api: Arc<harubble_core::ApiClient>,
+    pub(crate) api_clients: ApiClients,
     pub(crate) playback_runtime: Arc<tokio::runtime::Runtime>,
     pub(crate) playback_actor: PlaybackActor,
     pub(crate) playback_load_gate: PlaybackLoadGate,
     pub(crate) visual_aux_lock: Arc<Mutex<()>>,
-    pub(crate) download_service: Arc<Mutex<DownloadService>>,
-    pub(crate) download_job_creation_lock: Arc<Mutex<()>>,
-    pub(crate) preferences_write_lock: Arc<Mutex<()>>,
+    pub(crate) download: DownloadSubsystem,
+    pub(crate) prefs: PreferencesSubsystem,
     pub(crate) local_inventory_service: LocalInventoryService,
     pub(crate) local_inventory_provenance_store: Arc<LocalInventoryProvenanceStore>,
-    pub(crate) download_session_store: Arc<DownloadSessionStore>,
-    pub(crate) preferences_store: Arc<PreferencesStore>,
-    pub(crate) preferences: Arc<StdMutex<AppPreferences>>,
     pub(crate) log_center: Arc<LogCenter>,
     pub(crate) library_search_service: LibrarySearchService,
     pub(crate) listening_history: Arc<ListeningHistoryService>,
@@ -125,22 +125,28 @@ impl AppState {
             .map_err(|e| format!("初始化合集服务失败: {e}"))?;
         let state = Self {
             player: Arc::new(player),
-            api: Arc::new(api),
-            playback_api: Arc::new(playback_api),
-            image_api: Arc::new(image_api),
-            download_api: Arc::new(download_api),
+            api_clients: ApiClients {
+                api: Arc::new(api),
+                playback_api: Arc::new(playback_api),
+                image_api: Arc::new(image_api),
+                download_api: Arc::new(download_api),
+            },
             playback_runtime: Arc::new(playback_runtime),
             playback_actor,
             playback_load_gate: PlaybackLoadGate::new(),
             visual_aux_lock: Arc::new(Mutex::new(())),
-            download_service,
-            download_job_creation_lock: Arc::new(Mutex::new(())),
-            preferences_write_lock: Arc::new(Mutex::new(())),
+            download: DownloadSubsystem {
+                download_service,
+                download_job_creation_lock: Arc::new(Mutex::new(())),
+                download_session_store,
+            },
+            prefs: PreferencesSubsystem {
+                preferences_store: Arc::new(store),
+                preferences: Arc::new(StdMutex::new(preferences)),
+                preferences_write_lock: Arc::new(Mutex::new(())),
+            },
             local_inventory_service,
             local_inventory_provenance_store,
-            download_session_store,
-            preferences_store: Arc::new(store),
-            preferences: Arc::new(StdMutex::new(preferences)),
             log_center,
             library_search_service,
             listening_history,
@@ -158,7 +164,8 @@ impl AppState {
     }
 
     pub(crate) fn preferences(&self) -> AppPreferences {
-        self.preferences
+        self.prefs
+            .preferences
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
@@ -170,7 +177,8 @@ impl AppState {
     /// 返回值为当前内存中已生效的输出目录字符串。
     /// 该接口不会触发偏好重新加载；若调用方关心磁盘上的最新配置，应先完成偏好同步。
     pub fn output_dir(&self) -> String {
-        self.preferences
+        self.prefs
+            .preferences
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .output_dir
@@ -194,6 +202,7 @@ impl AppState {
     pub fn flush_logs_on_exit(&self) -> Result<(), String> {
         let threshold = LogLevel::parse(
             &self
+                .prefs
                 .preferences
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -206,26 +215,36 @@ impl AppState {
     }
 
     pub(crate) fn set_preferences(&self, prefs: AppPreferences) {
-        *self.preferences.lock().unwrap_or_else(|e| e.into_inner()) = prefs;
+        *self
+            .prefs
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = prefs;
     }
 
     pub(crate) fn preferences_store(&self) -> Arc<PreferencesStore> {
-        self.preferences_store.clone()
+        self.prefs.preferences_store.clone()
     }
 
     pub(crate) fn clear_api_response_caches(&self) {
-        self.api.clear_response_cache();
-        self.playback_api.clear_response_cache();
-        self.image_api.clear_response_cache();
-        self.download_api.clear_response_cache();
+        self.api_clients.api.clear_response_cache();
+        self.api_clients.playback_api.clear_response_cache();
+        self.api_clients.image_api.clear_response_cache();
+        self.api_clients.download_api.clear_response_cache();
     }
 
     pub(crate) fn reset_http_clients(&self) -> Result<(), String> {
         let results = [
-            ("app", self.api.reset_http_client()),
-            ("playback", self.playback_api.reset_http_client()),
-            ("image", self.image_api.reset_http_client()),
-            ("download", self.download_api.reset_http_client()),
+            ("app", self.api_clients.api.reset_http_client()),
+            (
+                "playback",
+                self.api_clients.playback_api.reset_http_client(),
+            ),
+            ("image", self.api_clients.image_api.reset_http_client()),
+            (
+                "download",
+                self.api_clients.download_api.reset_http_client(),
+            ),
         ];
         let errors = results
             .into_iter()
@@ -376,19 +395,19 @@ impl AppState {
             command_name,
             CommandDomain::PlaybackSideEffect,
         );
-        let submitted_at = Instant::now();
+        // Side effect 命令没有独立排队层，因此这里只统计 run_ms；避免记录一个恒为 0
+        // 的 queue_wait_ms 掩盖真实的调度堆积（如果未来把它接入排队器时再补上）。
         let state = self.clone();
         let log_center = Arc::clone(&self.log_center);
         let started_at = Instant::now();
-        let queue_wait_ms = submitted_at.elapsed().as_millis();
         let result = task(state).await;
         let run_ms = started_at.elapsed().as_millis();
-        record_playback_side_effect_metrics(log_center, command_name, queue_wait_ms, run_ms);
+        record_playback_side_effect_metrics(log_center, command_name, run_ms);
         result
     }
 
     pub(crate) async fn persist_preferences(&self, prefs: AppPreferences) -> Result<(), String> {
-        let _guard = self.preferences_write_lock.lock().await;
+        let _guard = self.prefs.preferences_write_lock.lock().await;
         let locale = prefs.locale;
         let store = self.preferences_store();
         let prefs_to_save = prefs.clone();
@@ -403,7 +422,7 @@ impl AppState {
     where
         F: FnOnce(&mut AppPreferences),
     {
-        let _guard = self.preferences_write_lock.lock().await;
+        let _guard = self.prefs.preferences_write_lock.lock().await;
         let mut prefs = self.preferences();
         update(&mut prefs);
         let locale = prefs.locale;
@@ -418,6 +437,7 @@ impl AppState {
 
     pub(crate) fn persist_download_snapshot(&self, snapshot: &DownloadManagerSnapshot) {
         if let Err(error) = self
+            .download
             .download_session_store
             .save(snapshot, self.preferences().locale)
         {
@@ -438,7 +458,7 @@ impl AppState {
     }
 
     pub(crate) async fn persist_download_snapshot_async(&self, snapshot: DownloadManagerSnapshot) {
-        let store = self.download_session_store.clone();
+        let store = self.download.download_session_store.clone();
         let locale = self.preferences().locale;
         let result = tokio::task::spawn_blocking(move || store.save(&snapshot, locale))
             .await
@@ -475,7 +495,7 @@ impl AppState {
 /// 若获取专辑列表或查询缺失 CID 失败，任务会记录警告日志后提前退出，不会 panic。
 /// 并发度上限为 5，避免对上游 API 造成过大压力。
 pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
-    let api = state.api.clone();
+    let api = state.api_clients.api.clone();
     let cache = state.album_metadata_cache.clone();
     let log_center = state.log_center.clone();
     let state_for_gate = state.clone();
@@ -603,6 +623,7 @@ async fn load_tag_registry_bytes(_state: &AppState) -> anyhow::Result<Vec<u8>> {
 #[cfg(not(debug_assertions))]
 async fn load_tag_registry_bytes(state: &AppState) -> anyhow::Result<Vec<u8>> {
     state
+        .api_clients
         .api
         .download_bytes(crate::tag_registry::REMOTE_URL, |_, _| {})
         .await
@@ -661,7 +682,6 @@ fn record_visual_aux_metrics(
 fn record_playback_side_effect_metrics(
     log_center: Arc<LogCenter>,
     command_name: &'static str,
-    queue_wait_ms: u128,
     run_ms: u128,
 ) {
     if let Some(spec) = command_scheduling::command_spec(command_name) {
@@ -676,7 +696,6 @@ fn record_playback_side_effect_metrics(
                 "command.name": command_name,
                 "command.domain": spec.domain.as_label(),
                 "command.priority": spec.priority.as_label(),
-                "command.queue_wait_ms": queue_wait_ms,
                 "command.run_ms": run_ms,
             })),
         );
@@ -718,24 +737,18 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
                 }
             }
 
-            state.tag_registry.replace_in_memory(new_registry.clone());
             let tag_registry = state.tag_registry.clone();
-            let persist_result =
-                tokio::task::spawn_blocking(move || tag_registry.persist_registry(&new_registry))
-                    .await
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))
-                    .and_then(|result| result);
-            if let Err(error) = persist_result {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "tag-registry",
-                        "tag_registry.persist_failed",
-                        "Failed to persist synced tag registry",
-                    )
-                    .details(error.to_string()),
-                );
-            }
+            let registry_for_persist = new_registry.clone();
+            let persist_result = tokio::task::spawn_blocking(move || {
+                tag_registry.persist_registry(&registry_for_persist)
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+            .and_then(|result| result);
+            persist_result.map_err(|error| {
+                anyhow::anyhow!("failed to persist synced tag registry: {error}")
+            })?;
+            state.tag_registry.replace_in_memory(new_registry);
 
             Ok::<bool, anyhow::Error>(true)
         }

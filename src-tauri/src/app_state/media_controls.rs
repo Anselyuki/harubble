@@ -146,14 +146,17 @@ impl AppState {
     }
 
     fn handle_media_seek_by(&self, direction: SeekDirection, delta_secs: f64) {
+        // 必须在调度 transition 之前锁定基准位置：`spawn_playback_transition` 会立刻
+        // supersede 当前 loading session，等闭包真正被调度执行时 `player.get_state()`
+        // 反映的可能是被打断后清零的进度，而非用户按下媒体键那一瞬间的进度。
+        let base_progress = self.player.get_state().progress;
+        let target = match direction {
+            SeekDirection::Forward => base_progress + delta_secs,
+            SeekDirection::Backward => base_progress - delta_secs,
+        };
         self.spawn_playback_transition(
             "seek_current_playback",
             move |state, request_id| async move {
-                let current = state.player.get_state();
-                let target = match direction {
-                    SeekDirection::Forward => current.progress + delta_secs,
-                    SeekDirection::Backward => current.progress - delta_secs,
-                };
                 if let Err(error) = state.seek_current_for_request(request_id, target).await {
                     state.log_center.record(
                         LogPayload::new(
@@ -170,14 +173,15 @@ impl AppState {
     }
 
     fn handle_media_seek(&self, direction: SeekDirection) {
+        // 同上：先在调度前抓一次 progress，避免在闭包被调度时读到 supersede 后的清零值。
+        let base_progress = self.player.get_state().progress;
+        let target = match direction {
+            SeekDirection::Forward => base_progress + 10.0,
+            SeekDirection::Backward => base_progress - 10.0,
+        };
         self.spawn_playback_transition(
             "seek_current_playback",
             move |state, request_id| async move {
-                let current = state.player.get_state();
-                let target = match direction {
-                    SeekDirection::Forward => current.progress + 10.0,
-                    SeekDirection::Backward => current.progress - 10.0,
-                };
                 if let Err(error) = state.seek_current_for_request(request_id, target).await {
                     state.log_center.record(
                         LogPayload::new(
