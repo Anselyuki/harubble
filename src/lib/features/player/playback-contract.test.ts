@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PlaybackCommandError } from '$lib/api';
 import {
+  isPlaybackSupersededError,
   shouldApplyPlaybackEnded,
   shouldIgnorePlaybackError,
 } from './playback-contract';
@@ -29,7 +30,21 @@ describe('playback contract helpers', () => {
     );
   });
 
-  it('accepts matching playback-ended events for the current or newer session', () => {
+  it('detects superseded playback command errors directly', () => {
+    expect(
+      isPlaybackSupersededError(
+        new PlaybackCommandError({
+          code: 'superseded',
+          message: 'Playback request was superseded',
+          retryable: false,
+          sessionId: 4,
+        })
+      )
+    ).toBe(true);
+    expect(isPlaybackSupersededError(new Error('boom'))).toBe(false);
+  });
+
+  it('accepts matching playback-ended events for a newer session', () => {
     expect(
       shouldApplyPlaybackEnded(
         { sessionId: 8, songCid: 'song-a', progress: 10, duration: 10 },
@@ -45,6 +60,16 @@ describe('playback contract helpers', () => {
         { sessionId: 6, songCid: 'song-a', progress: 10, duration: 10 },
         'song-a',
         { cid: 'song-a', active: true, sessionId: 7 }
+      )
+    ).toBe(false);
+  });
+
+  it('rejects duplicate playback-ended events for the same session', () => {
+    expect(
+      shouldApplyPlaybackEnded(
+        { sessionId: 8, songCid: 'song-a', progress: 10, duration: 10 },
+        'song-a',
+        { cid: 'song-a', active: true, sessionId: 8 }
       )
     ).toBe(false);
   });

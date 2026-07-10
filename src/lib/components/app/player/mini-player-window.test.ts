@@ -9,15 +9,24 @@ describe('mini player window entrypoint', () => {
       'src/lib/components/app/player/MiniPlayerWindow.svelte',
       'utf8'
     );
+    const bridge = readFileSync(
+      'src/lib/features/player/miniPlayerBridge.ts',
+      'utf8'
+    );
 
     expect(entry).toContain('MiniPlayerWindow');
     expect(entry).toContain("get('window') === 'mini-player'");
-    expect(miniPlayer).toMatch(
-      /listen<PlayerState>\(\s*'player-state-changed'/
-    );
-    expect(miniPlayer).toMatch(/listen<PlayerState>\(\s*'player-progress'/);
+
+    // Bridge centralises event subscriptions — component imports from bridge, not directly from Tauri.
+    expect(miniPlayer).toContain('miniPlayerBridge');
+    expect(miniPlayer).toContain('listenPlayerStateChanged');
+    expect(miniPlayer).toContain('listenPlayerProgress');
     expect(miniPlayer).toContain('sessionId');
     expect(miniPlayer).toContain('showMainWindow');
     expect(miniPlayer).not.toContain('createAppRuntime');
+
+    // Bridge itself wraps the raw Tauri listen calls.
+    expect(bridge).toMatch(/listen<PlayerState>\(\s*'player-state-changed'/);
+    expect(bridge).toMatch(/listen<PlayerState>\(\s*'player-progress'/);
   });
 });

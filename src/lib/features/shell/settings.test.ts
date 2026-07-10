@@ -122,4 +122,26 @@ describe('createSettingsController theme preferences', () => {
     );
     expect(state.dirty.theme).toBe(false);
   });
+
+  it('delegates volume preservation to the backend on save', async () => {
+    // 后端 set_preferences 命令负责保留当前 volume；前端只是把本地缓存的值一并
+    // 传上去做兜底。这里断言 saved payload 里的 volume 就是当前 state.volume，
+    // 后端应对 volume 覆盖负责（在集成/命令测试里覆盖）。
+    const state = createState();
+    state.volume = 1;
+    const setPreferences = vi.fn(
+      async (preferences: AppPreferences) => preferences
+    );
+    const controller = createSettingsController({
+      getPreferences: async () => createPreferences({ volume: 0.4 }),
+      setPreferences,
+      notifyError: vi.fn(),
+    });
+
+    await controller.savePreferences(state);
+
+    expect(setPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ volume: 1 })
+    );
+  });
 });
