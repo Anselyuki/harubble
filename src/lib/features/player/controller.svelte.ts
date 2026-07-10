@@ -8,6 +8,7 @@ import type {
 import { parseLyricText } from './lyrics';
 import { buildPlaybackContext } from './queue';
 import {
+  isPlaybackSupersededError,
   shouldApplyPlaybackEnded,
   shouldIgnorePlaybackError,
   type PlaybackSnapshot,
@@ -20,6 +21,8 @@ interface PlayerControllerDeps {
     coverUrl: string | null,
     context: PlaybackContext | null
   ) => Promise<void>;
+  playNextTrack: () => Promise<void>;
+  playPreviousTrack: () => Promise<void>;
   pausePlayback: () => Promise<void>;
   resumePlayback: () => Promise<void>;
   seekCurrentPlayback: (positionSecs: number) => Promise<void>;
@@ -77,6 +80,10 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let playbackEndRequestSeq = 0;
   let playRequestSeq = 0;
   let heatFiredSessionId = -1;
+  // 记录本地对 volume/muted 的最近一次用户修改时间。事件回环期间不允许后端事件
+  // 覆盖用户在拖动过程中的临时值，否则滑块会明显 "弹回"。
+  let localVolumeMutationAt = 0;
+  const LOCAL_VOLUME_GUARD_MS = 600;
   let lastPlaybackSnapshot: PlaybackSnapshot = {
     cid: null as string | null,
     active: false,
@@ -134,11 +141,17 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     if (hasNext !== state.hasNext) hasNext = state.hasNext;
     if (progress !== state.progress) progress = state.progress;
     if (duration !== state.duration) duration = state.duration;
-    if (Math.abs(volume - state.volume) > 0.001) volume = state.volume;
+    // 保护 volume/muted：用户刚刚在本地做了修改的短窗口内，忽略后端事件的回环，
+    // 否则一条稍稍滞后的 player-state-changed 会让滑块或静音图标"弹回"旧值。
+    const volumeGuardActive =
+      Date.now() - localVolumeMutationAt < LOCAL_VOLUME_GUARD_MS;
+    if (!volumeGuardActive) {
+      if (Math.abs(volume - state.volume) > 0.001) volume = state.volume;
+      if (state.volume > 0 && muted) muted = false;
+    }
     if (playbackFormat !== state.playbackFormat) {
       playbackFormat = state.playbackFormat;
     }
-    if (state.volume > 0 && muted) muted = false;
   }
 
   function clearPlayTogglePendingWhenSettled(state: PlayerState) {
@@ -370,10 +383,15 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       const context = buildPlaybackContext(playbackOrder, playbackIndex);
       await deps.playSong(entry.cid, entry.coverUrl ?? null, context ?? null);
       if (requestSeq !== playRequestSeq) return;
-      try {
-        syncPlayerState(await deps.getPlayerState());
-      } catch {
-        // 后端事件仍会同步播放状态；这里仅用于避免首帧 UI 依赖事件到达。
+      // 事件回环 (player-state-changed) 是主要同步路径；仅在事件尚未把 currentSong
+      // 推进到 entry.cid 的窄窗口（IPC ack 早于事件到达）里做一次兜底拉取，避免
+      // 无条件二次同步导致把已通过事件推进的 UI 状态回滚到较旧的快照。
+      if (currentSong?.cid !== entry.cid) {
+        try {
+          syncPlayerState(await deps.getPlayerState());
+        } catch {
+          // 兜底拉取失败无需向用户呈现，后续事件仍会继续同步。
+        }
       }
     } catch (error) {
       if (shouldIgnorePlaybackError(error, requestSeq, playRequestSeq)) {
@@ -405,21 +423,6 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     progress = event.progress;
     duration = event.duration;
     void handlePlaybackEnded(event.songCid);
-  }
-
-  function resolveWrappedQueueIndex(step: 1 | -1): number {
-    if (!playbackOrder.length) return -1;
-
-    const base = playbackIndex >= 0 ? playbackIndex : 0;
-    const next = base + step;
-
-    if (next < 0) {
-      return playbackOrder.length - 1;
-    }
-    if (next >= playbackOrder.length) {
-      return 0;
-    }
-    return next;
   }
 
   function toggleShuffle(next: boolean) {
@@ -540,6 +543,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     try {
       await deps.seekCurrentPlayback(positionSecs);
     } catch (error) {
+      // 快速拖动进度条 / 连点歌词行会让后一次 seek supersede 前一次，
+      // 前一次返回的 superseded 错误不能弹为用户看得见的 toast。
+      if (isPlaybackSupersededError(error)) return;
       deps.notifyError(
         m.player_error_seek_failed({
           error: error instanceof Error ? error.message : String(error),
@@ -549,9 +555,20 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   async function playNext() {
-    const nextIndex = resolveWrappedQueueIndex(1);
-    if (nextIndex < 0) return;
-    await playQueueEntry(playbackOrder[nextIndex], playbackOrder, nextIndex);
+    if (!playbackOrder.length) return;
+    // 走后端 play_next 命令而不是重新用 play_song 触发 —— 后者会使用 NewSelection
+    // 5 秒缓冲预算，而 play_next / play_previous 使用 InteractiveRestart 的 1 秒
+    // 缓冲，切歌响应更贴近用户预期，也与 OS 媒体键行为保持一致。
+    try {
+      await deps.playNextTrack();
+    } catch (error) {
+      if (isPlaybackSupersededError(error)) return;
+      deps.notifyError(
+        m.player_error_play_failed({
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
+    }
   }
 
   async function playPrevious() {
@@ -562,19 +579,23 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       return;
     }
 
-    const previousIndex = resolveWrappedQueueIndex(-1);
-    if (previousIndex < 0) return;
-    await playQueueEntry(
-      playbackOrder[previousIndex],
-      playbackOrder,
-      previousIndex
-    );
+    try {
+      await deps.playPreviousTrack();
+    } catch (error) {
+      if (isPlaybackSupersededError(error)) return;
+      deps.notifyError(
+        m.player_error_play_failed({
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
+    }
   }
 
   async function setVolume(gain: number) {
     const clamped = Math.max(0, Math.min(1, gain));
     volume = clamped;
     if (clamped > 0) muted = false;
+    localVolumeMutationAt = Date.now();
     try {
       await deps.setPlaybackVolume(clamped);
     } catch (error) {
@@ -592,6 +613,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       void setVolume(0);
       muted = true;
     }
+    localVolumeMutationAt = Date.now();
   }
 
   function dispose() {

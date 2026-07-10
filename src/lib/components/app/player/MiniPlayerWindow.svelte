@@ -1,6 +1,6 @@
 <script lang="ts">
+  // MiniPlayerWindow 是 secondary window 的受控 IPC 例外 — 详见 miniPlayerBridge.ts。
   import { onDestroy, onMount } from 'svelte';
-  import { listen } from '@tauri-apps/api/event';
   import {
     getPlayerState,
     pausePlayback,
@@ -9,8 +9,11 @@
     resumePlayback,
     seekCurrentPlayback,
     showMainWindow,
-  } from '$lib/api';
+    listenPlayerStateChanged,
+    listenPlayerProgress,
+  } from '$lib/features/player/miniPlayerBridge';
   import type { PlayerState } from '$lib/types';
+  import { formatTime } from '$lib/features/player/formatUtils';
   import {
     ExternalLink,
     Loader2,
@@ -77,13 +80,6 @@
     const dark = mediaQuery?.matches ?? false;
     document.documentElement.classList.toggle('dark', dark);
     document.documentElement.classList.toggle('light', !dark);
-  }
-
-  function formatTime(value: number): string {
-    const total = Math.max(0, Math.floor(value));
-    const minutes = Math.floor(total / 60);
-    const seconds = total % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
 
   function hasTauriRuntime(): boolean {
@@ -187,25 +183,19 @@
         .catch((_error: unknown) => {});
 
       void (async () => {
-        const stateUnlisten = await listen<PlayerState>(
-          'player-state-changed',
-          (event) => {
-            playerState = event.payload;
-            clearPlayPendingIfSettled(event.payload);
-          }
-        );
-        const progressUnlisten = await listen<PlayerState>(
-          'player-progress',
-          (event) => {
-            if (event.payload.sessionId < playerState.sessionId) return;
-            playerState = {
-              ...playerState,
-              sessionId: event.payload.sessionId,
-              progress: event.payload.progress,
-              duration: event.payload.duration,
-            };
-          }
-        );
+        const stateUnlisten = await listenPlayerStateChanged((state) => {
+          playerState = state;
+          clearPlayPendingIfSettled(state);
+        });
+        const progressUnlisten = await listenPlayerProgress((state) => {
+          if (state.sessionId < playerState.sessionId) return;
+          playerState = {
+            ...playerState,
+            sessionId: state.sessionId,
+            progress: state.progress,
+            duration: state.duration,
+          };
+        });
 
         if (lifecycle.disposed) {
           stateUnlisten();

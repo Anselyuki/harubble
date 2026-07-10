@@ -11,6 +11,7 @@
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import { getPlayerContext, getDownloadContext } from '$lib/contexts';
+  import { formatTime } from '$lib/features/player/formatUtils';
 
   const player = getPlayerContext();
   const download = getDownloadContext();
@@ -62,13 +63,6 @@
 
   function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
-  }
-
-  function formatTime(seconds: number): string {
-    if (!isFinite(seconds) || isNaN(seconds) || seconds < 0) return '0:00';
-    const minute = Math.floor(seconds / 60);
-    const second = Math.floor(seconds % 60);
-    return `${minute}:${second.toString().padStart(2, '0')}`;
   }
 
   function nextRepeatMode(mode: 'all' | 'one'): 'all' | 'one' {
