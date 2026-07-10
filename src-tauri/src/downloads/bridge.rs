@@ -39,6 +39,11 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 节流；状态切换与传输完成帧始终放行，保证阶段变化与最终进度能及时反映到前端。
 const DOWNLOAD_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(150);
 const PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL: Duration = Duration::from_millis(250);
+/// 下载执行循环等待播放启动窗口最长可以让出的时间上限。
+///
+/// 该上限用于兜底：即便 `is_loading` 由于播放器状态卡死没能翻转回 false，也不会永远
+/// 阻塞下载执行队列。触顶后会记录 warn 日志并继续推进下载流水线。
+const PLAYBACK_LOADING_YIELD_MAX: Duration = Duration::from_secs(30);
 
 /// 包装下载进度回调，按 [`DOWNLOAD_PROGRESS_EMIT_INTERVAL`] 节流转发。
 ///
@@ -46,6 +51,13 @@ const PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL: Duration = Duration::from_millis
 /// 达到 `bytes_total`）时立即放行，其余高频进度事件按时间间隔节流，从而显著
 /// 减少派发的异步任务数量与下载服务锁竞争。返回的闭包可安全克隆，所有克隆共享
 /// 同一份节流状态。
+///
+/// 已知边界：若服务端未返回 Content-Length，`bytes_total` 为 `None`，
+/// `is_transfer_complete` 无法识别终帧；此时下载阶段最后一次进度事件可能落入 150ms
+/// 节流窗口而被丢弃。UI 依然会在紧随其后的写入阶段收到 `Writing` 状态帧（写入阶段
+/// 使用独立的节流实例，起始帧不会被节流），因此表现为最后 ~100ms 内的进度显示滞后，
+/// 属于可接受的次要 UI 抖动而非功能缺陷。真正稳定的解决方案需要下游 downloader 在
+/// 流结束时提供“最后一帧”显式信号，超出当前修复范围。
 fn throttle_download_progress<F>(
     inner: F,
 ) -> impl Fn(DownloadTaskProgressEvent) + Send + Sync + Clone + 'static
@@ -54,7 +66,9 @@ where
 {
     let last_emit = Arc::new(Mutex::new(None::<(Instant, DownloadTaskStatus)>));
     move |progress| {
-        let is_transfer_complete = progress.bytes_total == Some(progress.bytes_done);
+        let is_transfer_complete = progress
+            .bytes_total
+            .is_some_and(|total| total == progress.bytes_done);
         let should_emit = {
             let mut guard = last_emit.lock().unwrap();
             let now = Instant::now();
@@ -130,8 +144,8 @@ struct StartedJob {
 /// 该循环会常驻运行，轮询排队中的批次并以下载/写入流水线策略驱动其完成，同时在
 /// 关键状态迁移时持续发出 Tauri 事件。
 async fn execution_loop(app: &AppHandle, state: AppState) {
-    let service = Arc::clone(&state.download_service);
-    let api = Arc::clone(&state.download_api);
+    let service = Arc::clone(&state.download.download_service);
+    let api = Arc::clone(&state.api_clients.download_api);
 
     loop {
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -238,6 +252,7 @@ async fn execution_loop(app: &AppHandle, state: AppState) {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async fn wait_for_playback_startup_to_settle(state: &AppState) {
+    let started_at = Instant::now();
     loop {
         state
             .wait_for_background_io_gate(
@@ -246,6 +261,21 @@ async fn wait_for_playback_startup_to_settle(state: &AppState) {
             )
             .await;
         if !state.player.get_state().is_loading {
+            return;
+        }
+        if started_at.elapsed() >= PLAYBACK_LOADING_YIELD_MAX {
+            state.log_center.record(
+                crate::logging::LogPayload::new(
+                    crate::logging::LogLevel::Warn,
+                    "download-bridge",
+                    "download_bridge.playback_startup_yield_timeout",
+                    "Download loop yielded to playback startup beyond the configured cap",
+                )
+                .details(format!(
+                    "waited {}ms while player.is_loading remained true",
+                    started_at.elapsed().as_millis()
+                )),
+            );
             return;
         }
         tokio::time::sleep(PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL).await;
@@ -481,7 +511,7 @@ async fn collect_write_result(
         unpack_task_result(write_result.outcome);
 
     let update = {
-        let mut svc = state.download_service.lock().await;
+        let mut svc = state.download.download_service.lock().await;
         svc.update_task_state(
             &write_result.task.job_id,
             &write_result.task.id,
@@ -507,7 +537,12 @@ async fn collect_write_result(
     }
 
     if let Some(update) = update {
-        let manager_snapshot = state.download_service.lock().await.manager_snapshot();
+        let manager_snapshot = state
+            .download
+            .download_service
+            .lock()
+            .await
+            .manager_snapshot();
         state
             .persist_download_snapshot_async(manager_snapshot.clone())
             .await;

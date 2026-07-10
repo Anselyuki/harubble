@@ -35,7 +35,12 @@ pub async fn get_albums_by_tag_dimension(
         return Ok(Vec::new());
     }
 
-    let albums = state.api.get_albums().await.map_err(|e| e.to_string())?;
+    let albums = state
+        .api_clients
+        .api
+        .get_albums()
+        .await
+        .map_err(|e| e.to_string())?;
     let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
     for album in &mut enriched {
         album.tags = state.tag_registry.get_album_tags(&album.cid, locale);

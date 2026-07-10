@@ -24,7 +24,14 @@ pub async fn get_preferences(state: State<'_, AppState>) -> Result<AppPreference
 ///
 /// 适用于用户在设置面板保存配置后的正式提交。
 /// 入参 `preferences` 为完整偏好对象；返回值为已经通过校验并写入后的最终偏好。
-/// 若下载目录发生变化，该接口会自动触发一次本地库存重新扫描；调用方不需要再额外手动发起扫描。
+///
+/// **volume 语义**：该字段由播放器子系统通过 `set_playback_volume` 单独持久化；
+/// 设置面板 UI 不编辑音量。为避免设置保存与音量拖动之间的写-写竞态覆盖当前音量，
+/// 本命令会在校验完成后忽略入参中的 `volume`，改用后端当前 `AppPreferences::volume`
+/// 落盘。为了保证与并发的 `set_playback_volume` 之间不出现 TOCTOU 竞态，本命令通过
+/// `update_preferences` 在偏好写锁内一次性完成“读取当前 volume + 覆盖其它字段”，
+/// 避免锁外快照 volume 后又被并发写入覆盖。若下载目录发生变化，该接口会自动触发
+/// 一次本地库存重新扫描；调用方不需要再额外手动发起扫描。
 #[tauri::command]
 pub async fn set_preferences(
     app: tauri::AppHandle,
@@ -33,17 +40,25 @@ pub async fn set_preferences(
 ) -> Result<AppPreferences, String> {
     let locale = preferences.locale;
     preferences.validate(locale)?;
-    let previous = state.preferences();
-    state.persist_preferences(preferences.clone()).await?;
-    if previous.output_dir != preferences.output_dir {
+    let previous_output_dir = state.preferences().output_dir.clone();
+    // 通过 update_preferences 让 "读取当前 volume + 应用新字段 + 落盘" 都发生在
+    // preferences_write_lock 内，避免与 set_playback_volume 之间产生 TOCTOU。
+    let persisted = state
+        .update_preferences(move |current| {
+            let preserved_volume = current.volume;
+            *current = preferences;
+            current.volume = preserved_volume;
+        })
+        .await?;
+    if previous_output_dir != persisted.output_dir {
         spawn_inventory_scan(
             app,
             state.inner().clone(),
-            preferences.output_dir.clone(),
+            persisted.output_dir.clone(),
             None,
         );
     }
-    Ok(preferences)
+    Ok(persisted)
 }
 
 /// 导出偏好到指定路径。

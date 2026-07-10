@@ -194,7 +194,7 @@ impl LibrarySearchService {
 
             let generation = service.start_rebuild(&inventory).await;
             let snapshot_result = build_library_search_snapshot(
-                state.api.clone(),
+                state.api_clients.api.clone(),
                 state.tag_registry.clone(),
                 inventory.root_output_dir.clone(),
                 inventory.inventory_version.clone(),

@@ -2,7 +2,7 @@
 
 use crate::app_state::AppState;
 use harubble_core::api::Album;
-use harubble_core::homepage::{HistoryEntry, HomepageStatus, SeriesGroup};
+use harubble_core::homepage::{derive_series_tags, HistoryEntry, HomepageStatus, SeriesGroup};
 use harubble_core::DownloadJobStatus;
 use tauri::State;
 
@@ -16,7 +16,12 @@ pub async fn get_latest_albums(
     state: State<'_, AppState>,
     limit: u32,
 ) -> Result<Vec<Album>, String> {
-    let albums = state.api.get_albums().await.map_err(|e| e.to_string())?;
+    let albums = state
+        .api_clients
+        .api
+        .get_albums()
+        .await
+        .map_err(|e| e.to_string())?;
     let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
     let locale = state.preferences().locale;
     for album in &mut enriched {
@@ -35,7 +40,12 @@ pub async fn get_latest_albums(
 /// 调用方应注意：belong 映射来自本地缓存，若缓存尚未写入则分组结果可能为空。
 #[tauri::command]
 pub async fn get_albums_by_series(state: State<'_, AppState>) -> Result<Vec<SeriesGroup>, String> {
-    let albums = state.api.get_albums().await.map_err(|e| e.to_string())?;
+    let albums = state
+        .api_clients
+        .api
+        .get_albums()
+        .await
+        .map_err(|e| e.to_string())?;
     let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
     let locale = state.preferences().locale;
     for album in &mut enriched {
@@ -84,34 +94,6 @@ pub async fn get_albums_by_series(state: State<'_, AppState>) -> Result<Vec<Seri
     Ok(result)
 }
 
-/// 从专辑名称中派生系列标签。
-///
-/// 对名称做大小写不敏感的单词边界匹配，识别 OST、EP 等关键词。
-/// 返回匹配到的标签列表；未匹配到任何关键词时返回空列表。
-fn derive_series_tags(name: &str) -> Vec<&'static str> {
-    let upper = name.to_uppercase();
-    let bytes = upper.as_bytes();
-    let mut tags = Vec::new();
-
-    if let Some(pos) = upper.find("OST") {
-        let before_ok = pos == 0 || !bytes[pos - 1].is_ascii_alphanumeric();
-        let after_ok = pos + 3 >= bytes.len() || !bytes[pos + 3].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            tags.push("OST");
-        }
-    }
-
-    if let Some(pos) = upper.find("EP") {
-        let before_ok = pos == 0 || !bytes[pos - 1].is_ascii_alphanumeric();
-        let after_ok = pos + 2 >= bytes.len() || !bytes[pos + 2].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            tags.push("EP");
-        }
-    }
-
-    tags
-}
-
 /// 获取最近收听历史。
 ///
 /// 从 SQLite 按播放时间倒序返回最近 `limit` 条收听记录。
@@ -141,6 +123,7 @@ pub async fn record_song_heat(
     cover_url: Option<String>,
 ) -> Result<(), String> {
     let song_detail = state
+        .api_clients
         .api
         .get_song_detail(&song_cid)
         .await
@@ -159,6 +142,7 @@ pub async fn record_song_heat(
         .map_err(|e| e.to_string())?
 }
 
+/// 清空所有收听历史记录。
 ///
 /// 适用于用户手动清空收听历史面板的场景。
 /// 返回值为本次实际删除的记录条数。
@@ -182,13 +166,18 @@ pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, 
 /// 该接口会发起一次上游 API 请求与多次本地状态读取，不适合高频轮询。
 #[tauri::command]
 pub async fn get_homepage_status(state: State<'_, AppState>) -> Result<HomepageStatus, String> {
-    let albums = state.api.get_albums().await.map_err(|e| e.to_string())?;
+    let albums = state
+        .api_clients
+        .api
+        .get_albums()
+        .await
+        .map_err(|e| e.to_string())?;
     let platform_album_count = albums.len() as u32;
 
     let inventory_snapshot = state.local_inventory_service.snapshot().await;
     let local_downloaded_count = inventory_snapshot.matched_track_count as u32;
 
-    let download_snapshot = state.download_service.lock().await.snapshot();
+    let download_snapshot = state.download.download_service.lock().await.snapshot();
     let active_download_count = download_snapshot
         .jobs
         .iter()

@@ -17,7 +17,12 @@ use tauri::State;
 pub async fn get_albums(
     state: State<'_, AppState>,
 ) -> Result<Vec<harubble_core::api::Album>, String> {
-    let albums = state.api.get_albums().await.map_err(|e| e.to_string())?;
+    let albums = state
+        .api_clients
+        .api
+        .get_albums()
+        .await
+        .map_err(|e| e.to_string())?;
     let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
     let locale = state.preferences().locale;
     for album in &mut enriched {
@@ -38,6 +43,7 @@ pub async fn get_album_detail(
     album_cid: String,
 ) -> Result<harubble_core::api::AlbumDetail, String> {
     let album = state
+        .api_clients
         .api
         .get_album_detail(&album_cid)
         .await
@@ -74,11 +80,13 @@ pub async fn get_song_detail(
     cid: String,
 ) -> Result<harubble_core::api::SongDetail, String> {
     let song = state
+        .api_clients
         .api
         .get_song_detail(&cid)
         .await
         .map_err(|e| e.to_string())?;
     let album = state
+        .api_clients
         .api
         .get_album_detail(&song.album_cid)
         .await
@@ -107,6 +115,7 @@ pub async fn get_song_lyrics(
     state
         .dispatch_visual_aux("get_song_lyrics", move |state| async move {
             let song_detail = state
+                .api_clients
                 .image_api
                 .get_song_detail(&cid)
                 .await
@@ -117,6 +126,7 @@ pub async fn get_song_lyrics(
             };
 
             state
+                .api_clients
                 .api
                 .download_text(&lyric_url)
                 .await
@@ -140,6 +150,7 @@ pub async fn extract_image_theme(
     state
         .dispatch_visual_aux("extract_image_theme", move |state| async move {
             let bytes = state
+                .api_clients
                 .image_api
                 .download_bytes_coalesced(&image_url)
                 .await
@@ -175,6 +186,7 @@ pub async fn get_image_data_url(
     state
         .dispatch_visual_aux("get_image_data_url", move |state| async move {
             let bytes = state
+                .api_clients
                 .image_api
                 .download_bytes_coalesced(&image_url)
                 .await
