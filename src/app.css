@@ -144,6 +144,15 @@
   }
 }
 
+@keyframes motion-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
 @theme inline {
   --color-background: var(--bg-primary);
   --color-foreground: var(--text-primary);
@@ -1938,21 +1947,10 @@ img[data-image-state='error'] {
   -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
 }
 
-.fullscreen-title-inner {
-  display: inline-block;
-}
-
 .fullscreen-meta-text:hover .fullscreen-title.overflowing {
   text-overflow: clip;
   mask-image: none;
   -webkit-mask-image: none;
-}
-
-.fullscreen-meta-text:hover
-  .fullscreen-title.overflowing
-  .fullscreen-title-inner {
-  padding-right: 3em;
-  animation: fs-marquee 8s linear infinite;
 }
 
 .fullscreen-artist {
@@ -1969,41 +1967,10 @@ img[data-image-state='error'] {
   -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
 }
 
-.fullscreen-artist-inner {
-  display: inline-block;
-}
-
 .fullscreen-meta-text:hover .fullscreen-artist.overflowing {
   text-overflow: clip;
   mask-image: none;
   -webkit-mask-image: none;
-}
-
-.fullscreen-meta-text:hover
-  .fullscreen-artist.overflowing
-  .fullscreen-artist-inner {
-  padding-right: 3em;
-  animation: fs-marquee 8s linear infinite;
-}
-
-@keyframes fs-marquee {
-  0% {
-    transform: translateX(0);
-  }
-  100% {
-    transform: translateX(-100%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .fullscreen-meta-text:hover
-    .fullscreen-title.overflowing
-    .fullscreen-title-inner,
-  .fullscreen-meta-text:hover
-    .fullscreen-artist.overflowing
-    .fullscreen-artist-inner {
-    animation: none;
-  }
 }
 
 .fs-download {
@@ -2239,9 +2206,22 @@ img[data-image-state='error'] {
   display: none;
 }
 
+/*
+   fullscreen-lyric-line 的高亮态（inactive → active）由 GSAP 驱动
+   --lyric-progress（0 → 1）；font-size 与 transform 通过 calc 从
+   --lyric-size-{base,active} 与 --lyric-shift-active 派生，responsive
+   断点只需覆盖这些基础变量即可自动生效，无需在 JS 侧感知 media query。
+
+   color 与 background 走独立的类/伪类状态，配 var(--motion-hover)
+   平滑过渡；不与 --lyric-progress 耦合，避免同一属性被 GSAP 每帧
+   写入的同时又被 CSS transition 拖尾。
+*/
 .fullscreen-lyric-line {
+  --lyric-progress: 0;
+  --lyric-size-base: 20px;
+  --lyric-size-active: 26px;
+  --lyric-shift-active: 4px;
   padding: 10px 16px;
-  font-size: 20px;
   font-weight: 500;
   line-height: 1.8;
   color: rgba(255, 255, 255, 0.3);
@@ -2252,27 +2232,24 @@ img[data-image-state='error'] {
   width: 100%;
   text-align: left;
   font-family: inherit;
-  transition:
-    font-size var(--motion-slow) var(--ease-ios),
-    color var(--motion-slow) var(--ease-ios),
-    transform var(--motion-slow) var(--ease-decelerate);
+  font-size: calc(
+    var(--lyric-size-base) +
+      (var(--lyric-size-active) - var(--lyric-size-base)) *
+      var(--lyric-progress)
+  );
+  transform: translateX(
+    calc(var(--lyric-shift-active) * var(--lyric-progress))
+  );
+  transition: var(--motion-hover);
 }
 
 .fullscreen-lyric-line.active {
   color: #fff;
   font-weight: 800;
-  font-size: 26px;
-  transform: translateX(4px);
 }
 
 .fullscreen-lyric-line.seekable {
   cursor: pointer;
-  transition:
-    font-size var(--motion-slow) var(--ease-ios),
-    color var(--motion-fast) var(--ease-ios),
-    transform var(--motion-slow) var(--ease-decelerate),
-    background-color var(--motion-fast) var(--ease-ios),
-    opacity var(--motion-fast) var(--ease-ios);
 }
 
 .fullscreen-lyric-line.seekable:hover {
@@ -2331,12 +2308,9 @@ img[data-image-state='error'] {
   }
 
   .fullscreen-lyric-line {
-    font-size: 16px;
+    --lyric-size-base: 16px;
+    --lyric-size-active: 18px;
     padding: 8px 12px;
-  }
-
-  .fullscreen-lyric-line.active {
-    font-size: 18px;
   }
 }
 

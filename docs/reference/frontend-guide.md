@@ -61,12 +61,12 @@ src/
    │  │  └ tag-editor/              # Tag 编辑器视图与对话框
    │  ├ AlbumCard.svelte / SongRow.svelte / MetadataPopover.svelte
    │  ├ AudioPlayer.svelte / ViewTransition.svelte
-   │  └ MotionSpinner.svelte / MotionPulseBlock.svelte  # 通用动效原语
+   │  └ MotionSpinner.svelte / MotionPulseBlock.svelte / MotionMarqueeInner.svelte  # 通用动效原语
    │
    ├ features/                      # 业务域 controller / store / 纯函数
    │  ├ env/      store.svelte.ts
    │  ├ library/  controller + selectors + helpers
-   │  ├ player/   controller + queue + lyrics + volume + formatUtils + miniPlayerBridge
+   │  ├ player/   controller + queue + lyrics + volume + formatUtils + miniPlayerBridge + playback-contract
    │  ├ download/ controller + presenters + formatters + guards
    │  ├ home/     controller + store
    │  ├ search/   controller + store
@@ -77,7 +77,7 @@ src/
    │              + themeManager / downloadBridge
    │
    ├ contexts/                      # Svelte context 键 + setter/getter（强类型）
-   ├ design/                        # gsap 适配层 + 侧栏动画器 + view-transition 原语 + actions + variants
+   ├ design/                        # gsap 适配层 + 侧栏动画器 + 侧栏 resize 手柄 + view-transition 原语 + actions + variants
    ├ styles/                        # 字体声明（HarmonyOS Sans SC 等）
    ├ i18n/                          # locale state + formatters + types
    └ paraglide/                     # @inlang/paraglide-js 构建产物（messages）
@@ -207,6 +207,7 @@ CSS 变量：
 - 不使用 GSAP 内置的 `power2.out` / `power3.out` 等曲线
 - `reduced motion` 开启时按 `getMotionDuration` 降级
 - 通用 helper：`animateIn` / `animateOut` / `gsapScrollIntoView` / `killTweens`
+- **响应式派生 tween**：当动画目标属性受 media query 约束（例如同一元素在不同断点下 base/active 尺寸不同）时，优先让 GSAP tween 一个进度型 CSS 变量（如 `--lyric-progress` 从 0 到 1），再由 CSS 用 `calc` 从该变量派生 `font-size` / `transform` / `color`；断点覆盖派生基础变量即可自动生效，JS 侧不需感知 media query。参考 `design/actions.ts` 中的 `lyricActiveTween`
 
 #### 时长令牌
 
@@ -220,6 +221,15 @@ CSS 变量：
 | `MOTION.SLOW`       | 260ms | 200ms           | 覆盖层 / 较大元素进出                                                          |
 | `MOTION.PAGE`       | 320ms | 280ms           | 主视图页面级转场                                                               |
 | `MOTION.OVERLAY_IN` | 200ms | —               | 浮层统一入场（dialog/select/tooltip 等），与浮层出场 `BASE_OUT` / `MICRO` 配对 |
+
+此外，`app.css` 还定义了两个仅供 CSS 循环装饰使用的时长档，不进入 `MOTION.*`：
+
+| CSS 变量           | 时长   | 用途                                                             |
+| ------------------ | ------ | ---------------------------------------------------------------- |
+| `--motion-spinner` | 900ms  | `motion-spin` keyframe 一圈耗时（Spinner / 单元格 loading 指示） |
+| `--motion-pulse`   | 1800ms | `motion-pulse` keyframe 一次呼吸周期（骨架屏 / 占位块）          |
+
+这两个档只允许在受控例外 ① 覆盖的循环装饰动画中通过 CSS `animation` 引用，不参与 GSAP 时间线。
 
 少数经权衡的有意特例不并入令牌：如音量胶囊「展开 400ms / 收缩 799ms」的非对称节奏、列表 stagger 的起步 `delay` 与气泡内容的错位 `delay`（这些是编排偏移而非元素时长）。这类点保留就地数值，但须在调用处以注释说明为何是特例。
 
@@ -236,10 +246,11 @@ CSS 变量：
 仅以下两类场景允许使用 CSS 动画能力，且必须满足对应约束：
 
 1. **无限循环的 loading / 装饰动画**（spinner、骨架屏 pulse、不确定进度条、marquee）允许 CSS keyframes：
-   - 优先复用 Motion 原语（`MotionSpinner` / `MotionPulseBlock`）或 `app.css` 中的全局 keyframes（`motion-spin` / `motion-progress-slide`），不要在组件内复制同类 keyframes
+   - 优先复用 Motion 原语（`MotionSpinner` / `MotionPulseBlock` / `MotionMarqueeInner`）或 `app.css` 中的全局 keyframes（`motion-spin` / `motion-pulse` / `motion-progress-slide` / `motion-marquee`），不要在组件内复制同类 keyframes
    - 缓动使用 `var(--ease-ios)`；匀速旋转 / 匀速位移可用 `linear`
    - 必须提供 reduced-motion 降级：Motion 原语走 `reducedMotion` prop，直接写 keyframes 的场景用 `prefers-reduced-motion` media query 关闭动画
-2. **hover / active 等纯状态颜色反馈**允许 CSS transition，统一写 `transition: var(--motion-hover)`：
+2. **纯状态颜色反馈**允许 CSS transition，统一写 `transition: var(--motion-hover)`：
+   - 覆盖场景包括：`:hover` / `:active` / `:focus-visible` 等指针交互状态、以及应用状态驱动的 class 切换（例如当前活动歌词行的 `.active`、勾选项的高亮）——凡是只涉及 color / background / 边框 / 阴影 等非位移、非尺寸、非布局属性的状态反馈都在此列
    - 该 token 仅覆盖 background-color / color / border-color / opacity / box-shadow；位移、尺寸、布局变化仍必须走 GSAP
    - 时长与曲线由 token 统一（`--motion-fast` + `--ease-ios`），不要自行写 `transition: all …` 或自定义时长 / 曲线
    - reduced-motion 下该 token 全局置为 `none`，组件无需单独处理
@@ -310,8 +321,8 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 ### 下载标记消费
 
 - 前端统一以后端内容接口返回的 `download` 字段为准，不自行推导
-- `downloadStatus` 枚举：`detected` / `verified` / `partial` / `unverifiable` / `mismatch`
-- `mismatch` 按异常态处理
+- `downloadStatus` 枚举：`missing` / `detected` / `verified` / `partial` / `unverifiable` / `mismatch` / `unknown`
+- `mismatch` 按异常态处理；`missing` 表示库存中未匹配到本地文件，`unknown` 表示尚未完成扫描或状态无法判定，UI 层需保留兜底分支
 
 ### 曲目点击
 

@@ -10,11 +10,18 @@
   import { getImageDataUrl } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import { getPlayerContext, getDownloadContext } from '$lib/contexts';
+  import {
+    getPlayerContext,
+    getDownloadContext,
+    getShellContext,
+  } from '$lib/contexts';
   import { formatTime } from '$lib/features/player/formatUtils';
+  import MotionMarqueeInner from '$lib/components/MotionMarqueeInner.svelte';
+  import { lyricActiveTween } from '$lib/design/actions';
 
   const player = getPlayerContext();
   const download = getDownloadContext();
+  const shell = getShellContext();
 
   // song is guaranteed non-null by the {#if} guard in App.svelte
   const song = $derived(player.currentSong!);
@@ -60,6 +67,7 @@
   let artistRef = $state<HTMLElement | null>(null);
   let titleOverflows = $state(false);
   let artistOverflows = $state(false);
+  let metaHovered = $state(false);
 
   function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
@@ -328,20 +336,35 @@
     </div>
 
     <div class="fullscreen-meta">
-      <div class="fullscreen-meta-text">
+      <div
+        class="fullscreen-meta-text"
+        role="presentation"
+        onpointerenter={() => (metaHovered = true)}
+        onpointerleave={() => (metaHovered = false)}
+      >
         <h2
           class="fullscreen-title"
           class:overflowing={titleOverflows}
           bind:this={titleRef}
         >
-          <span class="fullscreen-title-inner">{song.name}</span>
+          <MotionMarqueeInner
+            active={metaHovered && titleOverflows}
+            reducedMotion={shell.prefersReducedMotion}
+          >
+            {song.name}
+          </MotionMarqueeInner>
         </h2>
         <p
           class="fullscreen-artist"
           class:overflowing={artistOverflows}
           bind:this={artistRef}
         >
-          <span class="fullscreen-artist-inner">{artistText}</span>
+          <MotionMarqueeInner
+            active={metaHovered && artistOverflows}
+            reducedMotion={shell.prefersReducedMotion}
+          >
+            {artistText}
+          </MotionMarqueeInner>
         </p>
       </div>
       <button
@@ -512,6 +535,7 @@
               type="button"
               class="fullscreen-lyric-line seekable"
               class:active={index === player.activeLyricIndex}
+              use:lyricActiveTween={index === player.activeLyricIndex}
               onclick={() => handleLyricSeek(line.time!)}
             >
               {line.text}
@@ -520,6 +544,7 @@
             <p
               class="fullscreen-lyric-line"
               class:active={index === player.activeLyricIndex}
+              use:lyricActiveTween={index === player.activeLyricIndex}
             >
               {line.text}
             </p>

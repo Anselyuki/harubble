@@ -1,3 +1,45 @@
+import { gsap, getMotionDuration, killTweens, MOTION } from './gsap';
+
+/**
+ * Svelte action：以 GSAP 驱动 `.fullscreen-lyric-line` 的高亮进度变量。
+ *
+ * 该 action 通过 tween `--lyric-progress`（0 → 1）让 CSS 侧的 font-size、
+ * transform、color 派生表达式产生平滑过渡；不直接操纵 font-size / transform，
+ * 因此 responsive media query 覆盖 `--lyric-size-{base,active}` 时无需 JS 感知。
+ *
+ * 初次挂载不做 tween，直接 set 到目标值，避免首屏出现无意义的推入动画；
+ * 每次 `update` 比对目标值，仅在变化时执行 tween；`destroy` 会 kill 未完成的
+ * tween，防止组件卸载后仍持续修改 inline style。
+ *
+ * @param node 目标歌词行元素
+ * @param active 当前是否为活动行
+ * @returns Svelte action 的 update / destroy 生命周期钩子
+ */
+export function lyricActiveTween(
+  node: HTMLElement,
+  active: boolean
+): { update(active: boolean): void; destroy(): void } {
+  let currentTarget = active ? 1 : 0;
+  gsap.set(node, { '--lyric-progress': currentTarget });
+
+  return {
+    update(nextActive: boolean) {
+      const target = nextActive ? 1 : 0;
+      if (target === currentTarget) return;
+      currentTarget = target;
+      killTweens(node);
+      gsap.to(node, {
+        '--lyric-progress': target,
+        duration: getMotionDuration(MOTION.SLOW),
+        ease: 'ios-spring',
+      });
+    },
+    destroy() {
+      killTweens(node);
+    },
+  };
+}
+
 /**
  * Svelte action：将 node 元素的实际高度同步到 CSS 自定义属性 --brand-region-height。
  *
