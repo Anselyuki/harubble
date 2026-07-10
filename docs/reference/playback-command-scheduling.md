@@ -39,7 +39,7 @@ Harubble 应采用 **Command Domain + 独立资源域 + 降级策略**，而不�
 - 封面 data URL、主题色提取已在前端串行/合并，后端 image/theme/lyrics command 也已通过 VisualAux 锁串行，并在播放启动 gate 活跃时退让。
 - 下载执行循环、本地库存扫描、搜索索引重建、belong 预热和 tag registry 同步在领取新后台工作前会等待播放启动 gate；已运行的下载/扫描不被强行中断。
 - 收听历史记录已从播放启动主路径移到 `PlaybackSideEffect` 后台入口，失败只写日志，不阻塞 `play_song` 成功返回。
-- playback transition、playback startup、playback side effect、VisualAux 已记录 `command.domain`、`command.priority`、`command.queue_wait_ms`、`command.run_ms`、`playback.session_id`、`playback.request_id`、`playback.loading_ms` 和 supersede 状态；VisualAux 与 BackgroundIo 退让路径已记录 `resource_gate.wait_ms`。
+- playback transition、playback startup、VisualAux 已记录 `command.domain`、`command.priority`、`command.queue_wait_ms`、`command.run_ms`、`playback.session_id`、`playback.request_id`、`playback.loading_ms` 和 supersede 状态；playback side effect 目前没有独立排队层，只记录 `command.domain`、`command.priority`、`command.run_ms`；VisualAux 与 BackgroundIo 退让路径已记录 `resource_gate.wait_ms`。
 - CPAL 回调已经避免等待 `SampleBuffer` 或 `PlayerState` 锁；拿不到锁时只静音或跳过进度写入，并通过 monitor 线程聚合记录 `audio.callback_silence_due_to_lock` 与 `audio.callback_underrun_frames`。
 
 仍需要继续收敛的风险：
@@ -117,17 +117,19 @@ PlaybackActor inbox
 
 ### Resource Layout
 
-当前没有单独的 `ResourceRegistry` 类型；资源注册表由 `AppState` 字段和 `command_scheduling.rs` 的静态测试共同承担。
+当前没有单独的 `ResourceRegistry` 类型；资源注册表由 `AppState` 字段和 `command_scheduling.rs` 的静态测试共同承担。四个 HTTP client 已在 `AppState` 中归拢到 `api_clients: ApiClients` 子结构，访问路径为 `state.api_clients.api` 等。
 
 ```text
 AppState
-  api              -> library/search/preferences/logging/tag/collection
-  playback_api     -> song detail + audio stream for active playback
-  image_api        -> cover/theme/lyrics/notification artwork, low priority
-  download_api     -> download job preparation + large transfers
-  playback_runtime -> PlaybackActor + playback startup async/blocking work
-  playback_gate    -> cross-domain startup backpressure signal
-  visual_aux_lock  -> backend serialization for image/theme/lyrics
+  api_clients
+    api              -> library/search/preferences/logging/tag/collection
+    playback_api     -> song detail + audio stream for active playback
+    image_api        -> cover/theme/lyrics/notification artwork, low priority
+    download_api     -> download job preparation + large transfers
+  playback_runtime   -> PlaybackActor + playback startup async/blocking work
+  playback_actor     -> playback transition inbox
+  playback_load_gate -> cross-domain startup backpressure signal
+  visual_aux_lock    -> backend serialization for image/theme/lyrics
 ```
 
 当前已拆出四个 API client，并用静态测试限制资源域误用：
@@ -205,7 +207,7 @@ AppState
 - 已用 `PlaybackActor` inbox 替代 play/seek/next/previous 的直接 spawn；command shim 继续通过 `dispatch_playback_transition` 保持对外签名稳定。
 - media controls 的 next/previous/seek 已 dispatch 到同一个 actor。
 - 已用 `request_id`、`session_id`、`stop_flag` 和 `PlaybackLoadGate` ticket 约束 song detail、download stream、probe 和 initial buffer；后续如需要更强观测，可再收敛为显式 `PlaybackTicket` 结构。
-- listening history 已从播放启动主路径移到 `PlaybackSideEffect`，并记录 side-effect queue/run 指标。
+- listening history 已从播放启动主路径移到 `PlaybackSideEffect`，并记录 side-effect run 指标。
 
 ### Resource Gate And Aux Queues
 
@@ -258,7 +260,7 @@ AppState
 
 - `command.domain`
 - `command.priority`
-- `command.queue_wait_ms`
+- `command.queue_wait_ms`（playback side effect 目前没有独立排队层，不记录该字段；未来接入排队器时再补上）
 - `command.run_ms`
 - `resource_gate.wait_ms`
 - `playback.request_id`
@@ -282,12 +284,12 @@ AppState
 
 涉及播放调度的改动至少验证：
 
-1. `rtk cargo test --manifest-path src-tauri/Cargo.toml player::backend::cpal`
-2. `rtk cargo test --manifest-path src-tauri/Cargo.toml player::stream`
-3. `rtk cargo test --manifest-path src-tauri/Cargo.toml app_state::playback`
-4. `rtk cargo test --manifest-path src-tauri/Cargo.toml player::controller`
-5. `rtk bunx vitest run src/lib/api.test.ts`
-6. `rtk cargo check --manifest-path src-tauri/Cargo.toml`
-7. `rtk git diff --check`
+1. `cargo test --manifest-path src-tauri/Cargo.toml player::backend::cpal`
+2. `cargo test --manifest-path src-tauri/Cargo.toml player::stream`
+3. `cargo test --manifest-path src-tauri/Cargo.toml app_state::playback`
+4. `cargo test --manifest-path src-tauri/Cargo.toml player::controller`
+5. `bunx vitest run src/lib/api.test.ts`
+6. `cargo check --manifest-path src-tauri/Cargo.toml`
+7. `git diff --check`
 
-跨前后端状态、事件或 command registry 的改动，再跑 `rtk bun run check`。
+跨前后端状态、事件或 command registry 的改动，再跑 `bun run check`。

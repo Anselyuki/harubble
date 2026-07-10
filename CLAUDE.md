@@ -34,10 +34,11 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 ## 关键入口
 
 - `src-tauri/src/main.rs`：Tauri 入口、command 注册与应用启动 wiring
-- `src-tauri/src/app_state.rs`：后端共享状态组合，聚合播放器、下载、库存、偏好、日志与搜索服务
+- `src-tauri/src/app_state/mod.rs`：后端共享状态组合，聚合播放器、下载、库存、偏好、日志与搜索服务。已拆分为 `api_clients` / `download_subsystem` / `preferences` / `playback` / `media_controls` 子模块
 - `src/App.svelte`：前端根装配层，负责 controller 初始化、Tauri 事件订阅、跨域状态协调与壳层组件编排
 - `src/lib/api.ts`：主 Tauri command bridge
 - `src/lib/settingsApi.ts`：设置面板专用 IPC bridge
+- `src/lib/collectionApi.ts`：合集专用 IPC bridge
 - `src/lib/types.ts`：前后端共享数据结构
 - `src/lib/features/`：按 `env / library / player / download / home / search / shell / collection / tagEditor` 划分的领域目录
 - `src/lib/components/app/`：前端壳层组件目录，按业务域划分子目录：

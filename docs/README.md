@@ -105,3 +105,7 @@ Windows 构建约束：禁止 release 构建弹出黑色终端窗口。包含根
 #### [roadmap.md](./history/roadmap.md)
 
 后端路线图，包含已完成阶段总览与待办阶段方向。
+
+---
+
+> 说明：`docs/plans/` 存放本地重构建议等临时计划稿，已在 `.gitignore` 中排除，不进入本索引，也不作为真相来源。

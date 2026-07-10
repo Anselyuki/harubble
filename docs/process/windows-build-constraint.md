@@ -56,7 +56,7 @@ state.record_log(
 );
 ```
 
-目前 `main.rs` 的 `RunEvent::Exit` 分支中存在一处 `eprintln!`（flush logs 失败时的 fallback），属于终端不可见时无法观测的极端兜底，暂时保留但不作为推荐模式。
+目前 `main.rs` 的 `flush_logs_on_exit` 函数中存在一处 `eprintln!`（flush logs 失败时的 fallback），由 `RunEvent::ExitRequested` 与 `RunEvent::Exit` 两个分支共同调用；属于终端不可见时无法观测的极端兜底，暂时保留但不作为推荐模式。
 
 ### 3.5 构建版本对齐约束
 

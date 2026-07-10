@@ -7,7 +7,7 @@
 ```text
 ┌──────────────────────┬──────────────────────────────────────────────┐
 │ AppSidebar           │ TopToolbar（macOS 拖拽区 + 工具入口）        │
-│ ├ BrandLogo          ├──────────────────────────────────────────────┤
+│ ├ BrandLogo/BrandSlab ├─────────────────────────────────────────────┤
 │ ├ SidebarNav         │ ViewRouter:                                  │
 │ │  (Home / Search /  │ ├ HomeView                                   │
 │ │   Library /        │ ├ SearchView                                 │
@@ -40,14 +40,17 @@ src/
    ├ api.ts                         # 主 IPC bridge
    ├ settingsApi.ts                 # 设置面板专用 IPC bridge
    ├ collectionApi.ts               # 合集相关 IPC bridge
+   ├ appEvents.ts                   # Tauri 事件名与载荷类型集中定义
    ├ types.ts                       # 前后端共享数据结构
-   ├ theme.ts / themePresets.ts     # 主题切换与预设
+   ├ theme.ts / themePresets.ts     # 主题切换与预设（旧版链路，部分函数已被 themeTokens 取代）
+   ├ themeTokens.ts / monetPalette.ts # ThemeTokenSet 派生与 Monet 调色板
    ├ cache.ts / lazyLoad.ts / imageDataSrc.ts / downloadBadge.ts / utils.ts
    │
    ├ components/
    │  ├ ui/                         # shadcn-svelte / Bits UI primitive 包装
    │  ├ app/                        # 业务壳层组件（按域划分子目录）
    │  │  ├ shell/                   # 顶部工具栏、Sheet、Toast、Provider、Router
+   │  │  │   └ settings/            # SettingsSheet 拆分出的分区组件
    │  │  ├ sidebar/                 # 侧栏框架与导航
    │  │  ├ home/                    # 首页区块
    │  │  ├ library/                 # 库视图
@@ -57,21 +60,24 @@ src/
    │  │  ├ player/                  # 播放 Dock / 歌词 / 音量 / 全屏播放器
    │  │  └ tag-editor/              # Tag 编辑器视图与对话框
    │  ├ AlbumCard.svelte / SongRow.svelte / MetadataPopover.svelte
-   │  └ Motion*.svelte              # 通用动效原语
+   │  ├ AudioPlayer.svelte / ViewTransition.svelte
+   │  └ MotionSpinner.svelte / MotionPulseBlock.svelte  # 通用动效原语
    │
    ├ features/                      # 业务域 controller / store / 纯函数
    │  ├ env/      store.svelte.ts
    │  ├ library/  controller + selectors + helpers
-   │  ├ player/   controller + queue + lyrics + volume
+   │  ├ player/   controller + queue + lyrics + volume + formatUtils + miniPlayerBridge
    │  ├ download/ controller + presenters + formatters + guards
    │  ├ home/     controller + store
    │  ├ search/   controller + store
-   │  ├ collection/ controller
+   │  ├ collection/ controller + resolvedSongs store
    │  ├ tagEditor/  controller + store + tagLibrary
    │  └ shell/    appRuntime + appRuntimeBootstrap + store + settings + albumStageMotion
+   │              + navigation / navigationManager / selectionManager
+   │              + themeManager / downloadBridge
    │
    ├ contexts/                      # Svelte context 键 + setter/getter（强类型）
-   ├ design/                        # gsap 适配层 + 侧栏动画器 + variants
+   ├ design/                        # gsap 适配层 + 侧栏动画器 + view-transition 原语 + actions + variants
    ├ styles/                        # 字体声明（HarmonyOS Sans SC 等）
    ├ i18n/                          # locale state + formatters + types
    └ paraglide/                     # @inlang/paraglide-js 构建产物（messages）
@@ -260,46 +266,27 @@ slider · sonner · switch · tabs · tooltip
 
 新增 primitive 须遵循 shadcn-svelte 的 slot/data-attribute 约定，并通过项目语义化 class（如 `.app-dialog`、`.sheet-*`、`.settings-field`）承接视觉。
 
-### CSS 陷阱：全局 reset 屏蔽 Tailwind padding utility
+### CSS reset 与语义 class 的分工
 
-`src/app.css` 顶部存在 unlayered 的通配符 reset：
+`src/app.css` 顶部的通配符 reset 已经被包进 `@layer base`：
 
 ```css
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
 }
 ```
 
-Tailwind v4 通过 `@import 'tailwindcss'` 把所有 utility 注入 `@layer utilities`。按 CSS 规范，**unlayered 样式始终胜过 layered 样式**（与 specificity 无关），所以上面这条通配符 reset 会**完整屏蔽**所有 layered 的 `px-*` / `py-*` / `p-*` utility，包括：
+Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`utilities` 优先级高于 `base`，因此 shadcn `Input` / `Button` 等组件自带的 `px-2.5` / `py-1` / `gap-*` 现在正常生效；直接写在组件上的 `class="px-3"` 也会正确覆盖默认 padding。
 
-- shadcn `Input` 自带的 `px-2.5 py-1`
-- shadcn `Button` 各 size variant 的 `px-2.5` / `px-2` / `gap-*`
-- 任何直接写在组件里的 Tailwind padding utility
+规约：
 
-**症状**：`<Input />` / `<Button />` 视觉上文字紧贴边框，明明源码写了 `px-2.5` 却完全没生效。
-
-**已采用的对策**：在范围明确的局部 class（如 `.app-dialog`、`.sheet-section`、`.settings-field`）里**用 unlayered 普通 CSS 显式声明 padding**，依靠更高 specificity 胜过通配符 reset。
-
-```css
-/* 示例：dialog 内 input/button 留白 */
-.app-dialog input[data-slot='input'] {
-  padding-inline: 12px;
-}
-.app-dialog .dialog-footer [data-slot='button'],
-.app-dialog .dialog-body [data-slot='button'] {
-  padding-inline: 10px;
-}
-```
-
-**不要**这样做：
-
-- 在组件 prop 上加 `class="px-3"` 期望它覆盖默认 padding —— layered utility 仍然吃不过通配符 reset
-- 用 `!` 重要标记（`px-3!`）硬刚 —— 视觉债务而非根治
-- 单独删 `*` reset 的 `padding: 0` —— 大量页面在视觉上依赖它，回归面积过大
-
-**根治路径**（如未来重构 Tailwind 集成时考虑）：把通配符 reset 包进 `@layer base`，让 utilities 层重新可达，但需要逐一回归现有页面。背景见 `docs/history/decisions.md` 决策 9，关联上游 issue Anselyuki/harubble#47。
+- 局部大范围的语义视觉（如 `.app-dialog`、`.sheet-section`、`.settings-field`）继续用普通 CSS 显式声明 padding / spacing / 排版，避免堆砌重复的 utility 组合；这些语义 class 优先级足以覆盖 utility 层。
+- 组件内一次性、局部的间距调整优先用 Tailwind utility 或组件 variant，不再需要 `!important` / `px-3!` 之类的硬刚写法。
+- 历史决策与迁移原因见 `docs/history/decisions.md` 决策 9 的正文与 2026-07 注记。
 
 ## 6. 国际化（i18n）
 

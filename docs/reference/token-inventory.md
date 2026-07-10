@@ -1,7 +1,9 @@
 # CSS Token 盘点清单
 
-> Phase 0 产出物，作为后续 Monet 主题收敛的可执行依据。
-> 基线：`src/app.css` + `src/lib/theme.ts` 运行时写入。
+> Phase 0 产出物，作为 Monet 主题收敛的可执行依据。
+> 基线：`src/app.css` + `src/lib/theme.ts` / `src/lib/themeTokens.ts` 运行时写入。
+>
+> **状态说明（2026-07）**：以 `ThemeTokenSet` 为核心的 App Theme + Context Theme 双链路已在 `themeTokens.ts` 落地，运行时写入者是 `applyAppThemeTokenSet` 与 `applyContextThemePalette`（由 `features/shell/themeManager.svelte.ts` 调用）；`theme.ts` 中残留的 `applyThemeColors` / `applyAlbumAccentPalette` 已无生产调用者，`applyThemePalette` 已从代码中移除。本清单的表头仍保留原来的旧函数名以便对照迁移前后差异；具体的现役调用链见 §5。
 
 ## 1. `:root` 全局变量（非 scheme 相关）
 
@@ -243,60 +245,64 @@
 
 ## 5. 运行时写入分析
 
-### 5.1 `applyThemeColors()`（App Theme 链路）
+### 5.1 `applyAppThemeTokenSet()`（App Theme 链路，现役）
 
-写入变量（通过 `deriveThemeCssVariables`）：
+来源：`src/lib/themeTokens.ts:154`；调用点：`features/shell/themeManager.svelte.ts`。
+
+写入变量（覆盖除 accent 组以外的 `ThemeTokenSet` 全部字段）：
 
 ```
---accent, --accent-hover, --accent-rgb, --accent-hover-rgb,
---accent-readable-foreground, --accent-hover-readable-foreground,
---theme-surface, --theme-surface-rgb,
---theme-text-primary, --theme-text-secondary,
---theme-tint, --theme-tint-rgb,
---destructive
+--bg-primary, --bg-secondary, --bg-tertiary, --bg-elevated,
+--text-primary, --text-secondary, --text-tertiary,
+--border, --ring, --destructive, --destructive-rgb,
+--surface-state, --surface-base, --surface-sidebar, --surface-overlay,
+--surface-secondary, --surface-tertiary
 ```
 
-### 5.2 `applyAlbumAccentPalette()`（Context Theme 链路）
+（accent 组交由 `applyContextThemePalette` 与 App Theme 共同写入。）
+
+### 5.2 `applyContextThemePalette()`（Context Theme 链路，现役）
+
+来源：`src/lib/themeTokens.ts:176`；调用点同上。
 
 写入变量：
 
 ```
+--accent, --accent-hover, --accent-rgb, --accent-hover-rgb,
+--accent-readable-foreground, --accent-hover-readable-foreground,
 --album-accent, --album-accent-hover, --album-accent-rgb,
 --album-accent-hover-rgb, --album-accent-readable-foreground,
---wave-color-0, --wave-color-1, --wave-color-2, --wave-color-3
+--wave-color-0, --wave-color-1, --wave-color-2, --wave-color-3,
+--theme-surface, --theme-surface-rgb,
+--theme-text-primary, --theme-text-secondary,
+--theme-tint, --theme-tint-rgb
 ```
 
-### 5.3 `applyThemePalette()`（遗留，待废弃）
+`--theme-*` 变量在 §1.2 表格中被列为「待废弃」，但当前仍由 `applyContextThemePalette` 主动写入 — Monet 语义 token 完全接管前保持兼容。
 
-写入变量：
+### 5.3 `applyThemeColors()` / `applyAlbumAccentPalette()`（旧版链路，无生产调用者）
 
-```
---accent, --accent-hover, --accent-rgb, --accent-hover-rgb,
---accent-readable-foreground, --accent-hover-readable-foreground,
---wave-color-0, --wave-color-1, --wave-color-2, --wave-color-3
-```
+`theme.ts` 中仍保留这两个 export 及其派生函数 `deriveThemeCssVariables`，但生产代码已切换到 §5.1 / §5.2 的新链路，`applyThemeColors` / `applyAlbumAccentPalette` 在 `src/` 内除自身与测试外无调用者。原「遗留 `applyThemePalette`」函数已从 `theme.ts` 中移除。
 
-**当前调用者：零**。该函数未被任何生产代码或测试引用，仅作为 export 存在于 `theme.ts`。
-
-**废弃路径：** Phase 1 中直接移除此函数，无需迁移。
+**清理路径：** 待 Monet 语义 token 完成收敛后，与 `--theme-*` 一起在 `theme.ts` 移除。
 
 ---
 
-## 6. Tag Editor 未定义 `--color-*` 变量盘点
+## 6. Tag Editor 使用的 `--color-*` 变量（已收敛）
 
-以下 7 个变量在 Tag Editor 组件中被引用，但**未在任何全局或组件 scope 中定义**，始终回退到 `var()` 的硬编码 fallback：
+原「盘点段」发现的 7 个未定义变量，现已全部在 `src/app.css` 的 `:root` 中提供别名，Tag Editor 中 `var(--color-*, #fallback)` 会命中真值，fallback 只在极端降级路径下才生效：
 
-| 变量                     | fallback 值           | 建议别名目标                       |
-| ------------------------ | --------------------- | ---------------------------------- |
-| `--color-text-primary`   | `#374151`             | → `var(--text-primary)`            |
-| `--color-text-secondary` | `#6b7280` / `#9ca3af` | → `var(--text-secondary)`          |
-| `--color-info`           | `#2563eb`             | → `var(--accent)` 或新增语义 token |
-| `--color-success`        | `#16a34a`             | 新增 `--success` 语义 token        |
-| `--color-warning`        | `#f59e0b` / `#d97706` | 新增 `--warning` 语义 token        |
-| `--color-danger`         | `#ef4444`             | → `var(--destructive)`             |
-| `--color-chip-bg`        | `#f3f4f6`             | → `var(--bg-tertiary)`             |
+| 变量                     | 当前值                  | 状态                         |
+| ------------------------ | ----------------------- | ---------------------------- |
+| `--color-text-primary`   | `var(--text-primary)`   | 已别名                       |
+| `--color-text-secondary` | `var(--text-secondary)` | 已别名                       |
+| `--color-info`           | `var(--accent)`         | 已别名（复用 accent 语义）   |
+| `--color-success`        | `#16a34a`（硬编码）     | 已定义，暗色主题下尚未做适配 |
+| `--color-warning`        | `#f59e0b`（硬编码）     | 已定义，暗色主题下尚未做适配 |
+| `--color-danger`         | `var(--destructive)`    | 已别名                       |
+| `--color-chip-bg`        | `var(--bg-tertiary)`    | 已别名                       |
 
-已定义的 3 个（通过 `@theme inline` 间接生效）：
+以及通过 `@theme inline` 间接生效的 3 个：
 
 | 变量                  | 实际值                             | 状态   |
 | --------------------- | ---------------------------------- | ------ |
@@ -304,7 +310,7 @@
 | `--color-border`      | `var(--border)`                    | 已覆盖 |
 | `--color-destructive` | `var(--destructive)`               | 已覆盖 |
 
-**注意：** `--color-border` 的 Tailwind 注册值为 `var(--border)`（`rgba(0,0,0,0.08)` 或 `rgba(255,255,255,0.08)`），但 Tag Editor 中多数 fallback 为 `#d1d5db` / `#e5e7eb`，与全局 `--border` 语义一致但值不同。迁移后无需修改——因为 `@theme inline` 已让 `--color-border` 生效为 `var(--border)`，fallback 不会被使用。
+**后续待办**：`--color-success` / `--color-warning` 目前仍为硬编码浅色调，暗色主题下对比度不足，需要在 Monet 收敛阶段一并处理（或提升为独立语义 token）。
 
 ---
 

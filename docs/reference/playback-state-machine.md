@@ -79,7 +79,7 @@ Command 作用域、资源域和调度优先级的当前实现见 [playback-comm
 15. **No post-open stale stream:** `play_stream` 成功打开 CPAL stream 后、广播 `Playing` 前必须再次校验 session；若已 superseded/stop，立即 stop 刚打开的 stream 并返回失败。
 16. **No timestamp/frame confusion:** seek 返回的 `required_ts - actual_ts` 是 timebase timestamp，必须先通过 `TimeBase` 转秒再乘采样率得到待丢弃帧数，不能直接当帧数跳过。
 17. **No lingering ended stream:** 自然结束不是一个仍持有输出流的内部状态。`finish_session(session_id)` 必须推进 `active_session_id`、设置 `stop_flag`、停止后端 stream，再广播 ended 快照和 `player-ended`。
-18. **No realtime lock wait:** CPAL 输出回调不能阻塞等待 `SampleBuffer` 或 `PlayerState` 互斥锁；若缓冲锁暂时被解码线程占用，本次回调输出静音且不推进播放进度；若状态锁暂时被 UI/媒体同步占用，本次回调继续输出音频但跳过进度快照写入。
+18. **No realtime lock wait:** `SampleBuffer` 使用 lock-free 的 `crossbeam_queue::ArrayQueue<f32>`，实时回调与解码线程之间没有可竞争的采样队列互斥锁；采样弹出走 `try_pop_realtime_frames_into`，从不阻塞。若 `PlayerState` 状态锁被 UI/媒体同步暂时占用，本次回调继续输出音频，只跳过进度快照写入。
 19. **Dedicated playback resource domain:** 播放 command、媒体控制切歌/seek、播放启动和音频流下载必须使用 `PlaybackActor`、`playback_api` 与 `harubble-playback` runtime；普通 UI、视觉辅助、下载、搜索和后台预热任务不得复用播放客户端或播放 runtime。
 20. **No new background work during playback startup:** 播放器处于 `Loading` 时，下载执行循环、本地库存扫描、搜索索引重建、belong 预热和 tag registry 同步不能领取新后台工作；已启动的下载或扫描只通过常规取消语义结束，不因播放启动被硬停。
 
@@ -170,7 +170,7 @@ Frontend must not synthesize backend states that contradict `PlayerState`. Butto
 | Initial buffer would exceed capacity headroom                                             | cap to `SampleBuffer::max_capacity_samples() / 2`                                                        |
 | Non-finite gain state inside output path                                                  | output silence, never amplify                                                                            |
 | Superseded command                                                                        | old command returns `PlaybackErrorCode::Superseded`; no user-facing error toast                          |
-| Sample buffer lock is busy during output callback                                         | output silence for the callback; keep queued samples and do not advance progress                         |
+| Sample buffer underfills a callback while decode is not yet finished                      | play any complete frames that fit; silence the remainder; keep queued samples for the next callback      |
 | Player state lock is busy during output progress callback                                 | keep rendering audio; skip only the current progress state write                                         |
 | Album switch starts visual enhancement while playback is starting                         | delay/serialize album artwork and theme requests; coalesce identical image downloads                     |
 | Ordinary app API/HTTP work overlaps playback startup                                      | playback metadata and audio download use the dedicated playback API client and playback runtime          |
@@ -183,11 +183,11 @@ Frontend must not synthesize backend states that contradict `PlayerState`. Butto
 | Invariant                                                                       | Tests                                                                                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Output format coverage, exact/default fallback priority and sample-format drift | `player::backend::cpal`, `output_config_`, `exact_output_config_accepts_previously_negotiated_device_default`, `exact_output_config_requires_previously_negotiated_sample_format`                                                                                                                                                      |
-| Partial underrun preserves complete frames                                      | `f32_output_preserves_partial_buffered_samples`                                                                                                                                                                                                                                                                                        |
+| Partial underrun preserves complete frames                                      | `f32_output_preserves_buffered_samples`                                                                                                                                                                                                                                                                                                |
 | Incomplete trailing frame kept or safely dropped                                | `sample_buffer_keeps_incomplete_frames_for_later_completion`, `sample_buffer_drops_final_incomplete_frame_as_silence`, `f32_output_silences_incomplete_trailing_frame_without_consuming_it`                                                                                                                                            |
 | Output sample/volume sanitization                                               | `f32_output_sanitizes_non_finite_samples_and_volume`                                                                                                                                                                                                                                                                                   |
 | Errored buffer never reaches output                                             | `sample_buffer_fail_discards_queued_samples`, `sample_buffer_wait_reports_buffer_error_before_stop_flag`, `f32_output_silences_buffer_errors_without_advancing_progress`                                                                                                                                                               |
-| Output callback never waits on buffer lock                                      | `sample_buffer_try_pop_returns_none_when_locked`, `f32_output_silences_when_sample_buffer_is_locked`                                                                                                                                                                                                                                   |
+| Output callback pops samples lock-free                                          | `sample_buffer_try_pop_is_lock_free_for_realtime_reader`, `f32_output_reads_ring_buffer_without_lock_silence`                                                                                                                                                                                                                          |
 | Output progress callback never waits on player state lock                       | `progress_callback_skips_update_when_state_lock_is_busy`                                                                                                                                                                                                                                                                               |
 | Buffer and converter sanitization                                               | `sample_buffer_sanitizes_samples_before_queueing`, `sample_converter_sanitizes_non_finite_and_out_of_range_samples`                                                                                                                                                                                                                    |
 | Decoded format drift fails before conversion                                    | `decoded_format_must_match_probed_source_format`                                                                                                                                                                                                                                                                                       |
@@ -204,11 +204,11 @@ Frontend must not synthesize backend states that contradict `PlayerState`. Butto
 
 Any playback change must verify:
 
-1. `rtk cargo test --manifest-path src-tauri/Cargo.toml player::backend::cpal`
-2. `rtk cargo test --manifest-path src-tauri/Cargo.toml player::stream`
-3. `rtk cargo test --manifest-path src-tauri/Cargo.toml app_state::playback`
-4. `rtk cargo test --manifest-path src-tauri/Cargo.toml player::controller`
-5. `rtk cargo check --manifest-path src-tauri/Cargo.toml`
-6. `rtk git diff --check`
+1. `cargo test --manifest-path src-tauri/Cargo.toml player::backend::cpal`
+2. `cargo test --manifest-path src-tauri/Cargo.toml player::stream`
+3. `cargo test --manifest-path src-tauri/Cargo.toml app_state::playback`
+4. `cargo test --manifest-path src-tauri/Cargo.toml player::controller`
+5. `cargo check --manifest-path src-tauri/Cargo.toml`
+6. `git diff --check`
 
-For frontend state changes, also run the player-related Vitest suites and `rtk bun run check`.
+For frontend state changes, also run the player-related Vitest suites and `bun run check`.

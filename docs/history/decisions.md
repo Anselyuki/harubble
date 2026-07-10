@@ -75,6 +75,8 @@
 | B 类 | 基于 `shadcn-svelte` 包一层项目组件 | 底层交互通用、视觉状态较多、项目里重复出现                        | ToolbarIconButton、AppBadge、PanelSection、StatusToast、PlayerControlButton |
 | C 类 | 保留定制组件，只消费令牌和原语      | 业务耦合强、状态密度高、布局/动画独特、需要动态主题色或复杂上下文 | AlbumStage、AlbumCard、SongRow、PlayerDock、LyricsFlyout、PlaylistFlyout    |
 
+**2026-07 注记（示例组件命名调整）**：C 类中 `LyricsFlyout` / `PlaylistFlyout` 的职责最终由 `PlayerFlyoutStack` + `LyricsBubble` 承担，未落地为原名；B 类中 `StatusToast` 实际落地为 `StatusToastHost`；`AppBadge` / `PanelSection` / `PlayerControlButton` / `ToolbarIconButton` 未按具名 B 类包装落地，历史上多以内联组件承接。分类标准本身不变。
+
 ## 决策 6：UI 组件禁止直接调用 Tauri IPC
 
 **背景**：UI 组件与 Tauri `invoke` / `listen` 强耦合会导致重构期间事件监听丢失、状态同步混乱。
@@ -86,6 +88,8 @@
 - UI 仅绑定服务层暴露的响应式状态
 
 这样在调整 UI 结构时，不用担心丢掉底层的事件监听。
+
+**2026-07 注记（受控例外）**：secondary window `MiniPlayerWindow` 无法直接共享主窗口 `appRuntime`，其 Tauri IPC 通过 `src/lib/features/player/miniPlayerBridge.ts` 集中承载（`invoke` / `listen` 均在 bridge 层），组件本体仍不直接调用 IPC。当前可接受的 bridge 形态包括：`src/lib/api.ts` / `src/lib/settingsApi.ts` / `src/lib/collectionApi.ts` 以及 `src/lib/features/*/xxxBridge.ts`。
 
 ## 决策 7：前后端异步解耦 i18n 方案
 
@@ -141,7 +145,7 @@
 **Tag 注入模式**：
 
 - tag 数据在 command 层注入，不存入 API 响应缓存，避免缓存与注册表更新不一致
-- `get_albums`、`get_album_detail`、`get_song_detail`、`get_latest_albums`、`get_albums_by_series_group` 在库存注入后额外注入 tag 数据
+- `get_albums`、`get_album_detail`、`get_song_detail`、`get_latest_albums`、`get_albums_by_series`、`get_albums_by_tag_dimension` 在库存注入后额外注入 tag 数据
 - 歌曲 tag 继承所属专辑 tag 并与自身 tag 合并去重
 
 **搜索索引策略**：
@@ -185,3 +189,5 @@ Tailwind v4 把所有 utility 放进 `@layer utilities`。CSS cascade layer 规�
 - 需要 padding 的局部范围，统一在对应的语义 class（如 `.app-dialog input[data-slot='input']`）里用普通 CSS 声明
 
 **未来重构方向**：如果引入更深度的 Tailwind 集成或更多 shadcn 默认视觉依赖，再统一评估是否把 reset 迁入 `@layer base`。届时需要走完整的视觉回归。
+
+**2026-07 注记（决策 9 已调整）**：全局 reset 已经迁入 `@layer base`（见 `src/app.css` 顶部），utilities 层的 `p-*` / `px-*` / `py-*` 恢复可达；上面"实践规约"第 1、2 条（"不要靠 layered utility 覆盖默认 padding"、"不要随手加 `!` 硬刚"）随之作废；第 3 条（"需要 padding 的局部范围仍统一在语义 class 里显式声明"）仍作为组织性建议保留。历史结论保留在正文中，方便回溯当时的取舍。
