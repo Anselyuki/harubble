@@ -5,6 +5,27 @@ use harubble_core::api::Album;
 use harubble_core::homepage::{derive_series_tags, HistoryEntry, HomepageStatus, SeriesGroup};
 use tauri::State;
 
+/// 首页相关操作的结构化错误类型。
+///
+/// - `Network`：上游 API 请求失败（网络不可达、超时、服务端错误等）。
+/// - `Internal`：本地状态读写、线程调度或其他内部错误。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum HomepageError {
+    Network(String),
+    Internal(String),
+}
+
+impl std::fmt::Display for HomepageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HomepageError::Network(m) | HomepageError::Internal(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+impl std::error::Error for HomepageError {}
+
 /// 获取最新专辑列表。
 ///
 /// 从上游 API 获取全量专辑并取前 N 条，附带本地库存增强。
@@ -14,12 +35,12 @@ use tauri::State;
 pub async fn get_latest_albums(
     state: State<'_, AppState>,
     limit: u32,
-) -> Result<Vec<Album>, String> {
+) -> Result<Vec<Album>, HomepageError> {
     let albums = state
         .api_client()
         .get_albums()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| HomepageError::Network(e.to_string()))?;
     let enriched = state.attach_album_enrichment(albums).await;
     Ok(enriched.into_iter().take(limit as usize).collect())
 }
@@ -33,17 +54,20 @@ pub async fn get_latest_albums(
 /// 返回值为按系列分组的专辑集合列表，按每组专辑数量降序排列。
 /// 调用方应注意：belong 映射来自本地缓存，若缓存尚未写入则分组结果可能为空。
 #[tauri::command]
-pub async fn get_albums_by_series(state: State<'_, AppState>) -> Result<Vec<SeriesGroup>, String> {
+pub async fn get_albums_by_series(
+    state: State<'_, AppState>,
+) -> Result<Vec<SeriesGroup>, HomepageError> {
     let albums = state
         .api_client()
         .get_albums()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| HomepageError::Network(e.to_string()))?;
     let enriched = state.attach_album_enrichment(albums).await;
     let cache = state.album_metadata_cache().clone();
     let belongs = tokio::task::spawn_blocking(move || cache.get_all_belongs())
         .await
-        .map_err(|e| e.to_string())??;
+        .map_err(|e| HomepageError::Internal(e.to_string()))?
+        .map_err(|e| HomepageError::Internal(e.to_string()))?;
 
     let belong_map: std::collections::HashMap<&str, &str> = belongs
         .iter()
@@ -92,11 +116,12 @@ pub async fn get_albums_by_series(state: State<'_, AppState>) -> Result<Vec<Seri
 pub async fn get_recent_history(
     state: State<'_, AppState>,
     limit: u32,
-) -> Result<Vec<HistoryEntry>, String> {
+) -> Result<Vec<HistoryEntry>, HomepageError> {
     let history = state.listening_history().clone();
     tokio::task::spawn_blocking(move || history.get_recent(limit))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| HomepageError::Internal(e.to_string()))?
+        .map_err(|e| HomepageError::Internal(e.to_string()))
 }
 
 /// 记录歌曲热度（当播放进度达到阈值时由前端调用）。
@@ -110,12 +135,12 @@ pub async fn record_song_heat(
     state: State<'_, AppState>,
     song_cid: String,
     cover_url: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), HomepageError> {
     let song_detail = state
         .api_client()
         .get_song_detail(&song_cid)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| HomepageError::Network(e.to_string()))?;
     let event = harubble_core::ListeningEvent {
         song_cid,
         song_name: song_detail.name,
@@ -127,7 +152,8 @@ pub async fn record_song_heat(
     let history = state.listening_history().clone();
     tokio::task::spawn_blocking(move || history.record(&event))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| HomepageError::Internal(e.to_string()))?
+        .map_err(|e| HomepageError::Internal(e.to_string()))
 }
 
 /// 清空所有收听历史记录。
@@ -136,7 +162,7 @@ pub async fn record_song_heat(
 /// 返回值为本次实际删除的记录条数。
 /// 该接口会删除所有历史记录，操作不可逆；调用方应在执行前向用户确认。
 #[tauri::command]
-pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, String> {
+pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, HomepageError> {
     state
         .dispatch_playback_side_effect("clear_listening_history", |state| async move {
             let history = state.listening_history().clone();
@@ -145,6 +171,7 @@ pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, 
                 .map_err(|e| e.to_string())?
         })
         .await
+        .map_err(|e| HomepageError::Internal(e.to_string()))
 }
 
 /// 获取首页状态仪表盘聚合数据。
@@ -153,6 +180,11 @@ pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, 
 /// 返回值为 `HomepageStatus` 快照；`local_storage_bytes` 当前固定返回 `0`，后续版本将补充磁盘用量计算。
 /// 该接口会发起一次上游 API 请求与多次本地状态读取，不适合高频轮询。
 #[tauri::command]
-pub async fn get_homepage_status(state: State<'_, AppState>) -> Result<HomepageStatus, String> {
-    state.homepage_status().await
+pub async fn get_homepage_status(
+    state: State<'_, AppState>,
+) -> Result<HomepageStatus, HomepageError> {
+    state
+        .homepage_status()
+        .await
+        .map_err(|e| HomepageError::Internal(e.to_string()))
 }

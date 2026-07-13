@@ -10,13 +10,39 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 use tauri_plugin_notification::NotificationExt;
 
+/// 偏好 command 层统一错误类型。
+///
+/// - `Io`：文件读写、序列化/反序列化（toml/serde）等 I/O 相关失败。
+/// - `NotFound`：请求的偏好资源不存在。
+/// - `Internal`：其他内部错误，如线程调度失败、校验逻辑错误等。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum PreferencesError {
+    Io(String),
+    NotFound,
+    Internal(String),
+}
+
+impl std::fmt::Display for PreferencesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreferencesError::Io(m) | PreferencesError::Internal(m) => write!(f, "{m}"),
+            PreferencesError::NotFound => write!(f, "偏好设置未找到"),
+        }
+    }
+}
+
+impl std::error::Error for PreferencesError {}
+
 /// 获取当前偏好。
 ///
 /// 适用于设置面板初始化、应用启动后恢复用户配置，或在导入/保存后重新同步偏好。
 /// 返回值为当前生效的完整偏好快照。
 /// 该接口只读取当前内存中的已生效偏好，不会触发磁盘写入或额外副作用。
 #[tauri::command]
-pub async fn get_preferences(state: State<'_, AppState>) -> Result<AppPreferences, String> {
+pub async fn get_preferences(
+    state: State<'_, AppState>,
+) -> Result<AppPreferences, PreferencesError> {
     Ok(state.preferences())
 }
 
@@ -29,7 +55,7 @@ pub async fn get_preferences(state: State<'_, AppState>) -> Result<AppPreference
 /// 设置面板 UI 不编辑音量。为避免设置保存与音量拖动之间的写-写竞态覆盖当前音量，
 /// 本命令会在校验完成后忽略入参中的 `volume`，改用后端当前 `AppPreferences::volume`
 /// 落盘。为了保证与并发的 `set_playback_volume` 之间不出现 TOCTOU 竞态，本命令通过
-/// `update_preferences` 在偏好写锁内一次性完成“读取当前 volume + 覆盖其它字段”，
+/// `update_preferences` 在偏好写锁内一次性完成"读取当前 volume + 覆盖其它字段"，
 /// 避免锁外快照 volume 后又被并发写入覆盖。若下载目录发生变化，该接口会自动触发
 /// 一次本地库存重新扫描；调用方不需要再额外手动发起扫描。
 #[tauri::command]
@@ -37,9 +63,11 @@ pub async fn set_preferences(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     preferences: AppPreferences,
-) -> Result<AppPreferences, String> {
+) -> Result<AppPreferences, PreferencesError> {
     let locale = preferences.locale;
-    preferences.validate(locale)?;
+    preferences
+        .validate(locale)
+        .map_err(|e| PreferencesError::Internal(e))?;
     let previous_output_dir = state.preferences().output_dir.clone();
     // 通过 update_preferences 让 "读取当前 volume + 应用新字段 + 落盘" 都发生在
     // preferences_write_lock 内，避免与 set_playback_volume 之间产生 TOCTOU。
@@ -49,7 +77,8 @@ pub async fn set_preferences(
             *current = preferences;
             current.volume = preserved_volume;
         })
-        .await?;
+        .await
+        .map_err(|e| PreferencesError::Io(e))?;
     if previous_output_dir != persisted.output_dir {
         spawn_inventory_scan(
             app,
@@ -70,7 +99,7 @@ pub async fn set_preferences(
 pub async fn export_preferences(
     state: State<'_, AppState>,
     output_path: String,
-) -> Result<AppPreferences, String> {
+) -> Result<AppPreferences, PreferencesError> {
     let prefs = state.preferences();
     let locale = prefs.locale;
     let store = state.preferences_store();
@@ -80,7 +109,8 @@ pub async fn export_preferences(
         store.export_to(&prefs_to_export, Path::new(&path), locale)
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| PreferencesError::Internal(e.to_string()))?
+    .map_err(|e| PreferencesError::Io(e.to_string()))?;
     Ok(prefs)
 }
 
@@ -94,7 +124,7 @@ pub async fn import_preferences(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     input_path: String,
-) -> Result<AppPreferences, String> {
+) -> Result<AppPreferences, PreferencesError> {
     let previous = state.preferences();
     let locale = previous.locale;
     let store = state.preferences_store();
@@ -103,10 +133,14 @@ pub async fn import_preferences(
         let store = store.clone();
         tokio::task::spawn_blocking(move || store.import_from(Path::new(&input_path), locale))
             .await
-            .map_err(|e| e.to_string())??
+            .map_err(|e| PreferencesError::Internal(e.to_string()))?
+            .map_err(|e| PreferencesError::Io(e.to_string()))?
     };
     let imported_to_save = imported.clone();
-    state.persist_preferences(imported_to_save).await?;
+    state
+        .persist_preferences(imported_to_save)
+        .await
+        .map_err(|e| PreferencesError::Io(e))?;
     if previous.output_dir != imported.output_dir {
         spawn_inventory_scan(
             app,
@@ -124,12 +158,14 @@ pub async fn import_preferences(
 /// 返回值为标准化后的权限状态字符串，如 `granted`、`denied` 或 `prompt`。
 /// 该接口反映的是当前系统权限快照；若用户刚在系统设置中修改权限，调用方应重新调用以获取最新状态。
 #[tauri::command]
-pub fn get_notification_permission_state(state: State<'_, AppState>) -> Result<String, String> {
+pub fn get_notification_permission_state(
+    state: State<'_, AppState>,
+) -> Result<String, PreferencesError> {
     let app = state.player().app_handle();
     let permission = app
         .notification()
         .permission_state()
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| PreferencesError::Internal(format!("{e}")))?;
     Ok(match permission {
         tauri::plugin::PermissionState::Granted => "granted",
         tauri::plugin::PermissionState::Denied => "denied",
@@ -145,7 +181,7 @@ pub fn get_notification_permission_state(state: State<'_, AppState>) -> Result<S
 /// 成功时返回空值。
 /// 该接口会向系统真正发送一条可见通知，调用方应只在用户明确触发时调用，避免把测试通知当成静默探测手段。
 #[tauri::command]
-pub fn send_test_notification(state: State<'_, AppState>) -> Result<(), String> {
+pub fn send_test_notification(state: State<'_, AppState>) -> Result<(), PreferencesError> {
     let app = state.player().app_handle();
-    crate::notification::notify_test(app)
+    crate::notification::notify_test(app).map_err(|e| PreferencesError::Internal(e))
 }

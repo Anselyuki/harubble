@@ -5,6 +5,24 @@ use harubble_core::api::Album;
 use harubble_core::homepage::TagGroup;
 use tauri::State;
 
+/// Tag Registry command 的结构化错误类型。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum TagRegistryError {
+    Network(String),
+    Internal(String),
+}
+
+impl std::fmt::Display for TagRegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TagRegistryError::Network(m) | TagRegistryError::Internal(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+impl std::error::Error for TagRegistryError {}
+
 /// 获取适用于专辑粒度的 tag 维度列表。
 ///
 /// 过滤掉 `scope = "song"` 的维度（如 "event"），仅返回可用于专辑分组浏览的维度。
@@ -12,7 +30,7 @@ use tauri::State;
 #[tauri::command]
 pub fn get_tag_dimensions(
     state: State<'_, AppState>,
-) -> Result<Vec<crate::tag_registry::TagDimensionResolved>, String> {
+) -> Result<Vec<crate::tag_registry::TagDimensionResolved>, TagRegistryError> {
     let locale = state.preferences().locale;
     Ok(state.tag_registry().get_album_dimensions(locale))
 }
@@ -25,7 +43,7 @@ pub fn get_tag_dimensions(
 pub async fn get_albums_by_tag_dimension(
     state: State<'_, AppState>,
     dimension_key: String,
-) -> Result<Vec<TagGroup>, String> {
+) -> Result<Vec<TagGroup>, TagRegistryError> {
     let locale = state.preferences().locale;
     let value_to_cids = state
         .tag_registry()
@@ -39,7 +57,7 @@ pub async fn get_albums_by_tag_dimension(
         .api_client()
         .get_albums()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TagRegistryError::Network(e.to_string()))?;
     let enriched = state.attach_album_enrichment(albums).await;
 
     let album_map: std::collections::HashMap<&str, &Album> =

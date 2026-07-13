@@ -98,9 +98,17 @@ where
 pub fn initialize(app: &AppHandle, state: &AppState) {
     let app = app.clone();
     let state = state.clone();
+    let directory = state.task_directory.clone();
 
     tauri::async_runtime::spawn(async move {
-        execution_loop(&app, state).await;
+        let task_id = directory.next_task_id("downloads", "execution_loop").await;
+        crate::background_tasks::spawn_tracked(
+            directory,
+            task_id,
+            move |cancel_token| async move {
+                execution_loop(&app, state, cancel_token).await;
+            },
+        );
     });
 }
 
@@ -143,12 +151,22 @@ struct StartedJob {
 ///
 /// 该循环会常驻运行，轮询排队中的批次并以下载/写入流水线策略驱动其完成，同时在
 /// 关键状态迁移时持续发出 Tauri 事件。
-async fn execution_loop(app: &AppHandle, state: AppState) {
+async fn execution_loop(
+    app: &AppHandle,
+    state: AppState,
+    cancel_token: tokio_util::sync::CancellationToken,
+) {
     let service = Arc::clone(&state.download.download_service);
     let api = Arc::clone(&state.api_clients.download_api);
 
     loop {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        if cancel_token.is_cancelled() {
+            return;
+        }
+        tokio::select! {
+            _ = cancel_token.cancelled() => { return; }
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+        }
 
         wait_for_playback_startup_to_settle(&state).await;
 

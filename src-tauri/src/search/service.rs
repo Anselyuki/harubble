@@ -295,13 +295,17 @@ impl LibrarySearchService {
             crate::background_tasks::spawn_tracked(
                 directory,
                 task_id,
-                move |_cancel_token| async move {
-                    state
-                        .wait_for_background_io_gate(
+                move |cancel_token| async move {
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => { return; }
+                        _ = state.wait_for_background_io_gate(
                             "library_search_rebuild",
                             Duration::from_millis(250),
-                        )
-                        .await;
+                        ) => {}
+                    }
+                    if cancel_token.is_cancelled() {
+                        return;
+                    }
 
                     let generation = service.start_rebuild(&inventory).await;
                     let snapshot_result = build_library_search_snapshot(

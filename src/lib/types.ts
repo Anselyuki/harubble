@@ -622,3 +622,50 @@ export type TagEditorError =
   | { code: 'serialization'; detail: string }
   | { code: 'unsupportedVersion'; detail: { version: number } }
   | { code: 'internal'; detail: string };
+
+// ── Preferences ──────────────────────────────────────────────────────────────
+
+export type PreferencesErrorCode = 'notFound' | 'io' | 'internal';
+
+export type PreferencesError =
+  | { code: 'notFound' }
+  | { code: 'io'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── Logging ───────────────────────────────────────────────────────────────────
+
+export type LoggingErrorCode = 'io' | 'internal';
+
+export type LoggingError =
+  | { code: 'io'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── LocalInventory ────────────────────────────────────────────────────────────
+
+export type LocalInventoryErrorCode = 'io' | 'internal';
+
+export type LocalInventoryError =
+  | { code: 'io'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── Homepage ──────────────────────────────────────────────────────────────────
+
+export type HomepageErrorCode = 'network' | 'internal';
+
+export type HomepageError =
+  | { code: 'network'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── TagRegistry ───────────────────────────────────────────────────────────────
+
+export type TagRegistryErrorCode = 'network' | 'internal';
+
+export type TagRegistryError =
+  | { code: 'network'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── Window ────────────────────────────────────────────────────────────────────
+
+export type WindowErrorCode = 'internal';
+
+export type WindowError = { code: 'internal'; detail: string };

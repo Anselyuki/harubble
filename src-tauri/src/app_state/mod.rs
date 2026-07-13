@@ -307,6 +307,15 @@ impl AppState {
         self.log_center.record(payload);
     }
 
+    /// 请求取消所有后台追踪任务。
+    ///
+    /// 应在应用退出前调用，以协作式通知各后台任务（库存扫描、搜索重建、tag 同步、
+    /// 下载执行循环等）尽快退出，避免在进程终止时留下未完成的 I/O 操作。
+    /// 该方法只发出取消信号，不等待各任务实际退出。
+    pub async fn cancel_background_tasks(&self) {
+        self.task_directory.cancel_all().await;
+    }
+
     /// 按当前日志级别阈值将会话日志刷入持久化日志文件。
     ///
     /// 适用于应用退出前、崩溃恢复前置收尾，或需要显式落盘当前会话日志的场景。
@@ -1013,10 +1022,14 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
         crate::background_tasks::spawn_tracked(
             directory,
             task_id,
-            move |_cancel_token| async move {
-                state
-                    .wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250))
-                    .await;
+            move |cancel_token| async move {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => { return; }
+                    _ = state.wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250)) => {}
+                }
+                if cancel_token.is_cancelled() {
+                    return;
+                }
 
                 let sync_result = async {
                     let response_bytes = load_tag_registry_bytes(&state).await?;

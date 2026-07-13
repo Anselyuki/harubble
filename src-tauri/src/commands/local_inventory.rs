@@ -12,6 +12,24 @@ use serde::Serialize;
 use std::path::Path;
 use tauri::{AppHandle, State};
 
+/// 本地库存操作的结构化错误类型。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum LocalInventoryError {
+    Io(String),
+    Internal(String),
+}
+
+impl std::fmt::Display for LocalInventoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LocalInventoryError::Io(m) | LocalInventoryError::Internal(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+impl std::error::Error for LocalInventoryError {}
+
 /// 获取当前本地库存扫描快照。
 ///
 /// 适用于本地库存面板初始化、页面恢复后同步状态，或在事件流缺失时兜底拉取当前扫描结果。
@@ -20,7 +38,7 @@ use tauri::{AppHandle, State};
 #[tauri::command]
 pub async fn get_local_inventory_snapshot(
     state: State<'_, AppState>,
-) -> Result<LocalInventorySnapshot, String> {
+) -> Result<LocalInventorySnapshot, LocalInventoryError> {
     Ok(state.local_inventory().snapshot().await)
 }
 
@@ -34,7 +52,7 @@ pub async fn rescan_local_inventory(
     app: AppHandle,
     state: State<'_, AppState>,
     verification_mode: Option<VerificationMode>,
-) -> Result<LocalInventorySnapshot, String> {
+) -> Result<LocalInventorySnapshot, LocalInventoryError> {
     let root_output_dir = state.preferences().output_dir;
     spawn_inventory_scan(
         app,
@@ -54,7 +72,7 @@ pub async fn rescan_local_inventory(
 pub async fn cancel_local_inventory_scan(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<LocalInventorySnapshot, String> {
+) -> Result<LocalInventorySnapshot, LocalInventoryError> {
     let snapshot = state.local_inventory().cancel_scan().await;
     emit_local_inventory_state_changed(&app, &snapshot);
     Ok(snapshot)
@@ -90,18 +108,18 @@ pub async fn get_audio_metadata(
     state: State<'_, AppState>,
     album_name: String,
     song_name: String,
-) -> Result<Option<AudioFileMetadata>, String> {
+) -> Result<Option<AudioFileMetadata>, LocalInventoryError> {
     let output_dir = state.output_dir();
     tokio::task::spawn_blocking(move || read_audio_metadata(&output_dir, &album_name, &song_name))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| LocalInventoryError::Internal(e.to_string()))?
 }
 
 fn read_audio_metadata(
     output_dir: &str,
     album_name: &str,
     song_name: &str,
-) -> Result<Option<AudioFileMetadata>, String> {
+) -> Result<Option<AudioFileMetadata>, LocalInventoryError> {
     let root = Path::new(output_dir);
 
     if !root.exists() {
@@ -118,12 +136,16 @@ fn read_audio_metadata(
         return Ok(None);
     };
 
-    let file_size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+    let file_size = std::fs::metadata(&path)
+        .map_err(|e| LocalInventoryError::Io(e.to_string()))?
+        .len();
 
     let detected = {
         let mut buf = [0u8; 12];
-        let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-        std::io::Read::read(&mut f, &mut buf).map_err(|e| e.to_string())?;
+        let mut f =
+            std::fs::File::open(&path).map_err(|e| LocalInventoryError::Io(e.to_string()))?;
+        std::io::Read::read(&mut f, &mut buf)
+            .map_err(|e| LocalInventoryError::Io(e.to_string()))?;
         AudioFormat::detect(&buf)
     };
 
@@ -137,11 +159,15 @@ fn read_audio_metadata(
     Ok(Some(meta))
 }
 
-fn read_flac_metadata(path: &Path, file_size: u64) -> Result<AudioFileMetadata, String> {
-    let tag = metaflac::Tag::read_from_path(path).map_err(|e| e.to_string())?;
+fn read_flac_metadata(
+    path: &Path,
+    file_size: u64,
+) -> Result<AudioFileMetadata, LocalInventoryError> {
+    let tag =
+        metaflac::Tag::read_from_path(path).map_err(|e| LocalInventoryError::Io(e.to_string()))?;
     let stream_info = tag
         .get_streaminfo()
-        .ok_or_else(|| "FLAC missing StreamInfo".to_string())?;
+        .ok_or_else(|| LocalInventoryError::Internal("FLAC missing StreamInfo".to_string()))?;
 
     let sample_rate = stream_info.sample_rate;
     let channels = stream_info.num_channels as u16;
@@ -168,8 +194,12 @@ fn read_flac_metadata(path: &Path, file_size: u64) -> Result<AudioFileMetadata, 
     })
 }
 
-fn read_wav_metadata(path: &Path, file_size: u64) -> Result<AudioFileMetadata, String> {
-    let reader = hound::WavReader::open(path).map_err(|e| e.to_string())?;
+fn read_wav_metadata(
+    path: &Path,
+    file_size: u64,
+) -> Result<AudioFileMetadata, LocalInventoryError> {
+    let reader =
+        hound::WavReader::open(path).map_err(|e| LocalInventoryError::Io(e.to_string()))?;
     let spec = reader.spec();
     let duration_secs = if spec.sample_rate > 0 {
         reader.duration() as f64 / spec.sample_rate as f64
@@ -193,13 +223,16 @@ fn read_wav_metadata(path: &Path, file_size: u64) -> Result<AudioFileMetadata, S
     })
 }
 
-fn read_mp3_metadata(path: &Path, file_size: u64) -> Result<AudioFileMetadata, String> {
+fn read_mp3_metadata(
+    path: &Path,
+    file_size: u64,
+) -> Result<AudioFileMetadata, LocalInventoryError> {
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
 
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let file = std::fs::File::open(path).map_err(|e| LocalInventoryError::Io(e.to_string()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
     let mut hint = Hint::new();
@@ -212,12 +245,12 @@ fn read_mp3_metadata(path: &Path, file_size: u64) -> Result<AudioFileMetadata, S
             &FormatOptions::default(),
             &MetadataOptions::default(),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LocalInventoryError::Io(e.to_string()))?;
 
     let track = probed
         .format
         .default_track()
-        .ok_or_else(|| "No audio track found".to_string())?;
+        .ok_or_else(|| LocalInventoryError::Internal("No audio track found".to_string()))?;
 
     let codec_params = &track.codec_params;
     let sample_rate = codec_params.sample_rate.unwrap_or(0);

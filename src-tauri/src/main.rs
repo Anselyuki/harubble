@@ -288,6 +288,11 @@ fn main() {
                 flush_logs_on_exit(app_handle);
             }
             RunEvent::Exit => {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    tauri::async_runtime::block_on(async {
+                        state.cancel_background_tasks().await;
+                    });
+                }
                 flush_logs_on_exit(app_handle);
             }
             _ => {}

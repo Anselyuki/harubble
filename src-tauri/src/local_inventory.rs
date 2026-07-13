@@ -222,10 +222,14 @@ pub fn spawn_inventory_scan(
         crate::background_tasks::spawn_tracked(
             directory,
             task_id,
-            move |_cancel_token| async move {
-                state
-                    .wait_for_background_io_gate("local_inventory_scan", Duration::from_millis(250))
-                    .await;
+            move |cancel_token| async move {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => { return; }
+                    _ = state.wait_for_background_io_gate("local_inventory_scan", Duration::from_millis(250)) => {}
+                }
+                if cancel_token.is_cancelled() {
+                    return;
+                }
 
                 let mode = match verification_mode {
                     Some(mode) => mode,
