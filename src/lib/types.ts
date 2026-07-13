@@ -561,3 +561,17 @@ export interface CollectionSection {
 export interface Collection extends CollectionSummary {
   sections: CollectionSection[];
 }
+
+export type CollectionErrorCode =
+  | 'notFound'
+  | 'readOnly'
+  | 'database'
+  | 'serialization'
+  | 'unsupportedVersion';
+
+export type CollectionError =
+  | { code: 'notFound'; detail: { id: string } }
+  | { code: 'readOnly' }
+  | { code: 'database'; detail: string }
+  | { code: 'serialization'; detail: string }
+  | { code: 'unsupportedVersion'; detail: { version: number } };
