@@ -7,7 +7,10 @@ import type {
   TagGroup,
 } from '$lib/types';
 import { homeStore } from './store.svelte';
-import { formatLibraryError } from '$lib/features/shell/domainErrors';
+import {
+  formatLibraryError,
+  formatTagRegistryError,
+} from '$lib/features/shell/domainErrors';
 import * as m from '$lib/paraglide/messages.js';
 
 interface HomeControllerDeps {
@@ -112,7 +115,7 @@ export function createHomeController(deps: HomeControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.home_error_load_tag_groups({
-          error: formatLibraryError(e),
+          error: formatTagRegistryError(e),
         })
       );
     }

@@ -3,10 +3,15 @@ import * as m from '$lib/paraglide/messages.js';
 import type {
   CollectionError,
   DownloadError,
+  HomepageError,
   LibraryError,
+  LocalInventoryError,
+  LoggingError,
   PlaybackErrorPayload,
+  PreferencesError,
   SearchError,
   TagEditorError,
+  TagRegistryError,
 } from '$lib/types';
 
 /**
@@ -125,6 +130,103 @@ export function formatTagEditorError(error: unknown): string {
       case 'internal':
         return m.domain_generic_error();
     }
+  }
+  return m.domain_generic_error();
+}
+
+/**
+ * 把 Preferences 域 IPC 错误转换为本地化用户提示。
+ *
+ * 匹配 P1-5 定义的 PreferencesError code；`io` 与 `internal` 外的未识别 code
+ * 一律走通用兜底文案。
+ */
+export function formatPreferencesError(error: unknown): string {
+  if (isDomainErrorPayload(error)) {
+    const code = error.code as PreferencesError['code'];
+    switch (code) {
+      case 'notFound':
+        return m.domain_preferences_error_not_found();
+      case 'io':
+        return m.domain_preferences_error_io();
+      case 'internal':
+        return m.domain_generic_error();
+    }
+  }
+  return m.domain_generic_error();
+}
+
+/**
+ * 把 Logging 域 IPC 错误转换为本地化用户提示。
+ */
+export function formatLoggingError(error: unknown): string {
+  if (isDomainErrorPayload(error)) {
+    const code = error.code as LoggingError['code'];
+    switch (code) {
+      case 'io':
+        return m.domain_logging_error_io();
+      case 'internal':
+        return m.domain_generic_error();
+    }
+  }
+  return m.domain_generic_error();
+}
+
+/**
+ * 把 LocalInventory 域 IPC 错误转换为本地化用户提示。
+ */
+export function formatLocalInventoryError(error: unknown): string {
+  if (isDomainErrorPayload(error)) {
+    const code = error.code as LocalInventoryError['code'];
+    switch (code) {
+      case 'io':
+        return m.domain_local_inventory_error_io();
+      case 'internal':
+        return m.domain_generic_error();
+    }
+  }
+  return m.domain_generic_error();
+}
+
+/**
+ * 把 Homepage 域 IPC 错误转换为本地化用户提示。
+ */
+export function formatHomepageError(error: unknown): string {
+  if (isDomainErrorPayload(error)) {
+    const code = error.code as HomepageError['code'];
+    switch (code) {
+      case 'network':
+        return m.domain_homepage_error_network();
+      case 'internal':
+        return m.domain_generic_error();
+    }
+  }
+  return m.domain_generic_error();
+}
+
+/**
+ * 把 TagRegistry 域 IPC 错误转换为本地化用户提示。
+ */
+export function formatTagRegistryError(error: unknown): string {
+  if (isDomainErrorPayload(error)) {
+    const code = error.code as TagRegistryError['code'];
+    switch (code) {
+      case 'network':
+        return m.domain_tag_registry_error_network();
+      case 'internal':
+        return m.domain_generic_error();
+    }
+  }
+  return m.domain_generic_error();
+}
+
+/**
+ * 把 Window 域 IPC 错误转换为本地化用户提示。
+ *
+ * WindowError 仅有 `internal` 一个 code，统一走通用兜底文案。
+ */
+export function formatWindowError(error: unknown): string {
+  if (isDomainErrorPayload(error)) {
+    return m.domain_generic_error();
   }
   return m.domain_generic_error();
 }

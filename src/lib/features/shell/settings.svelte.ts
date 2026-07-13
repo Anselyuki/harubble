@@ -6,6 +6,7 @@ import {
   type ColorScheme,
   type ThemeColorSlots,
 } from '$lib/themePresets';
+import { formatPreferencesError } from '$lib/features/shell/domainErrors';
 
 interface SettingsControllerDeps {
   getPreferences: () => Promise<AppPreferences>;
@@ -314,7 +315,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
         state.lastSaveFailedSnapshot = requestSnapshot;
         deps.notifyError(
           m.shell_error_save_settings_failed({
-            error: error instanceof Error ? error.message : String(error),
+            error: formatPreferencesError(error),
           })
         );
         return false;
