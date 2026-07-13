@@ -711,6 +711,54 @@ mod tests {
         assert_identifier_is_limited_to(&root, "download_api", &download_allowed);
     }
 
+    /// 阻止 command 模块直接访问 AppState 的领域字段。
+    ///
+    /// command 层应通过窄化 accessor 方法访问领域服务（如 state.player() 而非 state.player），
+    /// 以便未来可以拆分为独立 Tauri State 或按领域建立 Facade。app_state 内部与 playback / downloads
+    /// 桥接层的直接字段访问是允许的，不受此测试限制。
+    #[test]
+    fn command_layer_uses_appstate_accessors() {
+        let commands_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("commands");
+
+        // 禁止在 commands/*.rs 中出现的直接字段访问模式。
+        // 这里只列窄化后本应通过 accessor 访问的领域字段；
+        // preferences / prefs / api_clients 等仍通过 method 面向外部访问。
+        //
+        // 注意：所有模式统一以 `.` 结尾，这样只会匹配直接字段访问链
+        // `state.foo.bar`，不会误判为同名 accessor 方法调用 `state.foo()`。
+        let forbidden_patterns = [
+            "state.api_clients.",
+            "state.download.download_",
+            "state.tag_registry.",
+            "state.tag_editor.",
+            "state.collection.",
+            "state.library_search_service.",
+            "state.listening_history.",
+            "state.album_metadata_cache.",
+            "state.local_inventory_service.",
+            "state.log_center.",
+        ];
+
+        for path in rust_files(&commands_dir) {
+            let relative = path
+                .strip_prefix(&commands_dir)
+                .expect("path under commands");
+            let source = std::fs::read_to_string(&path).expect("read source");
+            for pattern in &forbidden_patterns {
+                if source.contains(pattern) {
+                    panic!(
+                        "command file `commands/{}` contains direct AppState field access `{}`; \
+                         use the corresponding accessor method (e.g. state.player() instead of state.player)",
+                        relative.display(),
+                        pattern
+                    );
+                }
+            }
+        }
+    }
+
     fn assert_identifier_is_limited_to(
         root: &std::path::Path,
         identifier: &str,

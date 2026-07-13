@@ -47,7 +47,7 @@ pub async fn search_library(
     request: SearchLibraryRequest,
 ) -> Result<SearchLibraryResponse, SearchError> {
     state
-        .library_search_service
+        .library_search()
         .search(request, state.preferences().locale)
         .await
         .map_err(|msg| {

@@ -67,7 +67,7 @@ fn emit_download_state(app: &AppHandle, manager_snapshot: &DownloadManagerSnapsh
 #[tauri::command]
 pub fn clear_audio_cache(state: State<'_, AppState>) -> Result<u64, DownloadError> {
     state
-        .player
+        .player()
         .stop()
         .map_err(|e| DownloadError::Internal(e.to_string()))?;
     audio_cache::clear_audio_cache().map_err(|e| DownloadError::Io(e.to_string()))
@@ -109,7 +109,7 @@ pub async fn create_download_job(
     state: State<'_, AppState>,
     request: CreateDownloadJobRequest,
 ) -> Result<DownloadJobSnapshot, DownloadError> {
-    let api = state.api_clients.download_api.clone();
+    let api = state.download_api_client().clone();
     let preferences = state.preferences();
     let normalized_request = CreateDownloadJobRequest {
         options: harubble_core::download::model::DownloadOptions {
@@ -118,16 +118,16 @@ pub async fn create_download_job(
         },
         ..request
     };
-    let _creation_guard = state.download.download_job_creation_lock.lock().await;
+    let _creation_guard = state.download_job_creation_lock().lock().await;
     let id_generator = {
-        let service = state.download.download_service.lock().await;
+        let service = state.download_service().lock().await;
         service.id_generator()
     };
     let prepared = prepare_job(&id_generator, &api, normalized_request)
         .await
         .map_err(|e| DownloadError::Network(e.to_string()))?;
     let (job_snapshot, manager_snapshot) = {
-        let mut service = state.download.download_service.lock().await;
+        let mut service = state.download_service().lock().await;
         let job_snapshot = service.register_prepared_job(prepared);
         let manager_snapshot = service.manager_snapshot();
         (job_snapshot, manager_snapshot)
@@ -151,7 +151,7 @@ pub async fn create_download_job(
 pub async fn list_download_jobs(
     state: State<'_, AppState>,
 ) -> Result<DownloadManagerSnapshot, DownloadError> {
-    let service = state.download.download_service.lock().await;
+    let service = state.download_service().lock().await;
     Ok(service.snapshot())
 }
 
@@ -165,7 +165,7 @@ pub async fn get_download_job(
     state: State<'_, AppState>,
     job_id: String,
 ) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
-    let service = state.download.download_service.lock().await;
+    let service = state.download_service().lock().await;
     Ok(service.get_job(&job_id))
 }
 
@@ -181,7 +181,7 @@ pub async fn cancel_download_job(
     job_id: String,
 ) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let (snapshot, manager_snapshot) = {
-        let mut service = state.download.download_service.lock().await;
+        let mut service = state.download_service().lock().await;
         let snapshot = service.cancel_job(&job_id);
         let manager_snapshot = service.manager_snapshot();
         (snapshot, manager_snapshot)
@@ -211,7 +211,7 @@ pub async fn cancel_download_task(
     task_id: String,
 ) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let (snapshot, manager_snapshot) = {
-        let mut service = state.download.download_service.lock().await;
+        let mut service = state.download_service().lock().await;
         let snapshot = service.cancel_task(&job_id, &task_id);
         let manager_snapshot = service.manager_snapshot();
         (snapshot, manager_snapshot)
@@ -240,7 +240,7 @@ pub async fn retry_download_job(
     job_id: String,
 ) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let (snapshot, manager_snapshot) = {
-        let mut service = state.download.download_service.lock().await;
+        let mut service = state.download_service().lock().await;
         let snapshot = service.retry_job(&job_id);
         let manager_snapshot = service.manager_snapshot();
         (snapshot, manager_snapshot)
@@ -270,7 +270,7 @@ pub async fn retry_download_task(
     task_id: String,
 ) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let (snapshot, manager_snapshot) = {
-        let mut service = state.download.download_service.lock().await;
+        let mut service = state.download_service().lock().await;
         let snapshot = service.retry_task(&job_id, &task_id);
         let manager_snapshot = service.manager_snapshot();
         (snapshot, manager_snapshot)
@@ -298,7 +298,7 @@ pub async fn clear_download_history(
     state: State<'_, AppState>,
 ) -> Result<usize, DownloadError> {
     let (removed_count, manager_snapshot) = {
-        let mut service = state.download.download_service.lock().await;
+        let mut service = state.download_service().lock().await;
         let removed_count = service.clear_history();
         let manager_snapshot = service.manager_snapshot();
         (removed_count, manager_snapshot)

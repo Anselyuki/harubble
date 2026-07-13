@@ -21,7 +21,7 @@ use tauri::{AppHandle, State};
 pub async fn get_local_inventory_snapshot(
     state: State<'_, AppState>,
 ) -> Result<LocalInventorySnapshot, String> {
-    Ok(state.local_inventory_service.snapshot().await)
+    Ok(state.local_inventory().snapshot().await)
 }
 
 /// 以当前输出目录重新触发本地库存扫描。
@@ -42,7 +42,7 @@ pub async fn rescan_local_inventory(
         root_output_dir,
         verification_mode,
     );
-    Ok(state.local_inventory_service.snapshot().await)
+    Ok(state.local_inventory().snapshot().await)
 }
 
 /// 取消当前进行中的本地库存扫描，并返回最新快照。
@@ -55,7 +55,7 @@ pub async fn cancel_local_inventory_scan(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<LocalInventorySnapshot, String> {
-    let snapshot = state.local_inventory_service.cancel_scan().await;
+    let snapshot = state.local_inventory().cancel_scan().await;
     emit_local_inventory_state_changed(&app, &snapshot);
     Ok(snapshot)
 }

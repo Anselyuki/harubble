@@ -25,7 +25,7 @@ pub fn list_collections(
     state: State<'_, AppState>,
 ) -> Result<Vec<CollectionSummary>, CollectionError> {
     let locale = locale_str(state.preferences().locale);
-    state.collection.list_all(locale)
+    state.collection().list_all(locale)
 }
 
 /// 查询单个合集详情，包含完整歌曲 ID 列表。
@@ -39,7 +39,7 @@ pub fn get_collection(
     id: String,
 ) -> Result<Collection, CollectionError> {
     let locale = locale_str(state.preferences().locale);
-    state.collection.get(&id, locale)
+    state.collection().get(&id, locale)
 }
 
 /// 创建用户合集。
@@ -54,7 +54,7 @@ pub fn create_collection(
     cover_path: Option<String>,
 ) -> Result<Collection, CollectionError> {
     state
-        .collection
+        .collection()
         .create(&name, &description, cover_path.as_deref())
 }
 
@@ -80,7 +80,7 @@ pub fn update_collection(
         Some(Some(s)) => Some(Some(s.as_str())),
     };
     state
-        .collection
+        .collection()
         .update(&id, name.as_deref(), description.as_deref(), cover_ref)
 }
 
@@ -90,7 +90,7 @@ pub fn update_collection(
 /// 合集不存在时返回错误。
 #[tauri::command]
 pub fn delete_collection(state: State<'_, AppState>, id: String) -> Result<(), CollectionError> {
-    state.collection.delete(&id)
+    state.collection().delete(&id)
 }
 
 /// 向合集添加歌曲（已存在的歌曲忽略，不报错）。
@@ -103,7 +103,7 @@ pub fn add_songs_to_collection(
     id: String,
     song_ids: Vec<String>,
 ) -> Result<(), CollectionError> {
-    state.collection.add_songs(&id, &song_ids)
+    state.collection().add_songs(&id, &song_ids)
 }
 
 /// 从合集移除歌曲。
@@ -116,7 +116,7 @@ pub fn remove_songs_from_collection(
     id: String,
     song_ids: Vec<String>,
 ) -> Result<(), CollectionError> {
-    state.collection.remove_songs(&id, &song_ids)
+    state.collection().remove_songs(&id, &song_ids)
 }
 
 /// 对合集中的歌曲重新排序。
@@ -129,7 +129,7 @@ pub fn reorder_collection_songs(
     id: String,
     song_ids: Vec<String>,
 ) -> Result<(), CollectionError> {
-    state.collection.reorder_songs(&id, &song_ids)
+    state.collection().reorder_songs(&id, &song_ids)
 }
 
 /// 将合集导出为 JSON 字符串。
@@ -142,7 +142,7 @@ pub fn export_collection(
     id: String,
 ) -> Result<String, CollectionError> {
     let locale = locale_str(state.preferences().locale);
-    state.collection.export(&id, locale)
+    state.collection().export(&id, locale)
 }
 
 /// 从 JSON 字符串导入合集，创建新的用户合集。
@@ -155,5 +155,5 @@ pub fn import_collection(
     state: State<'_, AppState>,
     json: String,
 ) -> Result<Collection, CollectionError> {
-    state.collection.import(&json)
+    state.collection().import(&json)
 }

@@ -17,7 +17,7 @@ pub fn list_log_records(
     state: State<'_, AppState>,
     query: LogViewerQuery,
 ) -> Result<LogViewerPage, String> {
-    state.log_center.list_records(query)
+    state.log_center().list_records(query)
 }
 
 /// 获取当前会话日志与持久化日志文件的存在状态。
@@ -27,5 +27,5 @@ pub fn list_log_records(
 /// 该接口只报告当前状态，不会主动创建日志文件；调用方应根据返回值决定是否展示“文件不存在”或“稍后再试”等提示。
 #[tauri::command]
 pub fn get_log_file_status(state: State<'_, AppState>) -> Result<LogFileStatus, String> {
-    Ok(state.log_center.file_status())
+    Ok(state.log_center().file_status())
 }

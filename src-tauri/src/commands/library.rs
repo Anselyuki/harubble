@@ -50,15 +50,14 @@ pub async fn get_albums(
     state: State<'_, AppState>,
 ) -> Result<Vec<harubble_core::api::Album>, LibraryError> {
     let albums = state
-        .api_clients
-        .api
+        .api_client()
         .get_albums()
         .await
         .map_err(|e| LibraryError::Network(e.to_string()))?;
-    let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
+    let mut enriched = state.local_inventory().enrich_albums(albums).await;
     let locale = state.preferences().locale;
     for album in &mut enriched {
-        album.tags = state.tag_registry.get_album_tags(&album.cid, locale);
+        album.tags = state.tag_registry().get_album_tags(&album.cid, locale);
     }
     Ok(enriched)
 }
@@ -75,27 +74,23 @@ pub async fn get_album_detail(
     album_cid: String,
 ) -> Result<harubble_core::api::AlbumDetail, LibraryError> {
     let album = state
-        .api_clients
-        .api
+        .api_client()
         .get_album_detail(&album_cid)
         .await
         .map_err(|e| LibraryError::Network(e.to_string()))?;
-    let cache = state.album_metadata_cache.clone();
+    let cache = state.album_metadata_cache().clone();
     let album_cid_for_cache = album.cid.clone();
     let album_belong_for_cache = album.belong.clone();
     let _ = tokio::task::spawn_blocking(move || {
         cache.upsert_belong(&album_cid_for_cache, &album_belong_for_cache)
     })
     .await;
-    let mut enriched = state
-        .local_inventory_service
-        .enrich_album_detail(album)
-        .await;
+    let mut enriched = state.local_inventory().enrich_album_detail(album).await;
     let locale = state.preferences().locale;
-    enriched.tags = state.tag_registry.get_album_tags(&enriched.cid, locale);
+    enriched.tags = state.tag_registry().get_album_tags(&enriched.cid, locale);
     for song in &mut enriched.songs {
         song.tags = state
-            .tag_registry
+            .tag_registry()
             .get_song_tags(&song.cid, &enriched.cid, locale);
     }
     Ok(enriched)
@@ -112,24 +107,22 @@ pub async fn get_song_detail(
     cid: String,
 ) -> Result<harubble_core::api::SongDetail, LibraryError> {
     let song = state
-        .api_clients
-        .api
+        .api_client()
         .get_song_detail(&cid)
         .await
         .map_err(|e| LibraryError::Network(e.to_string()))?;
     let album = state
-        .api_clients
-        .api
+        .api_client()
         .get_album_detail(&song.album_cid)
         .await
         .map_err(|e| LibraryError::Network(e.to_string()))?;
     let mut enriched = state
-        .local_inventory_service
+        .local_inventory()
         .enrich_song_detail(song, &album.name)
         .await;
     let locale = state.preferences().locale;
     enriched.tags = state
-        .tag_registry
+        .tag_registry()
         .get_song_tags(&enriched.cid, &enriched.album_cid, locale);
     Ok(enriched)
 }
@@ -158,8 +151,7 @@ pub async fn get_song_lyrics(
             };
 
             state
-                .api_clients
-                .api
+                .api_client()
                 .download_text(&lyric_url)
                 .await
                 .map(Some)

@@ -171,6 +171,78 @@ impl AppState {
             .clone()
     }
 
+    // ─── 领域访问器 ─────────────────────────────────────────────────────────
+    // 为 command 层提供窄化访问入口。command 应通过这些方法访问各领域服务，
+    // 而不是直接读写 pub(crate) 字段，以便未来能够拆分为独立的 Tauri State
+    // 或按领域建立 Facade。app_state 内部（playback / media_controls）以及
+    // 非-command 的模块（playback_actor / downloads/bridge 等）继续使用字段
+    // 直接访问。
+
+    /// 返回音频播放器实例（用于状态查询与音量控制）。
+    pub(crate) fn player(&self) -> &Arc<AudioPlayer> {
+        &self.player
+    }
+
+    /// 返回合集服务（列表、增删改、导入导出）。
+    pub(crate) fn collection(&self) -> &CollectionService {
+        &self.collection
+    }
+
+    /// 返回 Tag 编辑器服务（双层存储、三路合并）。
+    pub(crate) fn tag_editor(&self) -> &TagEditorService {
+        &self.tag_editor
+    }
+
+    /// 返回 Tag 注册表服务（维度定义、按 tag 查专辑）。
+    pub(crate) fn tag_registry(&self) -> &TagRegistryService {
+        &self.tag_registry
+    }
+
+    /// 返回库内搜索服务。
+    pub(crate) fn library_search(&self) -> &LibrarySearchService {
+        &self.library_search_service
+    }
+
+    /// 返回收听历史服务。
+    pub(crate) fn listening_history(&self) -> &Arc<ListeningHistoryService> {
+        &self.listening_history
+    }
+
+    /// 返回专辑元数据缓存服务。
+    pub(crate) fn album_metadata_cache(&self) -> &AlbumMetadataCacheService {
+        &self.album_metadata_cache
+    }
+
+    /// 返回本地库存服务。
+    pub(crate) fn local_inventory(&self) -> &LocalInventoryService {
+        &self.local_inventory_service
+    }
+
+    /// 返回日志中心（用于查询记录、状态检查等）。
+    pub(crate) fn log_center(&self) -> &Arc<LogCenter> {
+        &self.log_center
+    }
+
+    /// 返回通用业务 API 客户端。
+    pub(crate) fn api_client(&self) -> &Arc<harubble_core::ApiClient> {
+        &self.api_clients.api
+    }
+
+    /// 返回下载链路专用 API 客户端。
+    pub(crate) fn download_api_client(&self) -> &Arc<harubble_core::ApiClient> {
+        &self.api_clients.download_api
+    }
+
+    /// 返回下载服务实例（需在 lock 后使用）。
+    pub(crate) fn download_service(&self) -> &Arc<Mutex<DownloadService>> {
+        &self.download.download_service
+    }
+
+    /// 返回下载批次创建互斥锁。
+    pub(crate) fn download_job_creation_lock(&self) -> &Arc<Mutex<()>> {
+        &self.download.download_job_creation_lock
+    }
+
     /// 返回当前配置中的根输出目录。
     ///
     /// 适用于需要读取当前下载根目录的高层调用方。

@@ -14,7 +14,7 @@ pub fn get_tag_dimensions(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::tag_registry::TagDimensionResolved>, String> {
     let locale = state.preferences().locale;
-    Ok(state.tag_registry.get_album_dimensions(locale))
+    Ok(state.tag_registry().get_album_dimensions(locale))
 }
 
 /// 按指定 tag 维度聚合专辑，用于分组浏览。
@@ -28,7 +28,7 @@ pub async fn get_albums_by_tag_dimension(
 ) -> Result<Vec<TagGroup>, String> {
     let locale = state.preferences().locale;
     let value_to_cids = state
-        .tag_registry
+        .tag_registry()
         .get_album_cids_by_dimension(&dimension_key, locale);
 
     if value_to_cids.is_empty() {
@@ -41,9 +41,9 @@ pub async fn get_albums_by_tag_dimension(
         .get_albums()
         .await
         .map_err(|e| e.to_string())?;
-    let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
+    let mut enriched = state.local_inventory().enrich_albums(albums).await;
     for album in &mut enriched {
-        album.tags = state.tag_registry.get_album_tags(&album.cid, locale);
+        album.tags = state.tag_registry().get_album_tags(&album.cid, locale);
     }
 
     let album_map: std::collections::HashMap<&str, &Album> =

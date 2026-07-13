@@ -39,7 +39,7 @@ pub async fn play_song(
 #[tauri::command]
 pub fn pause_playback(state: State<'_, AppState>) -> Result<(), PlaybackError> {
     state
-        .player
+        .player()
         .pause()
         .map_err(|e| PlaybackError::new(PlaybackErrorCode::Audio, e.to_string(), true, None))
 }
@@ -53,7 +53,7 @@ pub fn pause_playback(state: State<'_, AppState>) -> Result<(), PlaybackError> {
 #[tauri::command]
 pub fn resume_playback(state: State<'_, AppState>) -> Result<(), PlaybackError> {
     state
-        .player
+        .player()
         .resume()
         .map_err(|e| PlaybackError::new(PlaybackErrorCode::Audio, e.to_string(), true, None))
 }
@@ -117,7 +117,7 @@ pub async fn play_previous(
 /// 该接口返回的是读取瞬间的状态视图；实时更新仍应以播放器事件流为主，而不是高频轮询此接口。
 #[tauri::command]
 pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerState, String> {
-    Ok(state.player.get_state())
+    Ok(state.player().get_state())
 }
 
 /// 设置播放器音量，并返回经过约束后的实际音量值。
@@ -128,7 +128,7 @@ pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerState, Strin
 /// 音量变化会自动持久化到偏好文件，下次启动时恢复。
 #[tauri::command]
 pub async fn set_playback_volume(state: State<'_, AppState>, volume: f64) -> Result<f64, String> {
-    let actual = state.player.set_volume(volume);
+    let actual = state.player().set_volume(volume);
     if (state.preferences().volume - actual).abs() > 0.001 {
         state
             .update_preferences(|prefs| {

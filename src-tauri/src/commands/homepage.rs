@@ -17,15 +17,14 @@ pub async fn get_latest_albums(
     limit: u32,
 ) -> Result<Vec<Album>, String> {
     let albums = state
-        .api_clients
-        .api
+        .api_client()
         .get_albums()
         .await
         .map_err(|e| e.to_string())?;
-    let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
+    let mut enriched = state.local_inventory().enrich_albums(albums).await;
     let locale = state.preferences().locale;
     for album in &mut enriched {
-        album.tags = state.tag_registry.get_album_tags(&album.cid, locale);
+        album.tags = state.tag_registry().get_album_tags(&album.cid, locale);
     }
     Ok(enriched.into_iter().take(limit as usize).collect())
 }
@@ -41,17 +40,16 @@ pub async fn get_latest_albums(
 #[tauri::command]
 pub async fn get_albums_by_series(state: State<'_, AppState>) -> Result<Vec<SeriesGroup>, String> {
     let albums = state
-        .api_clients
-        .api
+        .api_client()
         .get_albums()
         .await
         .map_err(|e| e.to_string())?;
-    let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
+    let mut enriched = state.local_inventory().enrich_albums(albums).await;
     let locale = state.preferences().locale;
     for album in &mut enriched {
-        album.tags = state.tag_registry.get_album_tags(&album.cid, locale);
+        album.tags = state.tag_registry().get_album_tags(&album.cid, locale);
     }
-    let cache = state.album_metadata_cache.clone();
+    let cache = state.album_metadata_cache().clone();
     let belongs = tokio::task::spawn_blocking(move || cache.get_all_belongs())
         .await
         .map_err(|e| e.to_string())??;
@@ -104,7 +102,7 @@ pub async fn get_recent_history(
     state: State<'_, AppState>,
     limit: u32,
 ) -> Result<Vec<HistoryEntry>, String> {
-    let history = state.listening_history.clone();
+    let history = state.listening_history().clone();
     tokio::task::spawn_blocking(move || history.get_recent(limit))
         .await
         .map_err(|e| e.to_string())?
@@ -123,8 +121,7 @@ pub async fn record_song_heat(
     cover_url: Option<String>,
 ) -> Result<(), String> {
     let song_detail = state
-        .api_clients
-        .api
+        .api_client()
         .get_song_detail(&song_cid)
         .await
         .map_err(|e| e.to_string())?;
@@ -136,7 +133,7 @@ pub async fn record_song_heat(
         cover_url,
         artists: song_detail.artists,
     };
-    let history = state.listening_history.clone();
+    let history = state.listening_history().clone();
     tokio::task::spawn_blocking(move || history.record(&event))
         .await
         .map_err(|e| e.to_string())?
@@ -151,7 +148,7 @@ pub async fn record_song_heat(
 pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, String> {
     state
         .dispatch_playback_side_effect("clear_listening_history", |state| async move {
-            let history = state.listening_history.clone();
+            let history = state.listening_history().clone();
             tokio::task::spawn_blocking(move || history.clear())
                 .await
                 .map_err(|e| e.to_string())?
@@ -167,17 +164,16 @@ pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, 
 #[tauri::command]
 pub async fn get_homepage_status(state: State<'_, AppState>) -> Result<HomepageStatus, String> {
     let albums = state
-        .api_clients
-        .api
+        .api_client()
         .get_albums()
         .await
         .map_err(|e| e.to_string())?;
     let platform_album_count = albums.len() as u32;
 
-    let inventory_snapshot = state.local_inventory_service.snapshot().await;
+    let inventory_snapshot = state.local_inventory().snapshot().await;
     let local_downloaded_count = inventory_snapshot.matched_track_count as u32;
 
-    let download_snapshot = state.download.download_service.lock().await.snapshot();
+    let download_snapshot = state.download_service().lock().await.snapshot();
     let active_download_count = download_snapshot
         .jobs
         .iter()

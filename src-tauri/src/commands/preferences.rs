@@ -125,7 +125,7 @@ pub async fn import_preferences(
 /// 该接口反映的是当前系统权限快照；若用户刚在系统设置中修改权限，调用方应重新调用以获取最新状态。
 #[tauri::command]
 pub fn get_notification_permission_state(state: State<'_, AppState>) -> Result<String, String> {
-    let app = state.player.app_handle();
+    let app = state.player().app_handle();
     let permission = app
         .notification()
         .permission_state()
@@ -146,6 +146,6 @@ pub fn get_notification_permission_state(state: State<'_, AppState>) -> Result<S
 /// 该接口会向系统真正发送一条可见通知，调用方应只在用户明确触发时调用，避免把测试通知当成静默探测手段。
 #[tauri::command]
 pub fn send_test_notification(state: State<'_, AppState>) -> Result<(), String> {
-    let app = state.player.app_handle();
+    let app = state.player().app_handle();
     crate::notification::notify_test(app)
 }

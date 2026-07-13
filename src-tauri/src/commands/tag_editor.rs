@@ -49,7 +49,7 @@ impl std::error::Error for TagEditorError {}
 /// 返回合并后的完整 tag 注册表（remote + local overlay 合并计算结果）。
 #[tauri::command]
 pub fn get_tag_editor_merged(state: State<'_, AppState>) -> Result<TagRegistry, TagEditorError> {
-    Ok(state.tag_editor.compute_merged())
+    Ok(state.tag_editor().compute_merged())
 }
 
 /// 返回本地 overlay 层的原始内容。
@@ -57,7 +57,7 @@ pub fn get_tag_editor_merged(state: State<'_, AppState>) -> Result<TagRegistry, 
 pub fn get_tag_editor_local_overlay(
     state: State<'_, AppState>,
 ) -> Result<TagRegistry, TagEditorError> {
-    Ok(state.tag_editor.local_registry())
+    Ok(state.tag_editor().local_registry())
 }
 
 /// 设置指定实体在指定维度上的 tag 值（写入本地 overlay）。
@@ -69,7 +69,7 @@ pub async fn set_tag_editor_entity_tag(
     dimension_key: String,
     values: Vec<LocalizedValue>,
 ) -> Result<(), TagEditorError> {
-    let editor = state.tag_editor.clone();
+    let editor = state.tag_editor().clone();
     tokio::task::spawn_blocking(move || {
         editor.set_entity_tag(entity_type, &cid, &dimension_key, values)
     })
@@ -86,7 +86,7 @@ pub async fn remove_tag_editor_entity_tag(
     cid: String,
     dimension_key: String,
 ) -> Result<(), TagEditorError> {
-    let editor = state.tag_editor.clone();
+    let editor = state.tag_editor().clone();
     tokio::task::spawn_blocking(move || editor.remove_entity_tag(entity_type, &cid, &dimension_key))
         .await
         .map_err(|e| TagEditorError::Internal(e.to_string()))?
@@ -101,7 +101,7 @@ pub async fn add_tag_editor_dimension(
     label_zh: String,
     label_en: String,
 ) -> Result<(), TagEditorError> {
-    let editor = state.tag_editor.clone();
+    let editor = state.tag_editor().clone();
     tokio::task::spawn_blocking(move || editor.add_local_dimension(&key, &label_zh, &label_en))
         .await
         .map_err(|e| TagEditorError::Internal(e.to_string()))?
@@ -114,7 +114,7 @@ pub async fn remove_tag_editor_dimension(
     state: State<'_, AppState>,
     key: String,
 ) -> Result<(), TagEditorError> {
-    let editor = state.tag_editor.clone();
+    let editor = state.tag_editor().clone();
     tokio::task::spawn_blocking(move || editor.remove_local_dimension(&key))
         .await
         .map_err(|e| TagEditorError::Internal(e.to_string()))?
@@ -127,7 +127,7 @@ pub async fn apply_tag_editor_remote_update(
     state: State<'_, AppState>,
     new_remote: TagRegistry,
 ) -> Result<MergeResult, TagEditorError> {
-    let editor = state.tag_editor.clone();
+    let editor = state.tag_editor().clone();
     tokio::task::spawn_blocking(move || editor.apply_remote_update(new_remote))
         .await
         .map_err(|e| TagEditorError::Internal(e.to_string()))?
@@ -143,7 +143,7 @@ pub async fn resolve_tag_editor_conflict(
     dimension_key: String,
     keep: ConflictResolution,
 ) -> Result<(), TagEditorError> {
-    let editor = state.tag_editor.clone();
+    let editor = state.tag_editor().clone();
     tokio::task::spawn_blocking(move || {
         editor.resolve_conflict(entity_type, &cid, &dimension_key, keep)
     })
@@ -160,7 +160,7 @@ pub async fn export_tag_editor_registry(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<(), TagEditorError> {
-    let editor = state.tag_editor.clone();
+    let editor = state.tag_editor().clone();
     let path = PathBuf::from(path);
     tokio::task::spawn_blocking(move || editor.export_merged(Path::new(&path)))
         .await
@@ -176,7 +176,7 @@ pub async fn import_tag_editor_registry(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<MergeResult, TagEditorError> {
-    let editor = state.tag_editor.clone();
+    let editor = state.tag_editor().clone();
     let path = PathBuf::from(path);
     tokio::task::spawn_blocking(move || {
         let content = std::fs::read_to_string(Path::new(&path))
