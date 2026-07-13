@@ -1,5 +1,6 @@
 import type { Collection, CollectionSummary } from '$lib/types';
 import * as m from '$lib/paraglide/messages.js';
+import { formatCollectionError } from '$lib/features/shell/domainErrors';
 
 interface CollectionControllerDeps {
   listCollections: () => Promise<CollectionSummary[]>;
@@ -39,8 +40,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     try {
       collections = await deps.listCollections();
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_load_list({ error: message }));
+      deps.notifyError(
+        m.collection_error_load_list({ error: formatCollectionError(error) })
+      );
     } finally {
       isLoading = false;
     }
@@ -69,8 +71,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       await selectCollection(created.id);
       deps.notifyInfo(m.collection_notify_created());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_create({ error: message }));
+      deps.notifyError(
+        m.collection_error_create({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -93,8 +96,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       }
       deps.notifyInfo(m.collection_notify_updated());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_update({ error: message }));
+      deps.notifyError(
+        m.collection_error_update({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -107,8 +111,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       await loadCollections();
       deps.notifyInfo(m.collection_notify_deleted());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_delete({ error: message }));
+      deps.notifyError(
+        m.collection_error_delete({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -124,8 +129,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       await loadCollections();
       deps.notifyInfo(m.collection_notify_song_added());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_song_add({ error: message }));
+      deps.notifyError(
+        m.collection_error_song_add({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -140,8 +146,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       }
       await loadCollections();
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_song_remove({ error: message }));
+      deps.notifyError(
+        m.collection_error_song_remove({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -155,8 +162,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
         selectedCollection = await deps.getCollection(collectionId);
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_sort({ error: message }));
+      deps.notifyError(
+        m.collection_error_sort({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -172,8 +180,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       URL.revokeObjectURL(url);
       deps.notifyInfo(m.collection_notify_exported());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_export({ error: message }));
+      deps.notifyError(
+        m.collection_error_export({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -204,8 +213,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       await selectCollection(imported.id);
       deps.notifyInfo(m.collection_notify_imported());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_import({ error: message }));
+      deps.notifyError(
+        m.collection_error_import({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -234,8 +244,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     try {
       selectedCollection = await deps.getCollection(id);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(m.collection_error_load_detail({ error: message }));
+      deps.notifyError(
+        m.collection_error_load_detail({ error: formatCollectionError(error) })
+      );
       selectedCollection = null;
     } finally {
       isDetailLoading = false;
