@@ -40,6 +40,23 @@ use tokio::sync::{Mutex, MutexGuard};
 /// 这是 Tauri command、下载桥接、播放器控制与日志系统共用的高层入口，适用于需要访问跨域后端能力的场景。
 /// 其内部聚合播放器、API 客户端、下载服务、库存服务、偏好存储与日志中心等共享状态。
 /// 该类型应作为长生命周期共享状态使用，而不是按请求临时构造；调用方也不应绕过它直接拼装各子系统依赖。
+///
+/// # 架构决策（P0-5 步骤5）：保留 AppState 作为纯组合根
+///
+/// 在完成 P0-5 步骤1-4（accessor 模式、字段私有化、跨域编排收敛）后，评估是否将
+/// `State<'_, AppState>` 拆分为独立的域级 `State<'_, XDomainFacade>`：
+///
+/// **决策：保留 `AppState` 作为唯一注入点。**
+///
+/// 理由：
+/// - Tauri 的状态注入模型（`State<'_, T>`）在单一泛型参数时最自然；拆分后68个命令签名均需修改。
+/// - 领域边界已通过 `accessor 方法 + 私有字段 + 架构测试` 执行，不依赖类型系统拆分也能保证约束。
+/// - 跨域命令（如 `get_homepage_status` 协调 library/download/inventory）在统一 AppState 下
+///   编排最简洁；独立 State 后需额外参数或引入聚合 Facade。
+/// - 命令层已完全通过 accessor 访问域服务，`AppState` 对命令只是透明路由层，不承载业务逻辑。
+///
+/// **本决策意味着：** `AppState` 是纯组合根——所有字段私有、唯一公开出口为 accessor 方法，
+/// 不再是包含全局可见字段的"God Object"。
 #[derive(Clone)]
 pub struct AppState {
     player: Arc<AudioPlayer>,
