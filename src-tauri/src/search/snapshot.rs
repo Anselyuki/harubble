@@ -132,6 +132,93 @@ pub(crate) async fn build_library_search_snapshot(
     })
 }
 
+/// 为单个专辑构建搜索快照记录（供增量更新使用）。
+///
+/// 与 [`build_library_search_snapshot`] 的整批构建逻辑保持一致，
+/// 但只处理一个专辑，允许调用方按需局部刷新。适用于远端 tag registry
+/// 同步或本地 tag 编辑后仅刷新受影响专辑的场景。
+///
+/// # 参数
+/// - `api`：用于拉取专辑详情的上游客户端。
+/// - `tag_registry`：用于汇总 album / song 全语种 tag 值的注册表服务。
+/// - `album_cid`：待刷新的专辑 CID。
+/// - `_locale`：保留位以对齐调用方语义；当前实现按全语种聚合，参数不参与派生。
+///
+/// # 返回值
+/// - `Ok((album_record, song_records))` 该专辑最新的 album 记录及其所属歌曲记录。
+/// - `Err(...)` 当拉取专辑详情失败时返回错误，调用方应回退到全量重建。
+///
+/// # 注意
+/// - artist_line 从 `AlbumDetail.artists` 派生；歌曲优先使用自身 artists，缺失时
+///   回退到专辑级 artist_line。
+/// - tag_values 汇总全部语种，与 [`build_library_search_snapshot`] 语义一致。
+pub(crate) async fn build_snapshot_records_for_album(
+    api: Arc<ApiClient>,
+    tag_registry: crate::tag_registry::TagRegistryService,
+    album_cid: &str,
+    _locale: crate::preferences::Locale,
+) -> Result<(LibrarySearchAlbumRecord, Vec<LibrarySearchSongRecord>)> {
+    let detail = api
+        .get_album_detail(album_cid)
+        .await
+        .with_context(|| format!("failed to fetch album detail {album_cid}"))?;
+
+    let album_artist_line = detail
+        .artists
+        .as_ref()
+        .and_then(|artists| join_artists(artists));
+    let fallback_artist_line = album_artist_line.clone();
+
+    let album_tag_text = tag_registry.get_all_locale_tag_values_for_album(album_cid);
+    let album_tag_text_opt = normalize_optional_text(Some(album_tag_text));
+    let album_record = LibrarySearchAlbumRecord {
+        album_cid: album_cid.to_string(),
+        album_title: detail.name.clone(),
+        artist_line: album_artist_line.clone(),
+        intro: normalize_optional_text(detail.intro.clone()),
+        belong: normalize_optional_text(Some(detail.belong.clone())),
+        album_title_pinyin_full: to_full_pinyin(&detail.name),
+        album_title_pinyin_initials: to_pinyin_initials(&detail.name),
+        artist_line_pinyin_full: album_artist_line.as_deref().and_then(to_full_pinyin),
+        artist_line_pinyin_initials: album_artist_line.as_deref().and_then(to_pinyin_initials),
+        belong_pinyin_full: to_full_pinyin(&detail.belong),
+        belong_pinyin_initials: to_pinyin_initials(&detail.belong),
+        tag_values_pinyin_full: album_tag_text_opt.as_deref().and_then(to_full_pinyin),
+        tag_values_pinyin_initials: album_tag_text_opt.as_deref().and_then(to_pinyin_initials),
+        tag_values: album_tag_text_opt,
+    };
+
+    let album_title = detail.name.clone();
+    let song_records = detail
+        .songs
+        .into_iter()
+        .map(|song| {
+            let artist_line = join_artists(&song.artists).or_else(|| fallback_artist_line.clone());
+            let song_tag_text =
+                tag_registry.get_all_locale_tag_values_for_song(&song.cid, album_cid);
+            let song_tag_text_opt = normalize_optional_text(Some(song_tag_text));
+            LibrarySearchSongRecord {
+                album_cid: album_cid.to_string(),
+                song_cid: song.cid,
+                album_title: album_title.clone(),
+                song_title: song.name.clone(),
+                artist_line_pinyin_full: artist_line.as_deref().and_then(to_full_pinyin),
+                artist_line_pinyin_initials: artist_line.as_deref().and_then(to_pinyin_initials),
+                song_title_pinyin_full: to_full_pinyin(&song.name),
+                song_title_pinyin_initials: to_pinyin_initials(&song.name),
+                artist_line,
+                tag_values_pinyin_full: song_tag_text_opt.as_deref().and_then(to_full_pinyin),
+                tag_values_pinyin_initials: song_tag_text_opt
+                    .as_deref()
+                    .and_then(to_pinyin_initials),
+                tag_values: song_tag_text_opt,
+            }
+        })
+        .collect();
+
+    Ok((album_record, song_records))
+}
+
 pub(crate) fn load_library_search_snapshot(
     base_dir: &Path,
 ) -> Result<Option<LibrarySearchSnapshot>> {

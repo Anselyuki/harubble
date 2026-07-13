@@ -438,6 +438,22 @@ impl TagRegistryService {
         let registry = self.registry.read().expect("tag registry RwLock poisoned");
         registry.updated_at.clone()
     }
+
+    /// 克隆当前内存中的注册表快照。
+    ///
+    /// 适用于需要在 `replace_in_memory` 之前捕获旧状态、并在替换后与新版本进行
+    /// 对比的场景（例如增量搜索索引刷新）。返回值为独立的 [`TagRegistry`] 副本，
+    /// 之后对本服务的写操作不会再影响返回的快照。
+    ///
+    /// # 返回值
+    /// 当前内存中注册表的深拷贝；若尚未加载任何注册表，则返回默认空注册表。
+    ///
+    /// # 注意
+    /// 读操作使用共享锁；调用方持有返回值期间无需持有本服务的任何锁。
+    pub(crate) fn clone_current(&self) -> TagRegistry {
+        let registry = self.registry.read().expect("tag registry RwLock poisoned");
+        registry.clone()
+    }
 }
 
 // ─── 私有辅助函数 ─────────────────────────────────────────────────────────────

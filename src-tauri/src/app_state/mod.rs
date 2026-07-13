@@ -892,7 +892,9 @@ fn record_playback_side_effect_metrics(
 /// 启动 tag registry 远程同步后台任务。
 ///
 /// 在应用启动后异步从远程拉取最新 tag JSON，与本地版本比对后按需替换。
-/// 若注册表发生更新且当前已有库存快照，自动触发搜索索引重建以同步新 tag 数据。
+/// 若注册表发生更新，会先尝试增量刷新受影响专辑的搜索索引：
+/// 变更专辑数量少于阈值时，只重建这些专辑的快照记录与 Tantivy 文档；
+/// 变更规模较大或增量过程失败时，回退为全量重建。
 /// 网络失败时静默使用本地缓存，不阻塞应用启动。
 pub fn spawn_tag_registry_sync(state: &AppState) {
     let state = state.clone();
@@ -902,7 +904,7 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
             .wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250))
             .await;
 
-        let updated = async {
+        let sync_result = async {
             let response_bytes = load_tag_registry_bytes(&state).await?;
             let new_registry: crate::tag_registry::TagRegistry =
                 serde_json::from_slice(&response_bytes)
@@ -920,7 +922,7 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
             {
                 let current_updated_at = state.tag_registry.current_updated_at();
                 if new_registry.updated_at == current_updated_at && !current_updated_at.is_empty() {
-                    return Ok(false);
+                    return Ok(None);
                 }
             }
 
@@ -935,20 +937,26 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
             persist_result.map_err(|error| {
                 anyhow::anyhow!("failed to persist synced tag registry: {error}")
             })?;
+
+            let old_registry = state.tag_registry.clone_current();
+            let new_registry_snapshot = new_registry.clone();
             state.tag_registry.replace_in_memory(new_registry);
 
-            Ok::<bool, anyhow::Error>(true)
+            Ok::<
+                Option<(
+                    crate::tag_registry::TagRegistry,
+                    crate::tag_registry::TagRegistry,
+                )>,
+                anyhow::Error,
+            >(Some((old_registry, new_registry_snapshot)))
         }
         .await;
 
-        match updated {
-            Ok(true) => {
-                let inventory = state.local_inventory_service.snapshot().await;
-                state
-                    .library_search_service
-                    .schedule_rebuild(state.clone(), inventory);
+        match sync_result {
+            Ok(Some((old_registry, new_registry))) => {
+                apply_tag_registry_change(state, old_registry, new_registry).await;
             }
-            Ok(false) => {}
+            Ok(None) => {}
             Err(error) => {
                 state.log_center.record(
                     LogPayload::new(
@@ -962,6 +970,213 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
             }
         }
     });
+}
+
+/// 阈值：变更专辑数在此以下才尝试增量搜索索引刷新，否则回退到全量重建。
+const TAG_REGISTRY_INCREMENTAL_THRESHOLD: usize = 50;
+
+/// 处理 tag registry 变更后的搜索索引刷新策略。
+///
+/// 步骤：
+/// 1. 计算 `old` 与 `new` 之间 tag 发生变化的专辑 CID 集合（含歌曲级 tag 变更
+///    通过快照歌曲→专辑映射回溯得到的父专辑）。
+/// 2. 若集合为空，记录一次 no-op 日志后直接返回。
+/// 3. 若规模低于阈值，逐个构建增量记录并调用 `apply_incremental_tag_update`；
+///    构建失败或增量返回 `Ok(false)` / `Err(_)` 则回退为全量重建。
+/// 4. 否则直接触发全量重建。
+async fn apply_tag_registry_change(
+    state: AppState,
+    old_registry: crate::tag_registry::TagRegistry,
+    new_registry: crate::tag_registry::TagRegistry,
+) {
+    let song_album_map = state
+        .library_search_service
+        .current_song_album_map()
+        .await
+        .unwrap_or_default();
+    let changed_albums = compute_changed_album_cids(&old_registry, &new_registry, &song_album_map);
+
+    if changed_albums.is_empty() {
+        state.record_log(
+            LogPayload::new(
+                LogLevel::Info,
+                "tag-registry",
+                "tag_registry.sync_no_op",
+                "Tag registry sync produced no album-level changes",
+            )
+            .context(json!({
+                "old_updated_at": old_registry.updated_at,
+                "new_updated_at": new_registry.updated_at,
+            })),
+        );
+        return;
+    }
+
+    if changed_albums.len() < TAG_REGISTRY_INCREMENTAL_THRESHOLD {
+        if try_incremental_tag_update(&state, &changed_albums).await {
+            return;
+        }
+    } else {
+        state.record_log(
+            LogPayload::new(
+                LogLevel::Info,
+                "tag-registry",
+                "tag_registry.sync_full_rebuild",
+                "Tag registry change exceeds incremental threshold; scheduling full rebuild",
+            )
+            .context(json!({
+                "changed_album_count": changed_albums.len(),
+                "threshold": TAG_REGISTRY_INCREMENTAL_THRESHOLD,
+            })),
+        );
+    }
+
+    let inventory = state.local_inventory_service.snapshot().await;
+    state
+        .library_search_service
+        .schedule_rebuild(state.clone(), inventory);
+}
+
+/// 尝试执行增量搜索索引刷新。
+///
+/// # 返回值
+/// - `true` 增量成功，无需再触发全量重建。
+/// - `false` 拉取快照失败、当前无活跃索引，或增量写入失败；调用方应回退到全量重建。
+async fn try_incremental_tag_update(state: &AppState, changed_albums: &[String]) -> bool {
+    let mut updates = Vec::with_capacity(changed_albums.len());
+    let locale = state.preferences().locale;
+    for cid in changed_albums {
+        match crate::search::build_snapshot_records_for_album(
+            state.api_clients.api.clone(),
+            state.tag_registry.clone(),
+            cid,
+            locale,
+        )
+        .await
+        {
+            Ok(records) => updates.push(records),
+            Err(error) => {
+                state.record_log(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "library-search",
+                        "library_search.incremental_fetch_failed",
+                        "Failed to fetch album detail for incremental tag update",
+                    )
+                    .context(json!({
+                        "album_cid": cid,
+                    }))
+                    .details(error.to_string()),
+                );
+                return false;
+            }
+        }
+    }
+
+    match state
+        .library_search_service
+        .apply_incremental_tag_update(updates)
+        .await
+    {
+        Ok(true) => {
+            state.record_log(
+                LogPayload::new(
+                    LogLevel::Info,
+                    "library-search",
+                    "library_search.incremental_updated",
+                    "Applied incremental tag update",
+                )
+                .context(json!({
+                    "changed_album_count": changed_albums.len(),
+                })),
+            );
+            true
+        }
+        Ok(false) => {
+            state.record_log(
+                LogPayload::new(
+                    LogLevel::Info,
+                    "library-search",
+                    "library_search.incremental_skipped",
+                    "No active search index; falling back to full rebuild",
+                )
+                .context(json!({
+                    "changed_album_count": changed_albums.len(),
+                })),
+            );
+            false
+        }
+        Err(error) => {
+            state.record_log(
+                LogPayload::new(
+                    LogLevel::Warn,
+                    "library-search",
+                    "library_search.incremental_apply_failed",
+                    "Incremental tag update failed; falling back to full rebuild",
+                )
+                .context(json!({
+                    "changed_album_count": changed_albums.len(),
+                }))
+                .details(error.to_string()),
+            );
+            false
+        }
+    }
+}
+
+/// 计算两版 tag registry 之间发生 tag 变更的专辑 CID 集合。
+///
+/// 覆盖两类变更：
+/// - 专辑级 tag 集合发生变化（含新增、删除、内容修改）。
+/// - 歌曲级 tag 集合发生变化，通过 `song_album_map` 回溯到所属专辑 CID。
+///
+/// # 参数
+/// - `old`：旧的 tag registry 快照。
+/// - `new`：新的 tag registry 快照。
+/// - `song_album_map`：来自当前搜索快照的"歌曲 CID → 专辑 CID"映射；缺失映射的
+///   歌曲变更会被忽略（这些专辑通常不在当前库存中，即便刷新也不会命中搜索）。
+///
+/// # 返回值
+/// 变更专辑 CID 的去重列表，顺序不保证。
+fn compute_changed_album_cids(
+    old: &crate::tag_registry::TagRegistry,
+    new: &crate::tag_registry::TagRegistry,
+    song_album_map: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let old_album_tags = crate::tag_registry::albums_to_tag_map(&old.albums, &old.type_definitions);
+    let new_album_tags = crate::tag_registry::albums_to_tag_map(&new.albums, &new.type_definitions);
+    let old_song_tags = crate::tag_registry::songs_to_tag_map(&old.songs);
+    let new_song_tags = crate::tag_registry::songs_to_tag_map(&new.songs);
+
+    let mut changed: HashSet<String> = HashSet::new();
+
+    let mut album_cids: HashSet<&String> = HashSet::new();
+    album_cids.extend(old_album_tags.keys());
+    album_cids.extend(new_album_tags.keys());
+    for cid in album_cids {
+        let old_tags = old_album_tags.get(cid).map(|s| &s.tags);
+        let new_tags = new_album_tags.get(cid).map(|s| &s.tags);
+        if old_tags != new_tags {
+            changed.insert(cid.clone());
+        }
+    }
+
+    let mut song_cids: HashSet<&String> = HashSet::new();
+    song_cids.extend(old_song_tags.keys());
+    song_cids.extend(new_song_tags.keys());
+    for song_cid in song_cids {
+        let old_tags = old_song_tags.get(song_cid).map(|s| &s.tags);
+        let new_tags = new_song_tags.get(song_cid).map(|s| &s.tags);
+        if old_tags != new_tags {
+            if let Some(album_cid) = song_album_map.get(song_cid) {
+                changed.insert(album_cid.clone());
+            }
+        }
+    }
+
+    changed.into_iter().collect()
 }
 
 fn normalize_seek_position(position_secs: f64, duration_secs: f64) -> f64 {

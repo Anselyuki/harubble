@@ -4,7 +4,7 @@ use crate::preferences::Locale;
 use crate::search::index::{sanitize_search_request, LibrarySearchIndex};
 use crate::search::snapshot::{
     build_library_search_snapshot, load_library_search_snapshot, save_library_search_snapshot,
-    LibrarySearchSnapshot,
+    LibrarySearchAlbumRecord, LibrarySearchSnapshot, LibrarySearchSongRecord,
 };
 use anyhow::Result;
 use harubble_core::{
@@ -128,6 +128,108 @@ impl LibrarySearchService {
         } else {
             LibraryIndexState::NotReady
         };
+    }
+
+    /// 从当前磁盘快照读取"歌曲 CID → 专辑 CID"映射。
+    ///
+    /// 适用于需要将歌曲级 tag 变更回溯到所属专辑的场景（例如远端 tag registry
+    /// 增量同步）。由于 tag registry 本身不存储歌曲与专辑的父子关系，本方法
+    /// 通过读取搜索快照来重建这一映射。
+    ///
+    /// # 返回值
+    /// - `Some(map)` 当前存在可读的搜索快照，返回快照中所有歌曲的 CID 到专辑
+    ///   CID 的映射。
+    /// - `None` 快照缺失或读取失败，调用方应回退为全量重建。
+    ///
+    /// # 注意
+    /// - 该方法不会阻塞主状态锁；读取操作在 `spawn_blocking` 中执行，避免同步
+    ///   IO 影响 tokio 调度。
+    pub(crate) async fn current_song_album_map(
+        &self,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        let base_dir = self.base_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            let snapshot = load_library_search_snapshot(&base_dir).ok().flatten()?;
+            let mut map = std::collections::HashMap::with_capacity(snapshot.songs.len());
+            for song in &snapshot.songs {
+                map.insert(song.song_cid.clone(), song.album_cid.clone());
+            }
+            Some(map)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    /// 应用一批增量 tag 变更到活跃索引与磁盘快照。
+    ///
+    /// 用于远端 tag registry 同步或本地 tag 编辑仅影响 tag_values 字段的场景：
+    /// 只重建受影响专辑的 pinyin 派生字段与 tag_values，然后调用 Tantivy 的
+    /// `upsert_albums` 原子替换文档；成功后原地更新磁盘快照对应记录，避免下次
+    /// 启动时读取到过期的 tag 内容。
+    ///
+    /// # 参数
+    /// - `album_updates`：受影响专辑的新版记录及其所属歌曲的新版记录。
+    ///
+    /// # 返回值
+    /// - `Ok(true)` 增量成功。
+    /// - `Ok(false)` 当前无活跃索引 / 快照，调用方应触发全量重建。
+    /// - `Err(...)` 增量过程中发生错误（Tantivy 写入失败 / 快照持久化失败等），
+    ///   调用方应记录日志并回退到全量重建。
+    ///
+    /// # 注意
+    /// - 不改动 `build_generation`，增量搭乘当前活跃版本；
+    /// - 若在写入过程中 `inventory_version` 发生漂移（例如全量重建刚刚完成），
+    ///   仅跳过快照持久化，Tantivy 侧仍会应用变更，下次全量重建将修复快照。
+    pub(crate) async fn apply_incremental_tag_update(
+        &self,
+        album_updates: Vec<(LibrarySearchAlbumRecord, Vec<LibrarySearchSongRecord>)>,
+    ) -> Result<bool> {
+        let (active_index, snapshot_meta) = {
+            let state = self.state.lock().await;
+            let Some(index) = state.active_index.clone() else {
+                return Ok(false);
+            };
+            let Some(inventory_version) = state.last_ready_inventory_version.clone() else {
+                return Ok(false);
+            };
+            let Some(root_output_dir) = state.last_ready_output_dir.clone() else {
+                return Ok(false);
+            };
+            (index, (root_output_dir, inventory_version))
+        };
+
+        let base_dir = self.base_dir.clone();
+        let updates_for_index = album_updates.clone();
+        let (_root_output_dir, inventory_version_for_snapshot) = snapshot_meta;
+
+        let write_result = tokio::task::spawn_blocking(move || -> Result<()> {
+            active_index.upsert_albums(&updates_for_index)?;
+            if let Some(mut snapshot) = load_library_search_snapshot(&base_dir)? {
+                if snapshot.inventory_version == inventory_version_for_snapshot {
+                    for (album, songs) in &album_updates {
+                        if let Some(idx) = snapshot
+                            .albums
+                            .iter()
+                            .position(|a| a.album_cid == album.album_cid)
+                        {
+                            snapshot.albums[idx] = album.clone();
+                        } else {
+                            snapshot.albums.push(album.clone());
+                        }
+                        snapshot.songs.retain(|s| s.album_cid != album.album_cid);
+                        snapshot.songs.extend(songs.iter().cloned());
+                    }
+                    save_library_search_snapshot(&base_dir, &snapshot)?;
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking join failed: {e}"))?;
+
+        write_result?;
+        Ok(true)
     }
 
     pub(crate) async fn search(

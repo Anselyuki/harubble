@@ -4,7 +4,9 @@ use crate::search::scoring::{
     collect_matched_fields, compact_ascii_query, compare_scored_items, escape_query_text,
     normalize_query, rank_search_document, ScoredSearchItem,
 };
-use crate::search::snapshot::{inventory_index_dir, LibrarySearchSnapshot};
+use crate::search::snapshot::{
+    inventory_index_dir, LibrarySearchAlbumRecord, LibrarySearchSnapshot, LibrarySearchSongRecord,
+};
 use anyhow::{Context, Result};
 use harubble_core::{
     LibrarySearchScope, SearchLibraryRequest, SearchLibraryResultItem, SearchLibraryResultKind,
@@ -133,7 +135,146 @@ impl LibrarySearchIndex {
         })
     }
 
-    /// PLACEHOLDER_IMPL_CONTINUED
+    /// 增量替换指定 album_cid 的全部文档（album + 所属 songs）。
+    ///
+    /// 使用 Tantivy 的 delete_term + add_document 序列在单次 commit 内完成：
+    /// 先按 album_cid 删除所有旧文档（album 主文档 + 所有 song 子文档），
+    /// 再写入新的 album 记录与 song 记录。适用于单个专辑的 tag / 元数据更新，
+    /// 避免为局部变更触发全量重建。
+    ///
+    /// # 副作用
+    /// - 单次 commit 更改索引；调用方无需再手动 commit
+    /// - commit 后自动 reload reader，后续 search() 立即可见新文档
+    ///
+    /// # 错误
+    /// 任一步骤失败（writer 打开 / add_document / commit / reload）均返回错误，
+    /// 调用方应视失败为不可回滚状态并触发全量重建兜底。
+    pub(crate) fn upsert_album(
+        &self,
+        album: &LibrarySearchAlbumRecord,
+        songs: &[LibrarySearchSongRecord],
+    ) -> Result<()> {
+        let mut writer = self.index.writer(15_000_000)?;
+        writer.delete_term(Term::from_field_text(
+            self.fields.album_cid,
+            &album.album_cid,
+        ));
+        let _ = writer.add_document(doc!(
+            self.fields.kind => "album",
+            self.fields.album_cid => album.album_cid.clone(),
+            self.fields.song_cid => "",
+            self.fields.album_title => album.album_title.clone(),
+            self.fields.album_title_display => album.album_title.clone(),
+            self.fields.song_title => "",
+            self.fields.artist_line => album.artist_line.clone().unwrap_or_default(),
+            self.fields.intro => album.intro.clone().unwrap_or_default(),
+            self.fields.belong => album.belong.clone().unwrap_or_default(),
+            self.fields.album_title_pinyin_full => album.album_title_pinyin_full.clone().unwrap_or_default(),
+            self.fields.album_title_pinyin_initials => album.album_title_pinyin_initials.clone().unwrap_or_default(),
+            self.fields.song_title_pinyin_full => "",
+            self.fields.song_title_pinyin_initials => "",
+            self.fields.artist_line_pinyin_full => album.artist_line_pinyin_full.clone().unwrap_or_default(),
+            self.fields.artist_line_pinyin_initials => album.artist_line_pinyin_initials.clone().unwrap_or_default(),
+            self.fields.belong_pinyin_full => album.belong_pinyin_full.clone().unwrap_or_default(),
+            self.fields.belong_pinyin_initials => album.belong_pinyin_initials.clone().unwrap_or_default(),
+            self.fields.tag_values => album.tag_values.clone().unwrap_or_default(),
+            self.fields.tag_values_pinyin_full => album.tag_values_pinyin_full.clone().unwrap_or_default(),
+            self.fields.tag_values_pinyin_initials => album.tag_values_pinyin_initials.clone().unwrap_or_default(),
+        ));
+        for song in songs {
+            let _ = writer.add_document(doc!(
+                self.fields.kind => "song",
+                self.fields.album_cid => song.album_cid.clone(),
+                self.fields.song_cid => song.song_cid.clone(),
+                self.fields.album_title => "",
+                self.fields.album_title_display => song.album_title.clone(),
+                self.fields.song_title => song.song_title.clone(),
+                self.fields.artist_line => song.artist_line.clone().unwrap_or_default(),
+                self.fields.intro => "",
+                self.fields.belong => "",
+                self.fields.album_title_pinyin_full => "",
+                self.fields.album_title_pinyin_initials => "",
+                self.fields.song_title_pinyin_full => song.song_title_pinyin_full.clone().unwrap_or_default(),
+                self.fields.song_title_pinyin_initials => song.song_title_pinyin_initials.clone().unwrap_or_default(),
+                self.fields.artist_line_pinyin_full => song.artist_line_pinyin_full.clone().unwrap_or_default(),
+                self.fields.artist_line_pinyin_initials => song.artist_line_pinyin_initials.clone().unwrap_or_default(),
+                self.fields.belong_pinyin_full => "",
+                self.fields.belong_pinyin_initials => "",
+                self.fields.tag_values => song.tag_values.clone().unwrap_or_default(),
+                self.fields.tag_values_pinyin_full => song.tag_values_pinyin_full.clone().unwrap_or_default(),
+                self.fields.tag_values_pinyin_initials => song.tag_values_pinyin_initials.clone().unwrap_or_default(),
+            ));
+        }
+        writer.commit()?;
+        self.reader.reload()?;
+        Ok(())
+    }
+
+    /// 批量增量替换多个专辑的文档。
+    ///
+    /// 语义等价于依次调用 `upsert_album`，但在一次 commit 内完成，
+    /// 减少 fsync 开销与 reader reload 次数。任一专辑写入失败即整批失败。
+    pub(crate) fn upsert_albums(
+        &self,
+        updates: &[(LibrarySearchAlbumRecord, Vec<LibrarySearchSongRecord>)],
+    ) -> Result<()> {
+        let mut writer = self.index.writer(50_000_000)?;
+        for (album, songs) in updates {
+            writer.delete_term(Term::from_field_text(
+                self.fields.album_cid,
+                &album.album_cid,
+            ));
+            let _ = writer.add_document(doc!(
+                self.fields.kind => "album",
+                self.fields.album_cid => album.album_cid.clone(),
+                self.fields.song_cid => "",
+                self.fields.album_title => album.album_title.clone(),
+                self.fields.album_title_display => album.album_title.clone(),
+                self.fields.song_title => "",
+                self.fields.artist_line => album.artist_line.clone().unwrap_or_default(),
+                self.fields.intro => album.intro.clone().unwrap_or_default(),
+                self.fields.belong => album.belong.clone().unwrap_or_default(),
+                self.fields.album_title_pinyin_full => album.album_title_pinyin_full.clone().unwrap_or_default(),
+                self.fields.album_title_pinyin_initials => album.album_title_pinyin_initials.clone().unwrap_or_default(),
+                self.fields.song_title_pinyin_full => "",
+                self.fields.song_title_pinyin_initials => "",
+                self.fields.artist_line_pinyin_full => album.artist_line_pinyin_full.clone().unwrap_or_default(),
+                self.fields.artist_line_pinyin_initials => album.artist_line_pinyin_initials.clone().unwrap_or_default(),
+                self.fields.belong_pinyin_full => album.belong_pinyin_full.clone().unwrap_or_default(),
+                self.fields.belong_pinyin_initials => album.belong_pinyin_initials.clone().unwrap_or_default(),
+                self.fields.tag_values => album.tag_values.clone().unwrap_or_default(),
+                self.fields.tag_values_pinyin_full => album.tag_values_pinyin_full.clone().unwrap_or_default(),
+                self.fields.tag_values_pinyin_initials => album.tag_values_pinyin_initials.clone().unwrap_or_default(),
+            ));
+            for song in songs {
+                let _ = writer.add_document(doc!(
+                    self.fields.kind => "song",
+                    self.fields.album_cid => song.album_cid.clone(),
+                    self.fields.song_cid => song.song_cid.clone(),
+                    self.fields.album_title => "",
+                    self.fields.album_title_display => song.album_title.clone(),
+                    self.fields.song_title => song.song_title.clone(),
+                    self.fields.artist_line => song.artist_line.clone().unwrap_or_default(),
+                    self.fields.intro => "",
+                    self.fields.belong => "",
+                    self.fields.album_title_pinyin_full => "",
+                    self.fields.album_title_pinyin_initials => "",
+                    self.fields.song_title_pinyin_full => song.song_title_pinyin_full.clone().unwrap_or_default(),
+                    self.fields.song_title_pinyin_initials => song.song_title_pinyin_initials.clone().unwrap_or_default(),
+                    self.fields.artist_line_pinyin_full => song.artist_line_pinyin_full.clone().unwrap_or_default(),
+                    self.fields.artist_line_pinyin_initials => song.artist_line_pinyin_initials.clone().unwrap_or_default(),
+                    self.fields.belong_pinyin_full => "",
+                    self.fields.belong_pinyin_initials => "",
+                    self.fields.tag_values => song.tag_values.clone().unwrap_or_default(),
+                    self.fields.tag_values_pinyin_full => song.tag_values_pinyin_full.clone().unwrap_or_default(),
+                    self.fields.tag_values_pinyin_initials => song.tag_values_pinyin_initials.clone().unwrap_or_default(),
+                ));
+            }
+        }
+        writer.commit()?;
+        self.reader.reload()?;
+        Ok(())
+    }
 
     pub(crate) fn open(base_dir: &Path, inventory_version: &str) -> Result<Self> {
         let index_dir = inventory_index_dir(base_dir, inventory_version);
