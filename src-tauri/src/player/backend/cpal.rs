@@ -950,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn output_config_accepts_non_f32_exact_matches() {
+    fn output_config_prefers_highest_precision_integer_exact_match() {
         let source = AudioFormat {
             channels: 2,
             sample_rate: 48_000,
@@ -964,9 +964,27 @@ mod tests {
 
         let selected = choose_output_config_from_ranges(None, &configs, source).expect("config");
 
-        assert_eq!(selected.sample_format(), SampleFormat::I16);
+        assert_eq!(selected.sample_format(), SampleFormat::I32);
         assert_eq!(selected.channels(), 2);
         assert_eq!(selected.sample_rate(), 48_000);
+    }
+
+    #[test]
+    fn output_config_prefers_24bit_over_16bit_exact_match() {
+        let source = AudioFormat {
+            channels: 2,
+            sample_rate: 48_000,
+            duration_secs: 0.0,
+            bits_per_sample: Some(24),
+        };
+        let configs = vec![
+            config(2, 48_000, 48_000, SampleFormat::I16),
+            config(2, 48_000, 48_000, SampleFormat::I24),
+        ];
+
+        let selected = choose_output_config_from_ranges(None, &configs, source).expect("config");
+
+        assert_eq!(selected.sample_format(), SampleFormat::I24);
     }
 
     #[test]

@@ -15,20 +15,22 @@ pub(crate) const OUTPUT_SMOOTHING_FRAMES: usize = 64;
 /// 返回 CPAL 采样格式的优先级序号。
 ///
 /// 序号越小越优先；不受支持的格式返回 `None`，用于在候选列表中过滤掉不可用格式。
+/// 播放链路内部使用 `f32`，因此优先选择无需量化的浮点格式；整数格式按位深
+/// 从高到低排列，避免设备同时提供多种整数格式时主动降到 16 位或 8 位输出。
 pub(crate) fn sample_format_priority(format: SampleFormat) -> Option<usize> {
     match format {
         SampleFormat::F32 => Some(0),
         SampleFormat::F64 => Some(1),
-        SampleFormat::I16 => Some(2),
-        SampleFormat::U16 => Some(3),
-        SampleFormat::I24 => Some(4),
-        SampleFormat::U24 => Some(5),
-        SampleFormat::I32 => Some(6),
-        SampleFormat::U32 => Some(7),
-        SampleFormat::I8 => Some(8),
-        SampleFormat::U8 => Some(9),
-        SampleFormat::I64 => Some(10),
-        SampleFormat::U64 => Some(11),
+        SampleFormat::I64 => Some(2),
+        SampleFormat::U64 => Some(3),
+        SampleFormat::I32 => Some(4),
+        SampleFormat::U32 => Some(5),
+        SampleFormat::I24 => Some(6),
+        SampleFormat::U24 => Some(7),
+        SampleFormat::I16 => Some(8),
+        SampleFormat::U16 => Some(9),
+        SampleFormat::I8 => Some(10),
+        SampleFormat::U8 => Some(11),
         _ => None,
     }
 }
