@@ -190,11 +190,11 @@ export async function playSong(
 }
 
 export async function pausePlayback(): Promise<void> {
-  return invoke('pause_playback');
+  return invokePlayback<void>('pause_playback');
 }
 
 export async function resumePlayback(): Promise<void> {
-  return invoke('resume_playback');
+  return invokePlayback<void>('resume_playback');
 }
 
 export async function seekCurrentPlayback(

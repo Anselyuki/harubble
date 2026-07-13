@@ -49,54 +49,138 @@ export interface SettingsState {
   suspendDirtyTracking: number;
 }
 
+const SCALAR_DIRTY_FIELDS = [
+  'format',
+  'outputDir',
+  'downloadLyrics',
+  'notifyOnDownloadComplete',
+  'notifyOnPlaybackChange',
+  'logLevel',
+  'locale',
+] as const;
+
+function createInitialState(): SettingsState {
+  return {
+    format: 'flac',
+    outputDir: '',
+    downloadLyrics: true,
+    notifyOnDownloadComplete: true,
+    notifyOnPlaybackChange: true,
+    logLevel: 'error',
+    locale: 'zh-CN',
+    volume: 1,
+    themePresetId: DEFAULT_THEME_PREFERENCES.presetId,
+    themeCustomColors: {},
+    colorScheme: DEFAULT_THEME_PREFERENCES.colorScheme ?? 'auto',
+    dynamicAlbumAccent: DEFAULT_THEME_PREFERENCES.dynamicAlbumAccent ?? true,
+    settingsLogRefreshToken: 0,
+    prefsReady: false,
+    isSaving: false,
+    persistedSnapshot: '',
+    lastSaveFailedSnapshot: '',
+    dirty: {
+      format: false,
+      outputDir: false,
+      downloadLyrics: false,
+      notifyOnDownloadComplete: false,
+      notifyOnPlaybackChange: false,
+      logLevel: false,
+      locale: false,
+      theme: false,
+    },
+    suspendDirtyTracking: 0,
+  };
+}
+
 function normalizeThemePreferences(preferences: AppPreferences) {
   return preferences.theme ?? DEFAULT_THEME_PREFERENCES;
 }
 
+function getStateSnapshot(state: SettingsState): string {
+  return JSON.stringify({
+    format: state.format,
+    outputDir: state.outputDir,
+    downloadLyrics: state.downloadLyrics,
+    notifyOnDownloadComplete: state.notifyOnDownloadComplete,
+    notifyOnPlaybackChange: state.notifyOnPlaybackChange,
+    logLevel: state.logLevel,
+    locale: state.locale,
+    theme: {
+      presetId: state.themePresetId,
+      customColors: state.themeCustomColors,
+      colorScheme: state.colorScheme,
+      dynamicAlbumAccent: state.dynamicAlbumAccent,
+    },
+  });
+}
+
+function getThemeSnapshotForState(state: SettingsState): string {
+  return JSON.stringify({
+    presetId: state.themePresetId,
+    customColors: state.themeCustomColors,
+    colorScheme: state.colorScheme,
+    dynamicAlbumAccent: state.dynamicAlbumAccent,
+  });
+}
+
+function getPreferencesSnapshot(preferences: AppPreferences): string {
+  return JSON.stringify({
+    format: preferences.outputFormat,
+    outputDir: preferences.outputDir,
+    downloadLyrics: preferences.downloadLyrics,
+    notifyOnDownloadComplete: preferences.notifyOnDownloadComplete,
+    notifyOnPlaybackChange: preferences.notifyOnPlaybackChange,
+    logLevel: preferences.logLevel,
+    locale: preferences.locale,
+    theme: preferences.theme ?? DEFAULT_THEME_PREFERENCES,
+  });
+}
+
+/**
+ * 创建应用设置状态控制器。
+ *
+ * 该控制器负责持有偏好设置的响应式状态、脏字段追踪、
+ * 快照差异驱动的自动保存以及后端 hydration。调用方通过
+ * `state` getter 拿到 `$state` 代理用于双向绑定，
+ * 通过 `init()` 建立 dirty tracking / auto-save 副作用，
+ * 通过 `dispose()` 拆除。所有状态变更规则（脏标记、保存快照、
+ * 失败重试抑制）都在这里聚合，`appRuntime` 只做装配。
+ */
 export function createSettingsController(deps: SettingsControllerDeps) {
-  let initialized = false;
+  const state = $state<SettingsState>(createInitialState());
+
+  const lastObservedSettings = {
+    format: state.format,
+    outputDir: state.outputDir,
+    downloadLyrics: state.downloadLyrics,
+    notifyOnDownloadComplete: state.notifyOnDownloadComplete,
+    notifyOnPlaybackChange: state.notifyOnPlaybackChange,
+    logLevel: state.logLevel,
+    locale: state.locale,
+    theme: getThemeSnapshotForState(state),
+  };
+
   let currentSavePromise: Promise<boolean> | null = null;
+  let rootCleanup: (() => void) | null = null;
 
-  function init() {
-    if (initialized) return;
-    initialized = true;
-  }
-
-  function getSnapshot(state: SettingsState): string {
-    return JSON.stringify({
-      format: state.format,
-      outputDir: state.outputDir,
-      downloadLyrics: state.downloadLyrics,
-      notifyOnDownloadComplete: state.notifyOnDownloadComplete,
-      notifyOnPlaybackChange: state.notifyOnPlaybackChange,
-      logLevel: state.logLevel,
-      locale: state.locale,
-      theme: {
-        presetId: state.themePresetId,
-        customColors: state.themeCustomColors,
-        colorScheme: state.colorScheme,
-        dynamicAlbumAccent: state.dynamicAlbumAccent,
-      },
-    });
-  }
-
-  function getPreferencesSnapshot(preferences: AppPreferences): string {
-    return JSON.stringify({
-      format: preferences.outputFormat,
-      outputDir: preferences.outputDir,
-      downloadLyrics: preferences.downloadLyrics,
-      notifyOnDownloadComplete: preferences.notifyOnDownloadComplete,
-      notifyOnPlaybackChange: preferences.notifyOnPlaybackChange,
-      logLevel: preferences.logLevel,
-      locale: preferences.locale,
-      theme: preferences.theme ?? DEFAULT_THEME_PREFERENCES,
-    });
-  }
-
-  async function hydratePreferences(
-    state: SettingsState,
-    options: HydrateSettingsOptions = {}
+  function applyNormalizedTheme(
+    theme: ReturnType<typeof normalizeThemePreferences>
   ) {
+    if (state.themePresetId !== theme.presetId) {
+      state.themePresetId = theme.presetId;
+    }
+    const nextCustomColors = theme.customColors;
+    if (
+      JSON.stringify(state.themeCustomColors) !==
+      JSON.stringify(nextCustomColors)
+    ) {
+      state.themeCustomColors = { ...nextCustomColors };
+    }
+    state.colorScheme = theme.colorScheme ?? 'auto';
+    state.dynamicAlbumAccent = theme.dynamicAlbumAccent ?? true;
+  }
+
+  async function hydratePreferences(options: HydrateSettingsOptions = {}) {
     try {
       const prefs = await deps.getPreferences();
       if (options.shouldDispose?.()) {
@@ -126,7 +210,7 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       }
       const theme = normalizeThemePreferences(prefs);
       if (!state.dirty.theme) {
-        applyNormalizedTheme(state, theme);
+        applyNormalizedTheme(theme);
       }
       state.volume = prefs.volume;
       deps.onLocaleChanged?.(prefs.locale);
@@ -141,51 +225,33 @@ export function createSettingsController(deps: SettingsControllerDeps) {
       }, 0);
     } catch {
       if (!options.shouldDispose?.()) {
-        state.persistedSnapshot = getSnapshot(state);
+        state.persistedSnapshot = getStateSnapshot(state);
         state.lastSaveFailedSnapshot = '';
         state.prefsReady = true;
       }
     }
   }
 
-  function applyNormalizedTheme(
-    state: SettingsState,
-    theme: ReturnType<typeof normalizeThemePreferences>
-  ) {
-    if (state.themePresetId !== theme.presetId) {
-      state.themePresetId = theme.presetId;
-    }
-    const nextCustomColors = theme.customColors;
-    if (
-      JSON.stringify(state.themeCustomColors) !==
-      JSON.stringify(nextCustomColors)
-    ) {
-      state.themeCustomColors = { ...nextCustomColors };
-    }
-    state.colorScheme = theme.colorScheme ?? 'auto';
-    state.dynamicAlbumAccent = theme.dynamicAlbumAccent ?? true;
-  }
-
-  function applyDefaultOutputDir(state: SettingsState, value: string) {
+  function applyDefaultOutputDir(value: string) {
     if (value && !state.outputDir) {
       state.outputDir = value;
     }
   }
 
-  async function savePreferences(state: SettingsState): Promise<boolean> {
+  async function savePreferences(): Promise<boolean> {
     if (state.isSaving && currentSavePromise) {
       await currentSavePromise;
-      const nextSnapshot = getSnapshot(state);
+      const nextSnapshot = getStateSnapshot(state);
       if (nextSnapshot === state.persistedSnapshot) {
         return true;
       }
       if (nextSnapshot === state.lastSaveFailedSnapshot) {
         return false;
       }
-      return savePreferences(state);
+      return savePreferences();
     }
 
-    const requestSnapshot = getSnapshot(state);
+    const requestSnapshot = getStateSnapshot(state);
     // volume 字段由播放器子系统（set_playback_volume）单独持久化，也不在设置面板
     // UI 里编辑。后端 `set_preferences` 命令会忽略请求里的 volume 字段并保留当前
     // 后端值，因此这里只把本地缓存的 `state.volume` 一并传上去做兜底，防止未来
@@ -211,8 +277,9 @@ export function createSettingsController(deps: SettingsControllerDeps) {
     currentSavePromise = (async () => {
       try {
         const updated = await deps.setPreferences(prefs);
-        const currentSnapshot = getSnapshot(state);
+        const currentSnapshot = getStateSnapshot(state);
         if (currentSnapshot === requestSnapshot) {
+          state.suspendDirtyTracking += 1;
           state.format = updated.outputFormat;
           state.outputDir = updated.outputDir;
           state.downloadLyrics = updated.downloadLyrics;
@@ -221,8 +288,14 @@ export function createSettingsController(deps: SettingsControllerDeps) {
           state.logLevel = updated.logLevel;
           state.locale = updated.locale;
           const updatedTheme = normalizeThemePreferences(updated);
-          applyNormalizedTheme(state, updatedTheme);
-          state.persistedSnapshot = getSnapshot(state);
+          applyNormalizedTheme(updatedTheme);
+          state.persistedSnapshot = getStateSnapshot(state);
+          setTimeout(() => {
+            state.suspendDirtyTracking = Math.max(
+              0,
+              state.suspendDirtyTracking - 1
+            );
+          }, 0);
         } else {
           state.persistedSnapshot = requestSnapshot;
         }
@@ -254,17 +327,76 @@ export function createSettingsController(deps: SettingsControllerDeps) {
     return currentSavePromise;
   }
 
-  function handleAppError(state: SettingsState, settingsOpen: boolean) {
+  function handleAppError(settingsOpen: boolean) {
     if (settingsOpen) {
       state.settingsLogRefreshToken += 1;
     }
   }
 
+  /**
+   * 建立 dirty tracking 与 auto-save 副作用。
+   *
+   * 必须在 Svelte 组件生命周期作用域内调用，会在 `dispose()` 时统一清理。
+   * 多次调用只有第一次生效，后续调用为空操作。
+   */
+  function init() {
+    if (rootCleanup) return;
+    rootCleanup = $effect.root(() => {
+      $effect(() => {
+        const observed = lastObservedSettings as Record<string, unknown>;
+        const stateRef = state as unknown as Record<string, unknown>;
+        if (state.suspendDirtyTracking > 0) {
+          for (const field of SCALAR_DIRTY_FIELDS) {
+            observed[field] = stateRef[field];
+          }
+          return;
+        }
+        for (const field of SCALAR_DIRTY_FIELDS) {
+          const value = stateRef[field];
+          if (value !== observed[field]) {
+            state.dirty[field] = true;
+            observed[field] = value;
+          }
+        }
+      });
+
+      $effect(() => {
+        const value = getThemeSnapshotForState(state);
+        if (state.suspendDirtyTracking > 0) {
+          lastObservedSettings.theme = value;
+          return;
+        }
+        if (value !== lastObservedSettings.theme) {
+          state.dirty.theme = true;
+          lastObservedSettings.theme = value;
+        }
+      });
+
+      $effect(() => {
+        const {
+          persistedSnapshot,
+          isSaving,
+          lastSaveFailedSnapshot,
+          prefsReady,
+        } = state;
+        if (!prefsReady || isSaving) return;
+        const currentSnapshot = getStateSnapshot(state);
+        if (currentSnapshot === persistedSnapshot) return;
+        if (currentSnapshot === lastSaveFailedSnapshot) return;
+        void savePreferences();
+      });
+    });
+  }
+
   function dispose() {
-    initialized = false;
+    rootCleanup?.();
+    rootCleanup = null;
   }
 
   return {
+    get state() {
+      return state;
+    },
     init,
     dispose,
     hydratePreferences,
@@ -273,3 +405,5 @@ export function createSettingsController(deps: SettingsControllerDeps) {
     handleAppError,
   };
 }
+
+export type SettingsController = ReturnType<typeof createSettingsController>;

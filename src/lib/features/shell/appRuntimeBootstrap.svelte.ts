@@ -10,7 +10,6 @@ import type {
   AppErrorEvent,
 } from '$lib/types';
 import type { AppEventMap } from '$lib/appEvents';
-import type { SettingsState } from '$lib/features/shell/settings.svelte';
 import * as m from '$lib/paraglide/messages.js';
 
 /**
@@ -22,13 +21,12 @@ import * as m from '$lib/paraglide/messages.js';
 export interface BootstrapDeps {
   warmCacheManager: () => Promise<void>;
   settingsController: {
-    hydratePreferences: (
-      state: SettingsState,
-      options: { shouldDispose?: () => boolean }
-    ) => Promise<void>;
-    applyDefaultOutputDir: (state: SettingsState, dir: string) => void;
+    hydratePreferences: (options: {
+      shouldDispose?: () => boolean;
+    }) => Promise<void>;
+    applyDefaultOutputDir: (dir: string) => void;
+    readonly state: { outputDir: string };
   };
-  settingsState: SettingsState;
   libraryController: {
     loadAlbums: (options: {
       shouldDispose?: () => boolean;
@@ -131,14 +129,14 @@ export async function bootstrapApp(
   }
 
   try {
-    await deps.settingsController.hydratePreferences(deps.settingsState, {
+    await deps.settingsController.hydratePreferences({
       shouldDispose,
     });
   } catch {
     // Preferences hydration failure is already tolerated in controller.
   }
 
-  const defaultDirPromise = deps.settingsState.outputDir
+  const defaultDirPromise = deps.settingsController.state.outputDir
     ? Promise.resolve('')
     : deps.getDefaultOutputDir().catch(() => '');
 
@@ -152,10 +150,7 @@ export async function bootstrapApp(
       return;
     }
     if (defaultDir) {
-      deps.settingsController.applyDefaultOutputDir(
-        deps.settingsState,
-        defaultDir
-      );
+      deps.settingsController.applyDefaultOutputDir(defaultDir);
     }
 
     try {
@@ -190,10 +185,7 @@ export async function bootstrapApp(
       return;
     }
     if (defaultDir) {
-      deps.settingsController.applyDefaultOutputDir(
-        deps.settingsState,
-        defaultDir
-      );
+      deps.settingsController.applyDefaultOutputDir(defaultDir);
     }
   }
 

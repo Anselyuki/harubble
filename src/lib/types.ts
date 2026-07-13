@@ -29,6 +29,21 @@ export interface LocalInventorySnapshot {
   lastError: string | null;
 }
 
+/**
+ * 本地库存扫描过程中由后端推送到前端的进度事件载荷。
+ *
+ * 对应 Rust 侧 `LocalInventoryScanProgressEvent`（`crates/harubble-core/src/local_inventory/mod.rs`），
+ * 通过 `local-inventory-scan-progress` 事件发布。
+ */
+export interface LocalInventoryScanProgressEvent {
+  rootOutputDir: string;
+  inventoryVersion: string;
+  filesScanned: number;
+  matchedTrackCount: number;
+  verifiedTrackCount: number;
+  currentPath: string | null;
+}
+
 export interface AlbumDownloadBadge {
   isDownloaded: boolean;
   downloadStatus: LocalTrackDownloadStatus;

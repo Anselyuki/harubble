@@ -4,7 +4,9 @@
 //! 主要服务于前端播放器、系统媒体控制和播放进度交互。
 
 use crate::app_state::AppState;
-use crate::player::{PlaybackContext, PlaybackError, PlaybackStartResult, PlayerState};
+use crate::player::{
+    PlaybackContext, PlaybackError, PlaybackErrorCode, PlaybackStartResult, PlayerState,
+};
 use tauri::State;
 
 /// 播放指定歌曲，并可携带封面地址与播放队列上下文。
@@ -32,20 +34,28 @@ pub async fn play_song(
 ///
 /// 适用于用户希望保留当前歌曲上下文与进度，但暂时停止声音输出的场景。
 /// 返回值在成功时为空；若当前并未处于可暂停的播放态，该接口会无副作用地返回成功。
-/// 调用方不需要先自行判断播放器状态，但应把“成功返回”理解为“已达到暂停目标”，而不是一定发生了状态切换。
+/// 调用方不需要先自行判断播放器状态，但应把”成功返回”理解为”已达到暂停目标”，而不是一定发生了状态切换。
+/// 失败时返回 `PlaybackError`，错误码为 `audio`（音频后端操作失败）。
 #[tauri::command]
-pub fn pause_playback(state: State<'_, AppState>) -> Result<(), String> {
-    state.player.pause().map_err(|e| e.to_string())
+pub fn pause_playback(state: State<'_, AppState>) -> Result<(), PlaybackError> {
+    state
+        .player
+        .pause()
+        .map_err(|e| PlaybackError::new(PlaybackErrorCode::Audio, e.to_string(), true, None))
 }
 
 /// 恢复当前已暂停的播放。
 ///
 /// 适用于暂停后继续播放当前歌曲的场景。
 /// 返回值在成功时为空；若当前没有可恢复的歌曲上下文，该接口会直接返回成功而不启动新播放。
-/// 若调用方需要“没有上下文时自动开始播放”，应显式改用 `play_song`，不要把该接口当作通用播放入口。
+/// 若调用方需要”没有上下文时自动开始播放”，应显式改用 `play_song`，不要把该接口当作通用播放入口。
+/// 失败时返回 `PlaybackError`，错误码为 `audio`（音频后端操作失败）。
 #[tauri::command]
-pub fn resume_playback(state: State<'_, AppState>) -> Result<(), String> {
-    state.player.resume().map_err(|e| e.to_string())
+pub fn resume_playback(state: State<'_, AppState>) -> Result<(), PlaybackError> {
+    state
+        .player
+        .resume()
+        .map_err(|e| PlaybackError::new(PlaybackErrorCode::Audio, e.to_string(), true, None))
 }
 
 /// 将当前播放进度跳转到指定秒数，并返回更新后的总时长。

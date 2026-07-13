@@ -57,8 +57,7 @@ import {
   invalidateByTag,
   warmCacheManager,
 } from '$lib/cache';
-import type { AppErrorEvent, LogLevel, OutputFormat } from '$lib/types';
-import { DEFAULT_THEME_PREFERENCES } from '$lib/themePresets';
+import type { AppErrorEvent } from '$lib/types';
 import { envStore } from '$lib/features/env/store.svelte';
 import { shellStore } from '$lib/features/shell/store.svelte';
 import { navigationStack } from './navigation.svelte';
@@ -87,7 +86,7 @@ import {
   bootstrapApp,
   subscribeToTauriEvents,
 } from '$lib/features/shell/appRuntimeBootstrap.svelte';
-import { localeState, type Locale } from '$lib/i18n';
+import { localeState } from '$lib/i18n';
 import * as m from '$lib/paraglide/messages.js';
 import { toast } from 'svelte-sonner';
 import { createSelectionManager } from './selectionManager.svelte';
@@ -191,9 +190,9 @@ export function createAppRuntime() {
       });
     },
     getDownloadOptions: () => ({
-      outputDir: settingsState.outputDir,
-      format: settingsState.format,
-      downloadLyrics: settingsState.downloadLyrics,
+      outputDir: settingsController.state.outputDir,
+      format: settingsController.state.format,
+      downloadLyrics: settingsController.state.downloadLyrics,
     }),
     notifyInfo,
     notifyError,
@@ -267,10 +266,10 @@ export function createAppRuntime() {
     getCurrentView: () => shellStore.currentView,
     getFullscreenOpen: () => playerController.fullscreenOpen,
     getSettingsTheme: () => ({
-      presetId: settingsState.themePresetId,
-      customColors: settingsState.themeCustomColors,
-      colorScheme: settingsState.colorScheme,
-      dynamicAlbumAccent: settingsState.dynamicAlbumAccent,
+      presetId: settingsController.state.themePresetId,
+      customColors: settingsController.state.themeCustomColors,
+      colorScheme: settingsController.state.colorScheme,
+      dynamicAlbumAccent: settingsController.state.dynamicAlbumAccent,
     }),
   });
 
@@ -311,55 +310,6 @@ export function createAppRuntime() {
   );
   const contentEl = $derived(albumStageMotionController.contentElement);
 
-  // --- 设置状态 ---
-
-  const settingsState = $state({
-    format: 'flac' as OutputFormat,
-    outputDir: '',
-    downloadLyrics: true,
-    notifyOnDownloadComplete: true,
-    notifyOnPlaybackChange: true,
-    logLevel: 'error' as LogLevel,
-    locale: 'zh-CN' as Locale,
-    volume: 1,
-    themePresetId: DEFAULT_THEME_PREFERENCES.presetId,
-    themeCustomColors: {},
-    colorScheme: DEFAULT_THEME_PREFERENCES.colorScheme ?? 'auto',
-    dynamicAlbumAccent: DEFAULT_THEME_PREFERENCES.dynamicAlbumAccent ?? true,
-    settingsLogRefreshToken: 0,
-    prefsReady: false,
-    isSaving: false,
-    persistedSnapshot: '',
-    lastSaveFailedSnapshot: '',
-    dirty: {
-      format: false,
-      outputDir: false,
-      downloadLyrics: false,
-      notifyOnDownloadComplete: false,
-      notifyOnPlaybackChange: false,
-      logLevel: false,
-      locale: false,
-      theme: false,
-    },
-    suspendDirtyTracking: 0,
-  });
-
-  const lastObservedSettings = {
-    format: settingsState.format,
-    outputDir: settingsState.outputDir,
-    downloadLyrics: settingsState.downloadLyrics,
-    notifyOnDownloadComplete: settingsState.notifyOnDownloadComplete,
-    notifyOnPlaybackChange: settingsState.notifyOnPlaybackChange,
-    logLevel: settingsState.logLevel,
-    locale: settingsState.locale,
-    theme: JSON.stringify({
-      presetId: settingsState.themePresetId,
-      customColors: settingsState.themeCustomColors,
-      colorScheme: settingsState.colorScheme,
-      dynamicAlbumAccent: settingsState.dynamicAlbumAccent,
-    }),
-  };
-
   // --- 本地派生 ---
 
   const activeLyricIndex = $derived.by(() => {
@@ -394,40 +344,13 @@ export function createAppRuntime() {
 
   // --- 本地辅助 ---
 
-  function getSettingsSnapshot() {
-    return JSON.stringify({
-      format: settingsState.format,
-      outputDir: settingsState.outputDir,
-      downloadLyrics: settingsState.downloadLyrics,
-      notifyOnDownloadComplete: settingsState.notifyOnDownloadComplete,
-      notifyOnPlaybackChange: settingsState.notifyOnPlaybackChange,
-      logLevel: settingsState.logLevel,
-      locale: settingsState.locale,
-      theme: {
-        presetId: settingsState.themePresetId,
-        customColors: settingsState.themeCustomColors,
-        colorScheme: settingsState.colorScheme,
-        dynamicAlbumAccent: settingsState.dynamicAlbumAccent,
-      },
-    });
-  }
-
-  function getThemeSettingsSnapshot() {
-    return JSON.stringify({
-      presetId: settingsState.themePresetId,
-      customColors: settingsState.themeCustomColors,
-      colorScheme: settingsState.colorScheme,
-      dynamicAlbumAccent: settingsState.dynamicAlbumAccent,
-    });
-  }
-
   function handleContentWheel(event: WheelEvent) {
     albumStageMotionController.handleContentWheel(event);
   }
 
   function handleAppErrorEvent(event: AppErrorEvent) {
     notifyError(event.message);
-    settingsController.handleAppError(settingsState, shellStore.settingsOpen);
+    settingsController.handleAppError(shellStore.settingsOpen);
   }
 
   async function invalidateInventoryCaches(
@@ -437,7 +360,7 @@ export function createAppRuntime() {
   }
 
   function handleOutputDirChange() {
-    return settingsController.savePreferences(settingsState);
+    return settingsController.savePreferences();
   }
 
   async function handleRefresh() {
@@ -466,57 +389,6 @@ export function createAppRuntime() {
     }
   }
 
-  // --- 设置 dirty tracking effects ---
-
-  const SCALAR_DIRTY_FIELDS = [
-    'format',
-    'outputDir',
-    'downloadLyrics',
-    'notifyOnDownloadComplete',
-    'notifyOnPlaybackChange',
-    'logLevel',
-    'locale',
-  ] as const;
-  $effect(() => {
-    const observed = lastObservedSettings as Record<string, unknown>;
-    const state = settingsState as unknown as Record<string, unknown>;
-    if (settingsState.suspendDirtyTracking > 0) {
-      for (const field of SCALAR_DIRTY_FIELDS) {
-        observed[field] = state[field];
-      }
-      return;
-    }
-    for (const field of SCALAR_DIRTY_FIELDS) {
-      const value = state[field];
-      if (value !== observed[field]) {
-        settingsState.dirty[field] = true;
-        observed[field] = value;
-      }
-    }
-  });
-
-  $effect(() => {
-    const value = getThemeSettingsSnapshot();
-    if (settingsState.suspendDirtyTracking > 0) {
-      lastObservedSettings.theme = value;
-      return;
-    }
-    if (value !== lastObservedSettings.theme) {
-      settingsState.dirty.theme = true;
-      lastObservedSettings.theme = value;
-    }
-  });
-
-  $effect(() => {
-    const { persistedSnapshot, isSaving, lastSaveFailedSnapshot, prefsReady } =
-      settingsState;
-    if (!prefsReady || isSaving) return;
-    const currentSnapshot = getSettingsSnapshot();
-    if (currentSnapshot === persistedSnapshot) return;
-    if (currentSnapshot === lastSaveFailedSnapshot) return;
-    void settingsController.savePreferences(settingsState);
-  });
-
   $effect(() => {
     albumStageMotionController.albumStageElement = albumStageElement;
   });
@@ -528,7 +400,6 @@ export function createAppRuntime() {
       {
         warmCacheManager,
         settingsController,
-        settingsState,
         libraryController,
         getDefaultOutputDir,
         getLocalInventorySnapshot,
@@ -581,6 +452,7 @@ export function createAppRuntime() {
     homeController.dispose();
     tagEditorController.dispose();
     searchController.dispose();
+    settingsController.dispose();
     navigationStack.clear();
     playerStateInitSeq += 1;
     playerStateHydratedFromEvent = false;
@@ -588,6 +460,7 @@ export function createAppRuntime() {
   }
 
   $effect(() => {
+    settingsController.init();
     libraryController.init();
     playerController.init();
     downloadController.init();
@@ -885,7 +758,9 @@ export function createAppRuntime() {
     toggleSidebar() {
       shellStore.toggleSidebar();
     },
-    settingsState,
+    get settingsState() {
+      return settingsController.state;
+    },
     shellStore,
     libraryController,
     playerController,

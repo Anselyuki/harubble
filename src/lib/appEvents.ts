@@ -5,6 +5,7 @@ import type {
   DownloadJobSnapshot,
   DownloadTaskProgressEvent,
   LocalInventorySnapshot,
+  LocalInventoryScanProgressEvent,
   AppErrorEvent,
 } from '$lib/types';
 
@@ -22,6 +23,7 @@ export interface AppEventMap {
   'download-task-progress': DownloadTaskProgressEvent;
   'app-error-recorded': AppErrorEvent;
   'local-inventory-state-changed': LocalInventorySnapshot;
+  'local-inventory-scan-progress': LocalInventoryScanProgressEvent;
   'homepage-belong-ready': void;
 }
 
