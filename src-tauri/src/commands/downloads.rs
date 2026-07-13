@@ -10,7 +10,45 @@ use harubble_core::download::model::{
     CreateDownloadJobRequest, DownloadJobSnapshot, DownloadManagerSnapshot,
 };
 use harubble_core::prepare_job;
+use std::fmt;
 use tauri::{AppHandle, State};
+
+// ─── 错误类型 ─────────────────────────────────────────────────────────────────
+
+/// 下载操作错误。
+///
+/// 实现 `Serialize`，可直接通过 Tauri IPC 序列化返回前端。
+/// 序列化格式：`{ "code": "<variant>", "detail": <payload> }`。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum DownloadError {
+    /// 指定的批次或任务 ID 不存在；不可重试。
+    NotFound { id: String },
+    /// 网络请求失败（prepare_job / API 调用）；可重试。
+    Network(String),
+    /// 文件系统或缓存 IO 失败；不可重试。
+    Io(String),
+    /// 批次或任务处于不支持该操作的状态；不可重试。
+    InvalidState { reason: String },
+    /// 其他内部错误；不可重试。
+    Internal(String),
+}
+
+impl fmt::Display for DownloadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DownloadError::NotFound { id } => write!(f, "下载批次或任务不存在: {id}"),
+            DownloadError::Network(msg) => write!(f, "网络请求失败: {msg}"),
+            DownloadError::Io(msg) => write!(f, "IO 操作失败: {msg}"),
+            DownloadError::InvalidState { reason } => write!(f, "状态不允许该操作: {reason}"),
+            DownloadError::Internal(msg) => write!(f, "内部错误: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for DownloadError {}
+
+// ─── 辅助函数 ─────────────────────────────────────────────────────────────────
 
 fn emit_download_state(app: &AppHandle, manager_snapshot: &DownloadManagerSnapshot) {
     emit_download_manager_state_changed(app, manager_snapshot);
@@ -19,15 +57,20 @@ fn emit_download_state(app: &AppHandle, manager_snapshot: &DownloadManagerSnapsh
     }
 }
 
+// ─── Commands ────────────────────────────────────────────────────────────────
+
 /// 清空播放器使用的音频缓存，并在清理前停止当前播放。
 ///
 /// 适用于用户手动清理缓存、排查缓存损坏，或需要强制释放本地音频缓存空间的场景。
 /// 返回值为本次实际移除的缓存条目数量。
 /// 该接口会先终止当前播放会话，再删除缓存文件；如果调用方只想结束播放而不清理缓存，应改用播放控制接口。
 #[tauri::command]
-pub fn clear_audio_cache(state: State<'_, AppState>) -> Result<u64, String> {
-    state.player.stop().map_err(|e| e.to_string())?;
-    audio_cache::clear_audio_cache().map_err(|e| e.to_string())
+pub fn clear_audio_cache(state: State<'_, AppState>) -> Result<u64, DownloadError> {
+    state
+        .player
+        .stop()
+        .map_err(|e| DownloadError::Internal(e.to_string()))?;
+    audio_cache::clear_audio_cache().map_err(|e| DownloadError::Io(e.to_string()))
 }
 
 /// 清空后端 API 响应缓存。
@@ -37,7 +80,7 @@ pub fn clear_audio_cache(state: State<'_, AppState>) -> Result<u64, String> {
 /// 该接口只影响内存中的 API 响应缓存，不会删除已完成下载的文件，也不会影响下载任务历史。
 /// 普通业务、播放、视觉资源与下载链路使用独立客户端，因此会同时清理全部资源域的响应缓存。
 #[tauri::command]
-pub fn clear_response_cache(state: State<'_, AppState>) -> Result<(), String> {
+pub fn clear_response_cache(state: State<'_, AppState>) -> Result<(), DownloadError> {
     state.clear_api_response_caches();
     Ok(())
 }
@@ -49,8 +92,10 @@ pub fn clear_response_cache(state: State<'_, AppState>) -> Result<(), String> {
 /// 成功时返回空值；若重建失败则保留原有客户端不变并返回错误。
 /// 普通业务、播放、视觉资源与下载链路使用独立客户端，因此会同时重建全部 HTTP 客户端。
 #[tauri::command]
-pub fn reset_http_client(state: State<'_, AppState>) -> Result<(), String> {
-    state.reset_http_clients()
+pub fn reset_http_client(state: State<'_, AppState>) -> Result<(), DownloadError> {
+    state
+        .reset_http_clients()
+        .map_err(|e| DownloadError::Internal(e.to_string()))
 }
 
 /// 创建新的下载批次，并按当前偏好覆盖输出目录。
@@ -63,7 +108,7 @@ pub async fn create_download_job(
     app: AppHandle,
     state: State<'_, AppState>,
     request: CreateDownloadJobRequest,
-) -> Result<DownloadJobSnapshot, String> {
+) -> Result<DownloadJobSnapshot, DownloadError> {
     let api = state.api_clients.download_api.clone();
     let preferences = state.preferences();
     let normalized_request = CreateDownloadJobRequest {
@@ -80,7 +125,7 @@ pub async fn create_download_job(
     };
     let prepared = prepare_job(&id_generator, &api, normalized_request)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DownloadError::Network(e.to_string()))?;
     let (job_snapshot, manager_snapshot) = {
         let mut service = state.download.download_service.lock().await;
         let job_snapshot = service.register_prepared_job(prepared);
@@ -105,7 +150,7 @@ pub async fn create_download_job(
 #[tauri::command]
 pub async fn list_download_jobs(
     state: State<'_, AppState>,
-) -> Result<DownloadManagerSnapshot, String> {
+) -> Result<DownloadManagerSnapshot, DownloadError> {
     let service = state.download.download_service.lock().await;
     Ok(service.snapshot())
 }
@@ -119,7 +164,7 @@ pub async fn list_download_jobs(
 pub async fn get_download_job(
     state: State<'_, AppState>,
     job_id: String,
-) -> Result<Option<DownloadJobSnapshot>, String> {
+) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let service = state.download.download_service.lock().await;
     Ok(service.get_job(&job_id))
 }
@@ -134,7 +179,7 @@ pub async fn cancel_download_job(
     app: AppHandle,
     state: State<'_, AppState>,
     job_id: String,
-) -> Result<Option<DownloadJobSnapshot>, String> {
+) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let (snapshot, manager_snapshot) = {
         let mut service = state.download.download_service.lock().await;
         let snapshot = service.cancel_job(&job_id);
@@ -164,7 +209,7 @@ pub async fn cancel_download_task(
     state: State<'_, AppState>,
     job_id: String,
     task_id: String,
-) -> Result<Option<DownloadJobSnapshot>, String> {
+) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let (snapshot, manager_snapshot) = {
         let mut service = state.download.download_service.lock().await;
         let snapshot = service.cancel_task(&job_id, &task_id);
@@ -193,7 +238,7 @@ pub async fn retry_download_job(
     app: AppHandle,
     state: State<'_, AppState>,
     job_id: String,
-) -> Result<Option<DownloadJobSnapshot>, String> {
+) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let (snapshot, manager_snapshot) = {
         let mut service = state.download.download_service.lock().await;
         let snapshot = service.retry_job(&job_id);
@@ -223,7 +268,7 @@ pub async fn retry_download_task(
     state: State<'_, AppState>,
     job_id: String,
     task_id: String,
-) -> Result<Option<DownloadJobSnapshot>, String> {
+) -> Result<Option<DownloadJobSnapshot>, DownloadError> {
     let (snapshot, manager_snapshot) = {
         let mut service = state.download.download_service.lock().await;
         let snapshot = service.retry_task(&job_id, &task_id);
@@ -251,7 +296,7 @@ pub async fn retry_download_task(
 pub async fn clear_download_history(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<usize, String> {
+) -> Result<usize, DownloadError> {
     let (removed_count, manager_snapshot) = {
         let mut service = state.download.download_service.lock().await;
         let removed_count = service.clear_history();

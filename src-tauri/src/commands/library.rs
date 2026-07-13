@@ -6,7 +6,39 @@
 use crate::app_state::AppState;
 use crate::theme;
 use base64::Engine;
+use std::fmt;
 use tauri::State;
+
+// ─── 错误类型 ─────────────────────────────────────────────────────────────────
+
+/// 媒体库操作错误。
+///
+/// 实现 `Serialize`，可直接通过 Tauri IPC 序列化返回前端。
+/// 序列化格式：`{ "code": "<variant>", "detail": <payload> }`。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum LibraryError {
+    /// HTTP / API 请求失败，属于可重试错误。
+    Network(String),
+    /// 专辑或歌曲不存在。
+    NotFound { cid: String },
+    /// 其他内部错误，不可重试。
+    Internal(String),
+}
+
+impl fmt::Display for LibraryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LibraryError::Network(msg) => write!(f, "网络请求失败: {msg}"),
+            LibraryError::NotFound { cid } => write!(f, "资源不存在: {cid}"),
+            LibraryError::Internal(msg) => write!(f, "内部错误: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for LibraryError {}
+
+// ─── Commands ─────────────────────────────────────────────────────────────────
 
 /// 获取专辑列表，并附带本地库存增强后的下载徽标与 tag 信息。
 ///
@@ -16,13 +48,13 @@ use tauri::State;
 #[tauri::command]
 pub async fn get_albums(
     state: State<'_, AppState>,
-) -> Result<Vec<harubble_core::api::Album>, String> {
+) -> Result<Vec<harubble_core::api::Album>, LibraryError> {
     let albums = state
         .api_clients
         .api
         .get_albums()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LibraryError::Network(e.to_string()))?;
     let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
     let locale = state.preferences().locale;
     for album in &mut enriched {
@@ -41,13 +73,13 @@ pub async fn get_albums(
 pub async fn get_album_detail(
     state: State<'_, AppState>,
     album_cid: String,
-) -> Result<harubble_core::api::AlbumDetail, String> {
+) -> Result<harubble_core::api::AlbumDetail, LibraryError> {
     let album = state
         .api_clients
         .api
         .get_album_detail(&album_cid)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LibraryError::Network(e.to_string()))?;
     let cache = state.album_metadata_cache.clone();
     let album_cid_for_cache = album.cid.clone();
     let album_belong_for_cache = album.belong.clone();
@@ -78,19 +110,19 @@ pub async fn get_album_detail(
 pub async fn get_song_detail(
     state: State<'_, AppState>,
     cid: String,
-) -> Result<harubble_core::api::SongDetail, String> {
+) -> Result<harubble_core::api::SongDetail, LibraryError> {
     let song = state
         .api_clients
         .api
         .get_song_detail(&cid)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LibraryError::Network(e.to_string()))?;
     let album = state
         .api_clients
         .api
         .get_album_detail(&song.album_cid)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LibraryError::Network(e.to_string()))?;
     let mut enriched = state
         .local_inventory_service
         .enrich_song_detail(song, &album.name)
@@ -106,12 +138,12 @@ pub async fn get_song_detail(
 ///
 /// 适用于歌词面板首次展开或切歌后按需加载歌词内容。
 /// 入参 `cid` 为歌曲唯一标识；返回值在成功时要么是歌词文本，要么是显式的 `None`，表示该歌曲没有可下载歌词。
-/// 调用方应区分“无歌词”和“请求失败”两类结果：前者返回 `Ok(None)`，后者返回错误字符串。
+/// 调用方应区分"无歌词"和"请求失败"两类结果：前者返回 `Ok(None)`，后者返回错误字符串。
 #[tauri::command]
 pub async fn get_song_lyrics(
     state: State<'_, AppState>,
     cid: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, LibraryError> {
     state
         .dispatch_visual_aux("get_song_lyrics", move |state| async move {
             let song_detail = state
@@ -119,7 +151,7 @@ pub async fn get_song_lyrics(
                 .image_api
                 .get_song_detail(&cid)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| LibraryError::Network(e.to_string()))?;
 
             let Some(lyric_url) = song_detail.lyric_url else {
                 return Ok(None);
@@ -131,7 +163,7 @@ pub async fn get_song_lyrics(
                 .download_text(&lyric_url)
                 .await
                 .map(Some)
-                .map_err(|e| e.to_string())
+                .map_err(|e| LibraryError::Network(e.to_string()))
         })
         .await
 }
@@ -145,8 +177,9 @@ pub async fn get_song_lyrics(
 pub async fn extract_image_theme(
     state: State<'_, AppState>,
     image_url: String,
-) -> Result<theme::ThemePalette, String> {
-    harubble_core::validate_download_url(&image_url).map_err(|e| e.to_string())?;
+) -> Result<theme::ThemePalette, LibraryError> {
+    harubble_core::validate_download_url(&image_url)
+        .map_err(|e| LibraryError::Internal(e.to_string()))?;
     state
         .dispatch_visual_aux("extract_image_theme", move |state| async move {
             let bytes = state
@@ -154,12 +187,12 @@ pub async fn extract_image_theme(
                 .image_api
                 .download_bytes_coalesced(&image_url)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| LibraryError::Network(e.to_string()))?;
 
             tokio::task::spawn_blocking(move || theme::extract_theme_palette(&bytes))
                 .await
-                .map_err(|e| e.to_string())?
-                .map_err(|e| e.to_string())
+                .map_err(|e| LibraryError::Internal(e.to_string()))?
+                .map_err(|e| LibraryError::Internal(e.to_string()))
         })
         .await
 }
@@ -181,8 +214,9 @@ fn encode_image_data_url(mime: &str, bytes: &[u8]) -> String {
 pub async fn get_image_data_url(
     state: State<'_, AppState>,
     image_url: String,
-) -> Result<String, String> {
-    harubble_core::validate_download_url(&image_url).map_err(|e| e.to_string())?;
+) -> Result<String, LibraryError> {
+    harubble_core::validate_download_url(&image_url)
+        .map_err(|e| LibraryError::Internal(e.to_string()))?;
     state
         .dispatch_visual_aux("get_image_data_url", move |state| async move {
             let bytes = state
@@ -190,7 +224,7 @@ pub async fn get_image_data_url(
                 .image_api
                 .download_bytes_coalesced(&image_url)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| LibraryError::Network(e.to_string()))?;
 
             let mime = harubble_core::audio::detect_image_mime(&bytes)
                 .unwrap_or("application/octet-stream");

@@ -251,7 +251,7 @@ export type DownloadTaskStatus =
   | 'failed'
   | 'cancelled';
 
-export type DownloadErrorCode =
+export type DownloadTaskErrorCode =
   | 'network'
   | 'api'
   | 'io'
@@ -262,8 +262,8 @@ export type DownloadErrorCode =
   | 'invalidRequest'
   | 'internal';
 
-export interface DownloadErrorInfo {
-  code: DownloadErrorCode;
+export interface DownloadTaskErrorInfo {
+  code: DownloadTaskErrorCode;
   message: string;
   retryable: boolean;
   details: string | null;
@@ -287,7 +287,7 @@ export interface DownloadTaskSnapshot {
   bytesDone: number;
   bytesTotal: number | null;
   outputPath: string | null;
-  error: DownloadErrorInfo | null;
+  error: DownloadTaskErrorInfo | null;
   attempt: number;
   songIndex: number;
   songCount: number;
@@ -307,7 +307,7 @@ export interface DownloadJobSnapshot {
   failedTaskCount: number;
   cancelledTaskCount: number;
   tasks: DownloadTaskSnapshot[];
-  error: DownloadErrorInfo | null;
+  error: DownloadTaskErrorInfo | null;
 }
 
 export interface DownloadManagerSnapshot {
@@ -575,3 +575,50 @@ export type CollectionError =
   | { code: 'database'; detail: string }
   | { code: 'serialization'; detail: string }
   | { code: 'unsupportedVersion'; detail: { version: number } };
+
+// ── Search ───────────────────────────────────────────────────────────────────
+
+export type SearchErrorCode = 'notReady' | 'internal';
+
+export type SearchError =
+  | { code: 'notReady' }
+  | { code: 'internal'; detail: string };
+
+// ── Library ──────────────────────────────────────────────────────────────────
+
+export type LibraryErrorCode = 'network' | 'notFound' | 'internal';
+
+export type LibraryError =
+  | { code: 'network'; detail: string }
+  | { code: 'notFound'; detail: { cid: string } }
+  | { code: 'internal'; detail: string };
+
+// ── Download ─────────────────────────────────────────────────────────────────
+
+export type DownloadErrorCode =
+  | 'notFound'
+  | 'network'
+  | 'io'
+  | 'invalidState'
+  | 'internal';
+
+export type DownloadError =
+  | { code: 'notFound'; detail: { id: string } }
+  | { code: 'network'; detail: string }
+  | { code: 'io'; detail: string }
+  | { code: 'invalidState'; detail: { reason: string } }
+  | { code: 'internal'; detail: string };
+
+// ── TagEditor ────────────────────────────────────────────────────────────────
+
+export type TagEditorErrorCode =
+  | 'io'
+  | 'serialization'
+  | 'unsupportedVersion'
+  | 'internal';
+
+export type TagEditorError =
+  | { code: 'io'; detail: string }
+  | { code: 'serialization'; detail: string }
+  | { code: 'unsupportedVersion'; detail: { version: number } }
+  | { code: 'internal'; detail: string };
