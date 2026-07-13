@@ -233,6 +233,11 @@ impl AppState {
         &self.api_clients.download_api
     }
 
+    /// 返回图片资源专用 API 客户端。
+    pub(crate) fn image_api_client(&self) -> &Arc<harubble_core::ApiClient> {
+        &self.api_clients.image_api
+    }
+
     /// 返回下载服务实例（需在 lock 后使用）。
     pub(crate) fn download_service(&self) -> &Arc<Mutex<DownloadService>> {
         &self.download.download_service
@@ -552,6 +557,116 @@ impl AppState {
                 .details(error),
             );
         }
+    }
+
+    // ─── 跨领域应用服务 ────────────────────────────────────────────────────────
+    // 收敛涉及多个领域的编排逻辑，避免 command 直接协调 api / local_inventory /
+    // tag_registry / album_metadata_cache / download 等多个服务。command 只
+    // 负责 IPC 参数解析与领域错误映射。
+
+    /// 为已获取的专辑列表补齐本地库存徽标与 tag 元数据。
+    ///
+    /// 跨领域协调：local_inventory.enrich_albums + tag_registry.get_album_tags + preferences.locale。
+    /// 该方法不产生错误，纯数据装配。
+    pub(crate) async fn attach_album_enrichment(
+        &self,
+        albums: Vec<harubble_core::api::Album>,
+    ) -> Vec<harubble_core::api::Album> {
+        let mut enriched = self.local_inventory_service.enrich_albums(albums).await;
+        let locale = self.preferences().locale;
+        for album in &mut enriched {
+            album.tags = self.tag_registry.get_album_tags(&album.cid, locale);
+        }
+        enriched
+    }
+
+    /// 为已获取的专辑详情补齐本地库存徽标、tag，并 upsert belong 缓存（fire-and-forget）。
+    ///
+    /// 跨领域协调：album_metadata_cache.upsert_belong + local_inventory.enrich_album_detail
+    /// + tag_registry.get_album_tags + tag_registry.get_song_tags + preferences.locale。
+    /// belong 缓存更新失败不影响主流程返回值。
+    pub(crate) async fn attach_album_detail_enrichment(
+        &self,
+        album: harubble_core::api::AlbumDetail,
+    ) -> harubble_core::api::AlbumDetail {
+        let cache = self.album_metadata_cache.clone();
+        let album_cid_for_cache = album.cid.clone();
+        let album_belong_for_cache = album.belong.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            cache.upsert_belong(&album_cid_for_cache, &album_belong_for_cache)
+        })
+        .await;
+        let mut enriched = self
+            .local_inventory_service
+            .enrich_album_detail(album)
+            .await;
+        let locale = self.preferences().locale;
+        enriched.tags = self.tag_registry.get_album_tags(&enriched.cid, locale);
+        for song in &mut enriched.songs {
+            song.tags = self
+                .tag_registry
+                .get_song_tags(&song.cid, &enriched.cid, locale);
+        }
+        enriched
+    }
+
+    /// 为已获取的歌曲详情补齐所属专辑上下文的本地库存徽标与 tag。
+    ///
+    /// 跨领域协调：local_inventory.enrich_song_detail + tag_registry.get_song_tags + preferences.locale。
+    pub(crate) async fn attach_song_detail_enrichment(
+        &self,
+        song: harubble_core::api::SongDetail,
+        album_name: &str,
+    ) -> harubble_core::api::SongDetail {
+        let mut enriched = self
+            .local_inventory_service
+            .enrich_song_detail(song, album_name)
+            .await;
+        let locale = self.preferences().locale;
+        enriched.tags = self
+            .tag_registry
+            .get_song_tags(&enriched.cid, &enriched.album_cid, locale);
+        enriched
+    }
+
+    /// 收集首页仪表盘状态，聚合平台专辑总数、本地库存与下载会话。
+    ///
+    /// 跨领域协调：api.get_albums + local_inventory.snapshot + download.download_service.lock().await.snapshot。
+    /// 避免 command 直接持有下载服务锁。
+    pub(crate) async fn homepage_status(
+        &self,
+    ) -> Result<harubble_core::homepage::HomepageStatus, String> {
+        let albums = self
+            .api_clients
+            .api
+            .get_albums()
+            .await
+            .map_err(|e| e.to_string())?;
+        let platform_album_count = albums.len() as u32;
+
+        let inventory_snapshot = self.local_inventory_service.snapshot().await;
+        let local_downloaded_count = inventory_snapshot.matched_track_count as u32;
+
+        let download_snapshot = self.download.download_service.lock().await.snapshot();
+        let active_download_count = download_snapshot
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, harubble_core::DownloadJobStatus::Running))
+            .count() as u32;
+        let completed_download_count = download_snapshot
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, harubble_core::DownloadJobStatus::Completed))
+            .count() as u32;
+
+        Ok(harubble_core::homepage::HomepageStatus {
+            platform_album_count,
+            platform_song_count: 0,
+            local_downloaded_count,
+            local_storage_bytes: 0,
+            active_download_count,
+            completed_download_count,
+        })
     }
 }
 

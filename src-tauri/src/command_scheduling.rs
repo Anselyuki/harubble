@@ -724,10 +724,13 @@ mod tests {
 
         // 禁止在 commands/*.rs 中出现的直接字段访问模式。
         // 这里只列窄化后本应通过 accessor 访问的领域字段；
-        // preferences / prefs / api_clients 等仍通过 method 面向外部访问。
+        // preferences / prefs 等仍通过 method 面向外部访问。
         //
         // 注意：所有模式统一以 `.` 结尾，这样只会匹配直接字段访问链
         // `state.foo.bar`，不会误判为同名 accessor 方法调用 `state.foo()`。
+        // 去除所有空白字符后，`state.player.pause()` 变为 `state.player.pause()`
+        // 而 `state.player().pause()` 变为 `state.player().pause()`，二者不同，
+        // 因此增加 `state.player.` 不会误判 accessor 方法调用。
         let forbidden_patterns = [
             "state.api_clients.",
             "state.download.download_",
@@ -739,6 +742,7 @@ mod tests {
             "state.album_metadata_cache.",
             "state.local_inventory_service.",
             "state.log_center.",
+            "state.player.",
         ];
 
         for path in rust_files(&commands_dir) {
@@ -746,8 +750,11 @@ mod tests {
                 .strip_prefix(&commands_dir)
                 .expect("path under commands");
             let source = std::fs::read_to_string(&path).expect("read source");
+            // 去除所有空白字符，使多行字段访问链（如 `state\n    .api_clients\n    .image_api`）
+            // 也能被 `state.api_clients.` 模式匹配到。
+            let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
             for pattern in &forbidden_patterns {
-                if source.contains(pattern) {
+                if compact.contains(pattern) {
                     panic!(
                         "command file `commands/{}` contains direct AppState field access `{}`; \
                          use the corresponding accessor method (e.g. state.player() instead of state.player)",

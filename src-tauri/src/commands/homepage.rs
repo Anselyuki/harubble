@@ -3,7 +3,6 @@
 use crate::app_state::AppState;
 use harubble_core::api::Album;
 use harubble_core::homepage::{derive_series_tags, HistoryEntry, HomepageStatus, SeriesGroup};
-use harubble_core::DownloadJobStatus;
 use tauri::State;
 
 /// 获取最新专辑列表。
@@ -21,11 +20,7 @@ pub async fn get_latest_albums(
         .get_albums()
         .await
         .map_err(|e| e.to_string())?;
-    let mut enriched = state.local_inventory().enrich_albums(albums).await;
-    let locale = state.preferences().locale;
-    for album in &mut enriched {
-        album.tags = state.tag_registry().get_album_tags(&album.cid, locale);
-    }
+    let enriched = state.attach_album_enrichment(albums).await;
     Ok(enriched.into_iter().take(limit as usize).collect())
 }
 
@@ -44,11 +39,7 @@ pub async fn get_albums_by_series(state: State<'_, AppState>) -> Result<Vec<Seri
         .get_albums()
         .await
         .map_err(|e| e.to_string())?;
-    let mut enriched = state.local_inventory().enrich_albums(albums).await;
-    let locale = state.preferences().locale;
-    for album in &mut enriched {
-        album.tags = state.tag_registry().get_album_tags(&album.cid, locale);
-    }
+    let enriched = state.attach_album_enrichment(albums).await;
     let cache = state.album_metadata_cache().clone();
     let belongs = tokio::task::spawn_blocking(move || cache.get_all_belongs())
         .await
@@ -163,34 +154,5 @@ pub async fn clear_listening_history(state: State<'_, AppState>) -> Result<u32, 
 /// 该接口会发起一次上游 API 请求与多次本地状态读取，不适合高频轮询。
 #[tauri::command]
 pub async fn get_homepage_status(state: State<'_, AppState>) -> Result<HomepageStatus, String> {
-    let albums = state
-        .api_client()
-        .get_albums()
-        .await
-        .map_err(|e| e.to_string())?;
-    let platform_album_count = albums.len() as u32;
-
-    let inventory_snapshot = state.local_inventory().snapshot().await;
-    let local_downloaded_count = inventory_snapshot.matched_track_count as u32;
-
-    let download_snapshot = state.download_service().lock().await.snapshot();
-    let active_download_count = download_snapshot
-        .jobs
-        .iter()
-        .filter(|j| matches!(j.status, DownloadJobStatus::Running))
-        .count() as u32;
-    let completed_download_count = download_snapshot
-        .jobs
-        .iter()
-        .filter(|j| matches!(j.status, DownloadJobStatus::Completed))
-        .count() as u32;
-
-    Ok(HomepageStatus {
-        platform_album_count,
-        platform_song_count: 0,
-        local_downloaded_count,
-        local_storage_bytes: 0,
-        active_download_count,
-        completed_download_count,
-    })
+    state.homepage_status().await
 }

@@ -36,15 +36,11 @@ pub async fn get_albums_by_tag_dimension(
     }
 
     let albums = state
-        .api_clients
-        .api
+        .api_client()
         .get_albums()
         .await
         .map_err(|e| e.to_string())?;
-    let mut enriched = state.local_inventory().enrich_albums(albums).await;
-    for album in &mut enriched {
-        album.tags = state.tag_registry().get_album_tags(&album.cid, locale);
-    }
+    let enriched = state.attach_album_enrichment(albums).await;
 
     let album_map: std::collections::HashMap<&str, &Album> =
         enriched.iter().map(|a| (a.cid.as_str(), a)).collect();

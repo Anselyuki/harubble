@@ -54,12 +54,7 @@ pub async fn get_albums(
         .get_albums()
         .await
         .map_err(|e| LibraryError::Network(e.to_string()))?;
-    let mut enriched = state.local_inventory().enrich_albums(albums).await;
-    let locale = state.preferences().locale;
-    for album in &mut enriched {
-        album.tags = state.tag_registry().get_album_tags(&album.cid, locale);
-    }
-    Ok(enriched)
+    Ok(state.attach_album_enrichment(albums).await)
 }
 
 /// 根据专辑 CID 获取专辑详情，并补充本地库存相关信息。
@@ -78,22 +73,7 @@ pub async fn get_album_detail(
         .get_album_detail(&album_cid)
         .await
         .map_err(|e| LibraryError::Network(e.to_string()))?;
-    let cache = state.album_metadata_cache().clone();
-    let album_cid_for_cache = album.cid.clone();
-    let album_belong_for_cache = album.belong.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        cache.upsert_belong(&album_cid_for_cache, &album_belong_for_cache)
-    })
-    .await;
-    let mut enriched = state.local_inventory().enrich_album_detail(album).await;
-    let locale = state.preferences().locale;
-    enriched.tags = state.tag_registry().get_album_tags(&enriched.cid, locale);
-    for song in &mut enriched.songs {
-        song.tags = state
-            .tag_registry()
-            .get_song_tags(&song.cid, &enriched.cid, locale);
-    }
-    Ok(enriched)
+    Ok(state.attach_album_detail_enrichment(album).await)
 }
 
 /// 根据歌曲 CID 获取单曲详情，并联动所属专辑补齐库存徽标。
@@ -116,15 +96,7 @@ pub async fn get_song_detail(
         .get_album_detail(&song.album_cid)
         .await
         .map_err(|e| LibraryError::Network(e.to_string()))?;
-    let mut enriched = state
-        .local_inventory()
-        .enrich_song_detail(song, &album.name)
-        .await;
-    let locale = state.preferences().locale;
-    enriched.tags = state
-        .tag_registry()
-        .get_song_tags(&enriched.cid, &enriched.album_cid, locale);
-    Ok(enriched)
+    Ok(state.attach_song_detail_enrichment(song, &album.name).await)
 }
 
 /// 获取歌曲歌词文本；若上游未提供歌词地址则返回 `None`。
@@ -140,8 +112,7 @@ pub async fn get_song_lyrics(
     state
         .dispatch_visual_aux("get_song_lyrics", move |state| async move {
             let song_detail = state
-                .api_clients
-                .image_api
+                .image_api_client()
                 .get_song_detail(&cid)
                 .await
                 .map_err(|e| LibraryError::Network(e.to_string()))?;
@@ -175,8 +146,7 @@ pub async fn extract_image_theme(
     state
         .dispatch_visual_aux("extract_image_theme", move |state| async move {
             let bytes = state
-                .api_clients
-                .image_api
+                .image_api_client()
                 .download_bytes_coalesced(&image_url)
                 .await
                 .map_err(|e| LibraryError::Network(e.to_string()))?;
@@ -212,8 +182,7 @@ pub async fn get_image_data_url(
     state
         .dispatch_visual_aux("get_image_data_url", move |state| async move {
             let bytes = state
-                .api_clients
-                .image_api
+                .image_api_client()
                 .download_bytes_coalesced(&image_url)
                 .await
                 .map_err(|e| LibraryError::Network(e.to_string()))?;
