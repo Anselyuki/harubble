@@ -7,6 +7,7 @@ import type {
   TagGroup,
 } from '$lib/types';
 import { homeStore } from './store.svelte';
+import { formatLibraryError } from '$lib/features/shell/domainErrors';
 import * as m from '$lib/paraglide/messages.js';
 
 interface HomeControllerDeps {
@@ -64,7 +65,7 @@ export function createHomeController(deps: HomeControllerDeps) {
       const reason = results[0].reason;
       deps.notifyError(
         m.home_error_load_albums({
-          error: reason instanceof Error ? reason.message : String(reason),
+          error: formatLibraryError(reason),
         })
       );
     }
@@ -111,7 +112,7 @@ export function createHomeController(deps: HomeControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.home_error_load_tag_groups({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatLibraryError(e),
         })
       );
     }
@@ -156,7 +157,7 @@ export function createHomeController(deps: HomeControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.home_error_clear_history({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatLibraryError(e),
         })
       );
     }

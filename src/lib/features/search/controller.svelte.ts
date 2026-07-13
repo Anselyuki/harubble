@@ -1,5 +1,6 @@
 import type { Album, HistoryEntry, LibrarySearchScope } from '$lib/types';
 import { searchStore, type RecentQuery } from './store.svelte';
+import { formatLibraryError } from '$lib/features/shell/domainErrors';
 import * as m from '$lib/paraglide/messages.js';
 
 const STORAGE_KEY = 'harubble:recent-searches';
@@ -78,7 +79,7 @@ export function createSearchController(deps: SearchControllerDeps) {
       if (seq !== loadRequestSeq) return;
       deps.notifyError(
         m.search_error_load_recently_played({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatLibraryError(e),
         })
       );
     } finally {

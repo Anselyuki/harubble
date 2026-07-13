@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Album, HistoryEntry } from '$lib/types';
 import { createSearchController } from './controller.svelte';
 import { searchStore } from './store.svelte';
+import * as m from '$lib/paraglide/messages.js';
 
 const STORAGE_KEY = 'harubble:recent-searches';
 
@@ -205,7 +206,11 @@ describe('createSearchController - loadRecentPlayed', () => {
     await ctrl.loadRecentPlayed();
 
     expect(notifyError).toHaveBeenCalledTimes(1);
-    expect(notifyError.mock.calls[0]?.[0]).toContain('boom');
+    expect(notifyError.mock.calls[0]?.[0]).toBe(
+      m.search_error_load_recently_played({
+        error: m.domain_generic_error(),
+      })
+    );
     expect(ctrl.loading).toBe(false);
   });
 

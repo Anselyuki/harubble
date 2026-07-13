@@ -10,6 +10,7 @@ import type {
   TagEditorRegistry,
 } from '$lib/types';
 import { tagEditorStore } from './store.svelte';
+import { formatTagEditorError } from '$lib/features/shell/domainErrors';
 import * as m from '$lib/paraglide/messages.js';
 
 interface TagEditorControllerDeps {
@@ -68,7 +69,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_load({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
     } finally {
@@ -101,7 +102,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_set_tag({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
     }
@@ -121,7 +122,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_delete_tag({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
     }
@@ -134,7 +135,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_add_dimension({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
     }
@@ -147,7 +148,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_delete_dimension({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
     }
@@ -174,7 +175,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_resolve_conflict({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
     }
@@ -193,7 +194,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_load_songs({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
       tagEditorStore.editingAlbumSongs = [];
@@ -223,7 +224,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       }
       deps.notifyError(
         m.tag_editor_error_load_songs({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
       return false;
@@ -274,7 +275,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       }
       deps.notifyError(
         m.tag_editor_error_restore({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
       return false;
@@ -308,7 +309,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_export({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
     }
@@ -327,7 +328,7 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
     } catch (e: unknown) {
       deps.notifyError(
         m.tag_editor_error_import({
-          error: e instanceof Error ? e.message : String(e),
+          error: formatTagEditorError(e),
         })
       );
     }

@@ -6,6 +6,7 @@ import type {
   SearchLibraryResponse,
 } from '$lib/types';
 import * as m from '$lib/paraglide/messages.js';
+import { formatLibraryError } from '$lib/features/shell/domainErrors';
 
 interface LibraryControllerDeps {
   delay: (ms: number) => Promise<void>;
@@ -113,7 +114,6 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       librarySearchResponse = response;
     } catch (error) {
       if (requestSeq !== librarySearchRequestSeq) return;
-      const message = error instanceof Error ? error.message : String(error);
       librarySearchResponse = {
         items: [],
         total: 0,
@@ -121,7 +121,9 @@ export function createLibraryController(deps: LibraryControllerDeps) {
         scope,
         indexState: 'notReady',
       };
-      deps.notifyError(m.library_error_search_failed({ error: message }));
+      deps.notifyError(
+        m.library_error_search_failed({ error: formatLibraryError(error) })
+      );
     } finally {
       if (requestSeq === librarySearchRequestSeq) {
         librarySearchLoading = false;
@@ -162,7 +164,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       return albumList;
     } catch (error) {
       if (!shouldDispose?.()) {
-        errorMsg = error instanceof Error ? error.message : String(error);
+        errorMsg = formatLibraryError(error);
       }
       if (!suppressError) {
         throw error;
@@ -213,7 +215,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       if (shouldDispose?.() || requestSeq !== albumRequestSeq) return;
     } catch (error) {
       if (shouldDispose?.() || requestSeq !== albumRequestSeq) return;
-      errorMsg = error instanceof Error ? error.message : String(error);
+      errorMsg = formatLibraryError(error);
     } finally {
       if (!shouldDispose?.() && requestSeq === albumRequestSeq) {
         const elapsed = Date.now() - startTime;
@@ -278,7 +280,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       if (shouldDispose?.() || requestSeq !== albumRequestSeq) return;
       deps.notifyError(
         m.library_error_refresh_album_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatLibraryError(error),
         })
       );
     } finally {

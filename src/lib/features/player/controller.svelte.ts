@@ -14,6 +14,10 @@ import {
   type PlaybackSnapshot,
 } from './playback-contract';
 import * as m from '$lib/paraglide/messages.js';
+import {
+  formatLibraryError,
+  formatPlaybackError,
+} from '$lib/features/shell/domainErrors';
 
 interface PlayerControllerDeps {
   playSong: (
@@ -274,7 +278,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       lyricsLines = parseLyricText(lyricText);
     } catch (error) {
       if (requestSeq !== lyricRequestSeq) return;
-      lyricsError = error instanceof Error ? error.message : String(error);
+      lyricsError = formatLibraryError(error);
     } finally {
       if (requestSeq === lyricRequestSeq) {
         lyricsLoading = false;
@@ -400,7 +404,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       playingCid = null;
       deps.notifyError(
         m.player_error_play_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
     }
@@ -503,7 +507,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       pendingPlayToggleTarget = null;
       deps.notifyError(
         m.player_error_pause_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
       return;
@@ -525,7 +529,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       pendingPlayToggleTarget = null;
       deps.notifyError(
         m.player_error_resume_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
       return;
@@ -548,7 +552,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       if (isPlaybackSupersededError(error)) return;
       deps.notifyError(
         m.player_error_seek_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
     }
@@ -565,7 +569,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       if (isPlaybackSupersededError(error)) return;
       deps.notifyError(
         m.player_error_play_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
     }
@@ -585,7 +589,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       if (isPlaybackSupersededError(error)) return;
       deps.notifyError(
         m.player_error_play_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
     }
@@ -599,7 +603,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     try {
       await deps.setPlaybackVolume(clamped);
     } catch (error) {
-      deps.notifyError(error instanceof Error ? error.message : String(error));
+      deps.notifyError(formatPlaybackError(error));
     }
   }
 

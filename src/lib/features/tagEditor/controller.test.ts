@@ -9,6 +9,7 @@ import type {
 } from '$lib/types';
 import { createTagEditorController } from './controller.svelte';
 import { tagEditorStore } from './store.svelte';
+import * as m from '$lib/paraglide/messages.js';
 
 function makeRegistry(
   overrides: Partial<TagEditorRegistry> = {}
@@ -193,7 +194,11 @@ describe('createTagEditorController - loadData', () => {
     const ctrl = createTagEditorController(deps);
     await ctrl.loadData();
     expect(notifyError).toHaveBeenCalledTimes(1);
-    expect(notifyError.mock.calls[0]?.[0]).toContain('boom');
+    expect(notifyError.mock.calls[0]?.[0]).toBe(
+      m.tag_editor_error_load({
+        error: m.domain_generic_error(),
+      })
+    );
     expect(ctrl.loading).toBe(false);
   });
 });
