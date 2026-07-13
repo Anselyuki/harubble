@@ -44,6 +44,27 @@ impl fmt::Display for TagEditorError {
 
 impl std::error::Error for TagEditorError {}
 
+// ─── 内部辅助 ─────────────────────────────────────────────────────────────────
+
+/// 根据实体类型解析出需要触发增量搜索索引刷新的专辑 CID 集合。
+///
+/// - `EntityType::Album`：直接返回 `[cid]`。
+/// - `EntityType::Song`：通过搜索快照的 song→album 映射反查父专辑；
+///   若无活跃快照或找不到映射，返回空集合，交由下次全量重建修复。
+async fn resolve_incremental_album_cids(
+    state: &AppState,
+    entity_type: EntityType,
+    cid: String,
+) -> Vec<String> {
+    if matches!(entity_type, EntityType::Album) {
+        return vec![cid];
+    }
+    match state.library_search().current_song_album_map().await {
+        Some(map) => map.get(&cid).cloned().map(|a| vec![a]).unwrap_or_default(),
+        None => Vec::new(),
+    }
+}
+
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 /// 返回合并后的完整 tag 注册表（remote + local overlay 合并计算结果）。
@@ -70,12 +91,17 @@ pub async fn set_tag_editor_entity_tag(
     values: Vec<LocalizedValue>,
 ) -> Result<(), TagEditorError> {
     let editor = state.tag_editor().clone();
+    let cid_for_incremental = cid.clone();
     tokio::task::spawn_blocking(move || {
         editor.set_entity_tag(entity_type, &cid, &dimension_key, values)
     })
     .await
     .map_err(|e| TagEditorError::Internal(e.to_string()))?
-    .map_err(|e| TagEditorError::Internal(e.to_string()))
+    .map_err(|e| TagEditorError::Internal(e.to_string()))?;
+
+    let album_cids = resolve_incremental_album_cids(&state, entity_type, cid_for_incremental).await;
+    state.schedule_local_tag_incremental_update(album_cids);
+    Ok(())
 }
 
 /// 删除指定实体在指定维度上的本地 overlay tag。
@@ -87,10 +113,17 @@ pub async fn remove_tag_editor_entity_tag(
     dimension_key: String,
 ) -> Result<(), TagEditorError> {
     let editor = state.tag_editor().clone();
-    tokio::task::spawn_blocking(move || editor.remove_entity_tag(entity_type, &cid, &dimension_key))
-        .await
-        .map_err(|e| TagEditorError::Internal(e.to_string()))?
-        .map_err(|e| TagEditorError::Internal(e.to_string()))
+    let cid_for_incremental = cid.clone();
+    tokio::task::spawn_blocking(move || {
+        editor.remove_entity_tag(entity_type, &cid, &dimension_key)
+    })
+    .await
+    .map_err(|e| TagEditorError::Internal(e.to_string()))?
+    .map_err(|e| TagEditorError::Internal(e.to_string()))?;
+
+    let album_cids = resolve_incremental_album_cids(&state, entity_type, cid_for_incremental).await;
+    state.schedule_local_tag_incremental_update(album_cids);
+    Ok(())
 }
 
 /// 新增本地维度定义。
@@ -144,12 +177,17 @@ pub async fn resolve_tag_editor_conflict(
     keep: ConflictResolution,
 ) -> Result<(), TagEditorError> {
     let editor = state.tag_editor().clone();
+    let cid_for_incremental = cid.clone();
     tokio::task::spawn_blocking(move || {
         editor.resolve_conflict(entity_type, &cid, &dimension_key, keep)
     })
     .await
     .map_err(|e| TagEditorError::Internal(e.to_string()))?
-    .map_err(|e| TagEditorError::Internal(e.to_string()))
+    .map_err(|e| TagEditorError::Internal(e.to_string()))?;
+
+    let album_cids = resolve_incremental_album_cids(&state, entity_type, cid_for_incremental).await;
+    state.schedule_local_tag_incremental_update(album_cids);
+    Ok(())
 }
 
 /// 将合并后的完整 tag 注册表导出到用户指定路径。

@@ -288,120 +288,131 @@ impl LibrarySearchService {
             return;
         }
 
+        let directory = state.task_directory.clone();
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
-            state
-                .wait_for_background_io_gate("library_search_rebuild", Duration::from_millis(250))
-                .await;
-
-            let generation = service.start_rebuild(&inventory).await;
-            let snapshot_result = build_library_search_snapshot(
-                state.api_clients.api.clone(),
-                state.tag_registry.clone(),
-                inventory.root_output_dir.clone(),
-                inventory.inventory_version.clone(),
-            )
-            .await;
-
-            let snapshot = match snapshot_result {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    state.record_log(
-                        LogPayload::new(
-                            LogLevel::Warn,
-                            "library-search",
-                            "library_search.snapshot_build_failed",
-                            "Failed to build search snapshot",
-                        )
-                        .user_message(crate::i18n::tr(
-                            state.preferences().locale,
-                            "search-index-build-failed",
-                        ))
-                        .details(error.to_string()),
-                    );
-                    service
-                        .fail_rebuild(
-                            generation,
-                            &inventory.root_output_dir,
-                            &inventory.inventory_version,
+            let task_id = directory.next_task_id("library_search", "rebuild").await;
+            crate::background_tasks::spawn_tracked(
+                directory,
+                task_id,
+                move |_cancel_token| async move {
+                    state
+                        .wait_for_background_io_gate(
+                            "library_search_rebuild",
+                            Duration::from_millis(250),
                         )
                         .await;
-                    return;
-                }
-            };
 
-            let base_dir = service.base_dir.clone();
-            let snapshot_for_build = snapshot.clone();
-            let build_result = tokio::task::spawn_blocking(move || -> Result<_> {
-                save_library_search_snapshot(&base_dir, &snapshot_for_build)?;
-                LibrarySearchIndex::build(&base_dir, &snapshot_for_build)
-            })
-            .await;
-
-            let index = match build_result {
-                Ok(Ok(index)) => index,
-                Ok(Err(error)) => {
-                    state.record_log(
-                        LogPayload::new(
-                            LogLevel::Warn,
-                            "library-search",
-                            "library_search.index_build_failed",
-                            "Failed to build search index",
-                        )
-                        .user_message(crate::i18n::tr(
-                            state.preferences().locale,
-                            "search-index-build-failed",
-                        ))
-                        .details(error.to_string()),
-                    );
-                    service
-                        .fail_rebuild(
-                            generation,
-                            &inventory.root_output_dir,
-                            &inventory.inventory_version,
-                        )
-                        .await;
-                    return;
-                }
-                Err(error) => {
-                    state.record_log(
-                        LogPayload::new(
-                            LogLevel::Warn,
-                            "library-search",
-                            "library_search.index_build_join_failed",
-                            "Search index build worker failed",
-                        )
-                        .user_message(crate::i18n::tr(
-                            state.preferences().locale,
-                            "search-index-build-failed",
-                        ))
-                        .details(error.to_string()),
-                    );
-                    service
-                        .fail_rebuild(
-                            generation,
-                            &inventory.root_output_dir,
-                            &inventory.inventory_version,
-                        )
-                        .await;
-                    return;
-                }
-            };
-
-            if !service.publish_rebuild(generation, &snapshot, index).await {
-                state.record_log(
-                    LogPayload::new(
-                        LogLevel::Info,
-                        "library-search",
-                        "library_search.rebuild_discarded",
-                        "Discarded stale search rebuild result",
+                    let generation = service.start_rebuild(&inventory).await;
+                    let snapshot_result = build_library_search_snapshot(
+                        state.api_clients.api.clone(),
+                        state.tag_registry.clone(),
+                        inventory.root_output_dir.clone(),
+                        inventory.inventory_version.clone(),
                     )
-                    .details(format!(
-                        "inventoryVersion={} rootOutputDir={}",
-                        inventory.inventory_version, inventory.root_output_dir
-                    )),
-                );
-            }
+                    .await;
+
+                    let snapshot = match snapshot_result {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => {
+                            state.record_log(
+                                LogPayload::new(
+                                    LogLevel::Warn,
+                                    "library-search",
+                                    "library_search.snapshot_build_failed",
+                                    "Failed to build search snapshot",
+                                )
+                                .user_message(crate::i18n::tr(
+                                    state.preferences().locale,
+                                    "search-index-build-failed",
+                                ))
+                                .details(error.to_string()),
+                            );
+                            service
+                                .fail_rebuild(
+                                    generation,
+                                    &inventory.root_output_dir,
+                                    &inventory.inventory_version,
+                                )
+                                .await;
+                            return;
+                        }
+                    };
+
+                    let base_dir = service.base_dir.clone();
+                    let snapshot_for_build = snapshot.clone();
+                    let build_result = tokio::task::spawn_blocking(move || -> Result<_> {
+                        save_library_search_snapshot(&base_dir, &snapshot_for_build)?;
+                        LibrarySearchIndex::build(&base_dir, &snapshot_for_build)
+                    })
+                    .await;
+
+                    let index = match build_result {
+                        Ok(Ok(index)) => index,
+                        Ok(Err(error)) => {
+                            state.record_log(
+                                LogPayload::new(
+                                    LogLevel::Warn,
+                                    "library-search",
+                                    "library_search.index_build_failed",
+                                    "Failed to build search index",
+                                )
+                                .user_message(crate::i18n::tr(
+                                    state.preferences().locale,
+                                    "search-index-build-failed",
+                                ))
+                                .details(error.to_string()),
+                            );
+                            service
+                                .fail_rebuild(
+                                    generation,
+                                    &inventory.root_output_dir,
+                                    &inventory.inventory_version,
+                                )
+                                .await;
+                            return;
+                        }
+                        Err(error) => {
+                            state.record_log(
+                                LogPayload::new(
+                                    LogLevel::Warn,
+                                    "library-search",
+                                    "library_search.index_build_join_failed",
+                                    "Search index build worker failed",
+                                )
+                                .user_message(crate::i18n::tr(
+                                    state.preferences().locale,
+                                    "search-index-build-failed",
+                                ))
+                                .details(error.to_string()),
+                            );
+                            service
+                                .fail_rebuild(
+                                    generation,
+                                    &inventory.root_output_dir,
+                                    &inventory.inventory_version,
+                                )
+                                .await;
+                            return;
+                        }
+                    };
+
+                    if !service.publish_rebuild(generation, &snapshot, index).await {
+                        state.record_log(
+                            LogPayload::new(
+                                LogLevel::Info,
+                                "library-search",
+                                "library_search.rebuild_discarded",
+                                "Discarded stale search rebuild result",
+                            )
+                            .details(format!(
+                                "inventoryVersion={} rootOutputDir={}",
+                                inventory.inventory_version, inventory.root_output_dir
+                            )),
+                        );
+                    }
+                },
+            );
         });
     }
 }

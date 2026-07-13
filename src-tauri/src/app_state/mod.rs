@@ -334,6 +334,77 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner()) = prefs;
     }
 
+    /// 在本地 tag_editor 修改成功后，异步刷新受影响专辑的搜索索引。
+    ///
+    /// 与 tag_registry_sync 通路复用 `build_snapshot_records_for_album` +
+    /// `apply_incremental_tag_update`，任一步失败视为软失败，仅记日志不阻塞主流程。
+    /// 无活跃索引或空 `album_cids` 时直接返回。
+    pub(crate) fn schedule_local_tag_incremental_update(&self, album_cids: Vec<String>) {
+        if album_cids.is_empty() {
+            return;
+        }
+        let state = self.clone();
+        let directory = state.task_directory.clone();
+        tauri::async_runtime::spawn(async move {
+            let task_id = directory
+                .next_task_id("library_search", "local_tag_incremental")
+                .await;
+            crate::background_tasks::spawn_tracked(
+                directory,
+                task_id,
+                move |_cancel_token| async move {
+                    let locale = state.preferences().locale;
+                    let mut updates = Vec::with_capacity(album_cids.len());
+                    for cid in &album_cids {
+                        match crate::search::build_snapshot_records_for_album(
+                            state.api_clients.api.clone(),
+                            state.tag_registry.clone(),
+                            cid,
+                            locale,
+                        )
+                        .await
+                        {
+                            Ok(records) => updates.push(records),
+                            Err(error) => {
+                                state.record_log(
+                                    LogPayload::new(
+                                        LogLevel::Warn,
+                                        "library-search",
+                                        "library_search.local_incremental_fetch_failed",
+                                        "Failed to build incremental snapshot records for local tag edit",
+                                    )
+                                    .context(json!({
+                                        "album_cid": cid,
+                                    }))
+                                    .details(error.to_string()),
+                                );
+                                return;
+                            }
+                        }
+                    }
+                    if let Err(error) = state
+                        .library_search_service
+                        .apply_incremental_tag_update(updates)
+                        .await
+                    {
+                        state.record_log(
+                            LogPayload::new(
+                                LogLevel::Warn,
+                                "library-search",
+                                "library_search.local_incremental_apply_failed",
+                                "Incremental tag update failed after local tag edit; will heal on next full rebuild",
+                            )
+                            .context(json!({
+                                "changed_album_count": album_cids.len(),
+                            }))
+                            .details(error.to_string()),
+                        );
+                    }
+                },
+            );
+        });
+    }
+
     pub(crate) fn preferences_store(&self) -> Arc<PreferencesStore> {
         self.prefs.preferences_store.clone()
     }
