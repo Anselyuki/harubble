@@ -149,6 +149,7 @@ impl LibrarySearchIndex {
     /// # 错误
     /// 任一步骤失败（writer 打开 / add_document / commit / reload）均返回错误，
     /// 调用方应视失败为不可回滚状态并触发全量重建兜底。
+    #[allow(dead_code)]
     pub(crate) fn upsert_album(
         &self,
         album: &LibrarySearchAlbumRecord,
@@ -383,7 +384,6 @@ impl LibrarySearchIndex {
     }
 
     /// PLACEHOLDER_QUERY_BUILDERS
-
     fn build_text_query(&self, request: &SanitizedSearchRequest) -> Result<Box<dyn Query>> {
         let mut text_parser = QueryParser::for_index(
             &self.index,
@@ -544,7 +544,6 @@ fn scope_kind_value(scope: LibrarySearchScope) -> Option<&'static str> {
 }
 
 /// PLACEHOLDER_TESTS
-
 #[cfg(test)]
 mod tests {
     use super::{sanitize_search_request, LibrarySearchIndex};

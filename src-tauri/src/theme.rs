@@ -104,6 +104,7 @@ struct DerivedSlots {
     danger: [u8; 3],
 }
 
+#[allow(clippy::type_complexity)]
 fn select_colors_extended(image: &RgbaImage) -> (Option<[u8; 3]>, Vec<[u8; 3]>, Vec<[u8; 3]>) {
     let mut buckets: HashMap<(u8, u8, u8), BucketAccumulator> = HashMap::new();
     let mut fallback = BucketAccumulator::default();
@@ -220,7 +221,7 @@ fn derive_tint(accent_hue: f32, palette_hsl: &[([u8; 3], f32, f32, f32)]) -> [u8
 
 fn derive_danger(accent_hue: f32, palette_hsl: &[([u8; 3], f32, f32, f32)]) -> [u8; 3] {
     for &(color, hue, sat, light) in palette_hsl {
-        let is_warm = hue < 0.08 || hue > 0.92;
+        let is_warm = !(0.08..=0.92).contains(&hue);
         if is_warm && sat > 0.4 && (0.3..=0.55).contains(&light) {
             return color;
         }

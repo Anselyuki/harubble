@@ -258,7 +258,7 @@ pub fn handle_main_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &W
         api.prevent_close();
         if let Err(error) = minimize_main_window(window) {
             record_lifecycle_log(
-                &app_handle,
+                app_handle,
                 LogLevel::Warn,
                 "desktop_lifecycle.minimize_failed",
                 "Failed to minimize main window for background playback",
@@ -279,7 +279,7 @@ pub fn handle_main_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &W
     api.prevent_close();
     if let Err(error) = hide_main_window(window) {
         record_lifecycle_log(
-            &app_handle,
+            app_handle,
             LogLevel::Warn,
             "desktop_lifecycle.hide_failed",
             "Failed to hide main window for background playback",

@@ -254,6 +254,7 @@ impl AppState {
     }
 
     /// 返回后台任务目录（跨领域生命周期协调）。
+    #[allow(dead_code)]
     pub(crate) fn task_directory(&self) -> &TaskDirectory {
         &self.task_directory
     }
@@ -690,7 +691,7 @@ impl AppState {
     ///
     /// 跨领域协调：album_metadata_cache.upsert_belong + local_inventory.enrich_album_detail
     /// + tag_registry.get_album_tags + tag_registry.get_song_tags + preferences.locale。
-    /// belong 缓存更新失败不影响主流程返回值。
+    ///   belong 缓存更新失败不影响主流程返回值。
     pub(crate) async fn attach_album_detail_enrichment(
         &self,
         album: harubble_core::api::AlbumDetail,
@@ -815,13 +816,14 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
         };
 
         let all_cids: Vec<String> = albums.iter().map(|a| a.cid.clone()).collect();
-        let missing = match {
+        let missing_result = {
             let cache = cache.clone();
             tokio::task::spawn_blocking(move || cache.get_missing_album_cids(&all_cids))
                 .await
                 .map_err(|error| error.to_string())
                 .and_then(|result| result)
-        } {
+        };
+        let missing = match missing_result {
             Ok(m) => m,
             Err(e) => {
                 log_center.record(

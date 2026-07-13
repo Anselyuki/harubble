@@ -107,9 +107,7 @@ fn choose_output_config_from_ranges(
         })
         .context("No supported output configuration found")?;
 
-    Ok(fallback
-        .clone()
-        .with_sample_rate(clamp_sample_rate(fallback, audio_format.sample_rate)))
+    Ok(fallback.with_sample_rate(clamp_sample_rate(fallback, audio_format.sample_rate)))
 }
 
 fn choose_exact_output_config_from_ranges(
@@ -130,7 +128,7 @@ fn choose_exact_output_config_from_ranges(
                     .is_none_or(|sample_format| sample_format == config.sample_format())
         })
         .min_by_key(|config| sample_format_priority(config.sample_format()).unwrap_or(usize::MAX))
-        .map(|config| config.clone().with_sample_rate(audio_format.sample_rate))
+        .map(|config| (*config).with_sample_rate(audio_format.sample_rate))
 }
 
 fn choose_exact_output_config_from_default(
@@ -642,6 +640,7 @@ fn output_gain(volume: &AtomicU64) -> f32 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_stream_monitor(
     stop_flag: Arc<AtomicBool>,
     frames_rendered: Arc<AtomicU64>,

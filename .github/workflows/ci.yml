@@ -123,3 +123,9 @@ jobs:
 
       - name: Run Rust workspace tests
         run: cargo test --workspace
+
+      - name: Run frontend unit tests
+        run: bun run test
+
+      - name: Run Rust clippy (strict)
+        run: cargo clippy --workspace --all-targets -- -D warnings

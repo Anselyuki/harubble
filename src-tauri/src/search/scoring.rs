@@ -121,7 +121,6 @@ fn score_compact_match(
 }
 
 /// PLACEHOLDER_REMAINING_SCORING
-
 pub(super) fn rank_search_document(
     document: &LibrarySearchDocument,
     normalized_query: &str,
@@ -239,7 +238,6 @@ pub(super) fn rank_search_document(
 }
 
 /// PLACEHOLDER_COLLECT_AND_COMPARE
-
 pub(super) fn collect_matched_fields(
     document: &LibrarySearchDocument,
     normalized_query: &str,

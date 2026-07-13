@@ -738,17 +738,17 @@ fn initial_buffer_samples(
     target.max(minimum).min(maximum)
 }
 
+type PrepareInputResult = (PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput);
+
 fn prepare_cached_or_streaming_input(
     song_cid: &str,
     source_url: &str,
-) -> Result<(PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput)> {
+) -> Result<PrepareInputResult> {
     let cache_path = audio_cache::cached_song_path(song_cid, source_url)?;
     prepare_playback_input_from_cache_path(cache_path)
 }
 
-fn prepare_playback_input_from_cache_path(
-    cache_path: PathBuf,
-) -> Result<(PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput)> {
+fn prepare_playback_input_from_cache_path(cache_path: PathBuf) -> Result<PrepareInputResult> {
     let pending_marker = audio_cache::pending_marker_path(&cache_path);
     if audio_cache::is_song_cached(&cache_path) {
         return Ok((
