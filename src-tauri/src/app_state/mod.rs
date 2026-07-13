@@ -9,6 +9,7 @@ pub(crate) use download_subsystem::DownloadSubsystem;
 pub(crate) use preferences::PreferencesSubsystem;
 
 use crate::album_metadata_cache::AlbumMetadataCacheService;
+use crate::background_tasks::TaskDirectory;
 use crate::collection::CollectionService;
 use crate::command_scheduling::{self, CommandDomain};
 use crate::download_session::DownloadSessionStore;
@@ -52,6 +53,7 @@ pub struct AppState {
     pub(crate) local_inventory_service: LocalInventoryService,
     pub(crate) local_inventory_provenance_store: Arc<LocalInventoryProvenanceStore>,
     pub(crate) log_center: Arc<LogCenter>,
+    pub(crate) task_directory: TaskDirectory,
     pub(crate) library_search_service: LibrarySearchService,
     pub(crate) listening_history: Arc<ListeningHistoryService>,
     pub(crate) album_metadata_cache: AlbumMetadataCacheService,
@@ -148,6 +150,7 @@ impl AppState {
             local_inventory_service,
             local_inventory_provenance_store,
             log_center,
+            task_directory: TaskDirectory::new(),
             library_search_service,
             listening_history,
             album_metadata_cache,
@@ -221,6 +224,11 @@ impl AppState {
     /// 返回日志中心（用于查询记录、状态检查等）。
     pub(crate) fn log_center(&self) -> &Arc<LogCenter> {
         &self.log_center
+    }
+
+    /// 返回后台任务目录（跨领域生命周期协调）。
+    pub(crate) fn task_directory(&self) -> &TaskDirectory {
+        &self.task_directory
     }
 
     /// 返回通用业务 API 客户端。
@@ -898,77 +906,87 @@ fn record_playback_side_effect_metrics(
 /// 网络失败时静默使用本地缓存，不阻塞应用启动。
 pub fn spawn_tag_registry_sync(state: &AppState) {
     let state = state.clone();
+    let directory = state.task_directory.clone();
 
     tauri::async_runtime::spawn(async move {
-        state
-            .wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250))
-            .await;
+        let task_id = directory.next_task_id("tag_registry", "sync").await;
+        crate::background_tasks::spawn_tracked(
+            directory,
+            task_id,
+            move |_cancel_token| async move {
+                state
+                    .wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250))
+                    .await;
 
-        let sync_result = async {
-            let response_bytes = load_tag_registry_bytes(&state).await?;
-            let new_registry: crate::tag_registry::TagRegistry =
-                serde_json::from_slice(&response_bytes)
-                    .map_err(|e| anyhow::anyhow!("failed to parse tag registry: {e}"))?;
+                let sync_result = async {
+                    let response_bytes = load_tag_registry_bytes(&state).await?;
+                    let new_registry: crate::tag_registry::TagRegistry =
+                        serde_json::from_slice(&response_bytes)
+                            .map_err(|e| anyhow::anyhow!("failed to parse tag registry: {e}"))?;
 
-            if new_registry.schema_version != crate::tag_registry::CURRENT_SCHEMA_VERSION {
-                anyhow::bail!(
-                    "tag registry schema version {} does not match expected {}",
-                    new_registry.schema_version,
-                    crate::tag_registry::CURRENT_SCHEMA_VERSION
-                );
-            }
+                    if new_registry.schema_version != crate::tag_registry::CURRENT_SCHEMA_VERSION {
+                        anyhow::bail!(
+                            "tag registry schema version {} does not match expected {}",
+                            new_registry.schema_version,
+                            crate::tag_registry::CURRENT_SCHEMA_VERSION
+                        );
+                    }
 
-            #[cfg(not(debug_assertions))]
-            {
-                let current_updated_at = state.tag_registry.current_updated_at();
-                if new_registry.updated_at == current_updated_at && !current_updated_at.is_empty() {
-                    return Ok(None);
+                    #[cfg(not(debug_assertions))]
+                    {
+                        let current_updated_at = state.tag_registry.current_updated_at();
+                        if new_registry.updated_at == current_updated_at
+                            && !current_updated_at.is_empty()
+                        {
+                            return Ok(None);
+                        }
+                    }
+
+                    let tag_registry = state.tag_registry.clone();
+                    let registry_for_persist = new_registry.clone();
+                    let persist_result = tokio::task::spawn_blocking(move || {
+                        tag_registry.persist_registry(&registry_for_persist)
+                    })
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))
+                    .and_then(|result| result);
+                    persist_result.map_err(|error| {
+                        anyhow::anyhow!("failed to persist synced tag registry: {error}")
+                    })?;
+
+                    let old_registry = state.tag_registry.clone_current();
+                    let new_registry_snapshot = new_registry.clone();
+                    state.tag_registry.replace_in_memory(new_registry);
+
+                    Ok::<
+                        Option<(
+                            crate::tag_registry::TagRegistry,
+                            crate::tag_registry::TagRegistry,
+                        )>,
+                        anyhow::Error,
+                    >(Some((old_registry, new_registry_snapshot)))
                 }
-            }
+                .await;
 
-            let tag_registry = state.tag_registry.clone();
-            let registry_for_persist = new_registry.clone();
-            let persist_result = tokio::task::spawn_blocking(move || {
-                tag_registry.persist_registry(&registry_for_persist)
-            })
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
-            .and_then(|result| result);
-            persist_result.map_err(|error| {
-                anyhow::anyhow!("failed to persist synced tag registry: {error}")
-            })?;
-
-            let old_registry = state.tag_registry.clone_current();
-            let new_registry_snapshot = new_registry.clone();
-            state.tag_registry.replace_in_memory(new_registry);
-
-            Ok::<
-                Option<(
-                    crate::tag_registry::TagRegistry,
-                    crate::tag_registry::TagRegistry,
-                )>,
-                anyhow::Error,
-            >(Some((old_registry, new_registry_snapshot)))
-        }
-        .await;
-
-        match sync_result {
-            Ok(Some((old_registry, new_registry))) => {
-                apply_tag_registry_change(state, old_registry, new_registry).await;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "tag-registry",
-                        "tag_registry.sync_failed",
-                        "Failed to sync tag registry from remote",
-                    )
-                    .details(error.to_string()),
-                );
-            }
-        }
+                match sync_result {
+                    Ok(Some((old_registry, new_registry))) => {
+                        apply_tag_registry_change(state, old_registry, new_registry).await;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        state.log_center.record(
+                            LogPayload::new(
+                                LogLevel::Warn,
+                                "tag-registry",
+                                "tag_registry.sync_failed",
+                                "Failed to sync tag registry from remote",
+                            )
+                            .details(error.to_string()),
+                        );
+                    }
+                }
+            },
+        );
     });
 }
 

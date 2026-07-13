@@ -34,6 +34,7 @@
 mod album_metadata_cache;
 mod app_state;
 mod audio_cache;
+mod background_tasks;
 pub mod collection;
 mod command_registry;
 mod command_scheduling;
@@ -74,6 +75,11 @@ pub use app_state::spawn_tag_registry_sync;
 ///
 /// 适用于 `main.rs` 启动 wiring、Tauri command 注入，以及需要访问聚合后端能力的集成测试入口。
 pub use app_state::AppState;
+/// 后台任务目录 —— 跨领域任务生命周期协调层。
+///
+/// 适用于搜索 / 下载 / 库扫描 / tag registry sync 等跨领域后台任务的统一登记、
+/// 取消和 shutdown 协调；业务状态仍由各领域自持。
+pub use background_tasks::{spawn_tracked, TaskDirectory, TaskEntry, TaskId, TaskState};
 /// 初始化下载桥接执行循环。
 ///
 /// 适用于应用启动后拉起下载任务消费与事件广播主循环。
