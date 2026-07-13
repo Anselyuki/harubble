@@ -71,6 +71,7 @@
           selected={false}
           loading={loadingAlbumCid === album.cid}
           {reducedMotion}
+          testId="search-result-item"
           onclick={() => onSelectAlbum(album)}
         />
       {/each}

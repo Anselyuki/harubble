@@ -865,7 +865,7 @@
           </button>
 
           <div class="meta meta-stage">
-            <p class="title">{song.name}</p>
+            <p class="title" data-testid="player-current-song">{song.name}</p>
             <p class="artist">{subtitle}</p>
           </div>
         </div>

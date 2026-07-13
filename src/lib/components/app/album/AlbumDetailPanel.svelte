@@ -163,6 +163,7 @@
           type="button"
           class="btn btn-primary"
           class:is-disabled={isAlbumDownloadDisabled}
+          data-testid="download-album-button"
           onclick={() => props.onDownloadAlbum(props.album.cid)}
           disabled={isAlbumDownloadDisabled}
         >

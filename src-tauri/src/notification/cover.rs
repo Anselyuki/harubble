@@ -87,7 +87,7 @@ pub async fn download_to_temp(app: &AppHandle, cover_url: &str) -> Option<PathBu
 
     let api = {
         let state = app.state::<AppState>();
-        state.api_clients.image_api.clone()
+        state.image_api_client().clone()
     };
 
     let bytes = api.download_bytes(cover_url, |_, _| {}).await.ok()?;

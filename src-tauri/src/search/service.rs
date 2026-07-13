@@ -288,7 +288,7 @@ impl LibrarySearchService {
             return;
         }
 
-        let directory = state.task_directory.clone();
+        let directory = state.task_directory().clone();
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
             let task_id = directory.next_task_id("library_search", "rebuild").await;
@@ -309,8 +309,8 @@ impl LibrarySearchService {
 
                     let generation = service.start_rebuild(&inventory).await;
                     let snapshot_result = build_library_search_snapshot(
-                        state.api_clients.api.clone(),
-                        state.tag_registry.clone(),
+                        state.api_client().clone(),
+                        state.tag_registry().clone(),
                         inventory.root_output_dir.clone(),
                         inventory.inventory_version.clone(),
                     )

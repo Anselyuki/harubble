@@ -70,6 +70,7 @@
     value={query}
     placeholder={labels.placeholder}
     class="search-input"
+    data-testid="search-input"
     aria-label={labels.placeholder}
     oninput={(e) => onQueryChange((e.currentTarget as HTMLInputElement).value)}
     onkeydown={handleKeydown}

@@ -42,24 +42,24 @@ use tokio::sync::{Mutex, MutexGuard};
 /// 该类型应作为长生命周期共享状态使用，而不是按请求临时构造；调用方也不应绕过它直接拼装各子系统依赖。
 #[derive(Clone)]
 pub struct AppState {
-    pub(crate) player: Arc<AudioPlayer>,
-    pub(crate) api_clients: ApiClients,
-    pub(crate) playback_runtime: Arc<tokio::runtime::Runtime>,
-    pub(crate) playback_actor: PlaybackActor,
-    pub(crate) playback_load_gate: PlaybackLoadGate,
-    pub(crate) visual_aux_lock: Arc<Mutex<()>>,
-    pub(crate) download: DownloadSubsystem,
-    pub(crate) prefs: PreferencesSubsystem,
-    pub(crate) local_inventory_service: LocalInventoryService,
-    pub(crate) local_inventory_provenance_store: Arc<LocalInventoryProvenanceStore>,
-    pub(crate) log_center: Arc<LogCenter>,
-    pub(crate) task_directory: TaskDirectory,
-    pub(crate) library_search_service: LibrarySearchService,
-    pub(crate) listening_history: Arc<ListeningHistoryService>,
-    pub(crate) album_metadata_cache: AlbumMetadataCacheService,
-    pub(crate) tag_registry: TagRegistryService,
-    pub(crate) tag_editor: TagEditorService,
-    pub(crate) collection: CollectionService,
+    player: Arc<AudioPlayer>,
+    api_clients: ApiClients,
+    playback_runtime: Arc<tokio::runtime::Runtime>,
+    playback_actor: PlaybackActor,
+    playback_load_gate: PlaybackLoadGate,
+    visual_aux_lock: Arc<Mutex<()>>,
+    download: DownloadSubsystem,
+    prefs: PreferencesSubsystem,
+    local_inventory_service: LocalInventoryService,
+    local_inventory_provenance_store: Arc<LocalInventoryProvenanceStore>,
+    log_center: Arc<LogCenter>,
+    task_directory: TaskDirectory,
+    library_search_service: LibrarySearchService,
+    listening_history: Arc<ListeningHistoryService>,
+    album_metadata_cache: AlbumMetadataCacheService,
+    tag_registry: TagRegistryService,
+    tag_editor: TagEditorService,
+    collection: CollectionService,
 }
 
 struct PreparedPlaybackInput {
@@ -257,6 +257,21 @@ impl AppState {
     #[allow(dead_code)]
     pub(crate) fn task_directory(&self) -> &TaskDirectory {
         &self.task_directory
+    }
+
+    /// 返回本地库存来源记录存储（用于记录已完成的下载归档）。
+    pub(crate) fn local_inventory_provenance_store(&self) -> &Arc<LocalInventoryProvenanceStore> {
+        &self.local_inventory_provenance_store
+    }
+
+    /// 返回播放运行时（用于在 playback 专属线程池中调度异步任务）。
+    pub(crate) fn playback_runtime(&self) -> &Arc<tokio::runtime::Runtime> {
+        &self.playback_runtime
+    }
+
+    /// 返回播放加载门控（用于查询或等待播放启动阶段）。
+    pub(crate) fn playback_load_gate(&self) -> &PlaybackLoadGate {
+        &self.playback_load_gate
     }
 
     /// 返回通用业务 API 客户端。

@@ -84,7 +84,7 @@ pub fn notify_download_completed(app: &AppHandle, job: &DownloadJobSnapshot) {
     };
 
     if let Err(error) = desktop::show_download(app, &title, &body) {
-        state.log_center.record(
+        state.log_center().record(
             LogPayload::new(
                 LogLevel::Warn,
                 "notification",
@@ -142,7 +142,7 @@ pub fn notify_playback_changed(app: &AppHandle, player_state: &PlayerState) {
         let Some(state) = app_for_task.try_state::<AppState>() else {
             return;
         };
-        let current_state = state.player.get_state();
+        let current_state = state.player().get_state();
         if current_state.song_cid.as_deref() != Some(song_cid_for_task.as_str())
             || !current_state.is_playing
         {
@@ -152,7 +152,7 @@ pub fn notify_playback_changed(app: &AppHandle, player_state: &PlayerState) {
         if let Err(error) =
             desktop::show_playback(&app_for_task, &title, &body, cover_path.as_ref())
         {
-            state.log_center.record(
+            state.log_center().record(
                 LogPayload::new(
                     LogLevel::Warn,
                     "notification",
@@ -181,7 +181,7 @@ pub fn notify_test(app: AppHandle) -> Result<(), String> {
     let result = desktop::show_test(&app, &title, &body);
     if let Err(error) = &result {
         if let Some(state) = app.try_state::<AppState>() {
-            state.log_center.record(
+            state.log_center().record(
                 LogPayload::new(
                     LogLevel::Warn,
                     "notification",

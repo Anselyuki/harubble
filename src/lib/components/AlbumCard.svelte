@@ -18,6 +18,7 @@
     selected?: boolean;
     loading?: boolean;
     reducedMotion?: boolean;
+    testId?: string;
     onclick?: () => void;
   }
 
@@ -27,6 +28,7 @@
     selected = false,
     loading = false,
     reducedMotion = false,
+    testId = 'album-card',
     onclick,
   }: Props = $props();
 
@@ -125,6 +127,7 @@
 <button
   type="button"
   class={`album-card album-card--${layout}${selected ? ' selected' : ''}${reducedMotion ? ' is-reduced-motion' : ''}`}
+  data-testid={testId}
   use:gsapCardHover
   onclick={handleActivate}
 >

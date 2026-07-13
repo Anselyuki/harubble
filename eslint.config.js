@@ -16,6 +16,8 @@ const typeAwareParserOptions = {
       'vite.config.ts',
       'svelte.config.js',
       'prettier.config.js',
+      'playwright.config.ts',
+      'tests/e2e/*.ts',
     ],
   },
   tsconfigRootDir: import.meta.dirname,

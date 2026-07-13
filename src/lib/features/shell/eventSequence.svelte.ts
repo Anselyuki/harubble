@@ -36,6 +36,7 @@ export interface EventSequence {
  * 内部用普通 Map；每个 key 独立版本空间，不同事件通道互不影响。
  */
 export function createEventSequence(): EventSequence {
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const counters = new Map<string, number>();
   return {
     next(key: string): number {

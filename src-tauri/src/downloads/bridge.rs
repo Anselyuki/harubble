@@ -98,7 +98,7 @@ where
 pub fn initialize(app: &AppHandle, state: &AppState) {
     let app = app.clone();
     let state = state.clone();
-    let directory = state.task_directory.clone();
+    let directory = state.task_directory().clone();
 
     tauri::async_runtime::spawn(async move {
         let task_id = directory.next_task_id("downloads", "execution_loop").await;
@@ -156,8 +156,8 @@ async fn execution_loop(
     state: AppState,
     cancel_token: tokio_util::sync::CancellationToken,
 ) {
-    let service = Arc::clone(&state.download.download_service);
-    let api = Arc::clone(&state.api_clients.download_api);
+    let service = Arc::clone(state.download_service());
+    let api = Arc::clone(state.download_api_client());
 
     loop {
         if cancel_token.is_cancelled() {
@@ -278,11 +278,11 @@ async fn wait_for_playback_startup_to_settle(state: &AppState) {
                 PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL,
             )
             .await;
-        if !state.player.get_state().is_loading {
+        if !state.player().get_state().is_loading {
             return;
         }
         if started_at.elapsed() >= PLAYBACK_LOADING_YIELD_MAX {
-            state.log_center.record(
+            state.log_center().record(
                 crate::logging::LogPayload::new(
                     crate::logging::LogLevel::Warn,
                     "download-bridge",
@@ -529,7 +529,7 @@ async fn collect_write_result(
         unpack_task_result(write_result.outcome);
 
     let update = {
-        let mut svc = state.download.download_service.lock().await;
+        let mut svc = state.download_service().lock().await;
         svc.update_task_state(
             &write_result.task.job_id,
             &write_result.task.id,
@@ -544,7 +544,7 @@ async fn collect_write_result(
     if let Some(artifacts) = completed_artifacts {
         let root_output_dir = state.preferences().output_dir;
         let _ = state
-            .local_inventory_provenance_store
+            .local_inventory_provenance_store()
             .record_completed_download(
                 PathBuf::from(&root_output_dir).as_path(),
                 &write_result.task,
@@ -560,12 +560,7 @@ async fn collect_write_result(
     }
 
     if let Some(update) = update {
-        let manager_snapshot = state
-            .download
-            .download_service
-            .lock()
-            .await
-            .manager_snapshot();
+        let manager_snapshot = state.download_service().lock().await.manager_snapshot();
         state
             .persist_download_snapshot_async(manager_snapshot.clone())
             .await;

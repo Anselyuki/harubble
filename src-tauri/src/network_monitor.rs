@@ -85,7 +85,7 @@ mod macos {
 
     pub(super) fn spawn(state: &AppState) {
         let app_state = state.clone();
-        let log_center = state.log_center.clone();
+        let log_center = state.log_center().clone();
 
         std::thread::Builder::new()
             .name("network-monitor".into())

@@ -124,7 +124,7 @@ impl PlaybackActor {
             return Err(playback_actor_closed_error(command_name));
         }
         let request_id = state.begin_playback_transition(command_name);
-        let load_ticket = state.playback_load_gate.enter();
+        let load_ticket = state.playback_load_gate().enter();
         self.sender
             .send(PlaybackActorMessage {
                 state,
@@ -153,7 +153,7 @@ async fn run_playback_actor(mut receiver: mpsc::UnboundedReceiver<PlaybackActorM
         let request_id = message.request_id;
         let load_ticket = message.load_ticket;
         let run_state = message.state;
-        let log_center = Arc::clone(&run_state.log_center);
+        let log_center = Arc::clone(run_state.log_center());
         let command_name = message.command_name;
         let job = message.job;
 

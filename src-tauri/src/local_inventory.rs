@@ -216,7 +216,7 @@ pub fn spawn_inventory_scan(
     root_output_dir: String,
     verification_mode: Option<VerificationMode>,
 ) {
-    let directory = state.task_directory.clone();
+    let directory = state.task_directory().clone();
     tauri::async_runtime::spawn(async move {
         let task_id = directory.next_task_id("local_inventory", "scan").await;
         crate::background_tasks::spawn_tracked(
@@ -233,15 +233,15 @@ pub fn spawn_inventory_scan(
 
                 let mode = match verification_mode {
                     Some(mode) => mode,
-                    None => state.local_inventory_service.verification_mode().await,
+                    None => state.local_inventory().verification_mode().await,
                 };
-                let provenance_records = state.local_inventory_service.provenance_records().await;
+                let provenance_records = state.local_inventory().provenance_records().await;
                 let started = state
-                    .local_inventory_service
+                    .local_inventory()
                     .begin_scan(root_output_dir.clone(), mode)
                     .await;
                 state
-                    .library_search_service
+                    .library_search()
                     .prepare_for_inventory_scan(root_output_dir.clone())
                     .await;
                 emit_local_inventory_state_changed(&app, &started);
@@ -249,7 +249,7 @@ pub fn spawn_inventory_scan(
                 let inventory_version = started.inventory_version.clone();
                 let locale = state.preferences().locale;
                 let app_for_scan = app.clone();
-                let cancel_flag = state.local_inventory_service.cancel_flag.clone();
+                let cancel_flag = state.local_inventory().cancel_flag.clone();
                 let root_output_dir_for_scan = root_output_dir.clone();
                 let inventory_version_for_scan = inventory_version.clone();
                 let scan_result = tokio::task::spawn_blocking(move || {
@@ -270,23 +270,23 @@ pub fn spawn_inventory_scan(
                 let finished = match scan_result {
                     Ok(ScanCollectionOutcome::Completed(result)) => {
                         state
-                            .local_inventory_service
+                            .local_inventory()
                             .complete_scan(&inventory_version, result)
                             .await
                     }
                     Ok(ScanCollectionOutcome::Cancelled) => {
-                        state.local_inventory_service.snapshot().await
+                        state.local_inventory().snapshot().await
                     }
                     Err(error) => {
                         state
-                            .local_inventory_service
+                            .local_inventory()
                             .fail_scan(&inventory_version, error)
                             .await
                     }
                 };
                 if finished.status == LocalInventoryStatus::Completed {
                     state
-                        .library_search_service
+                        .library_search()
                         .schedule_rebuild(state.clone(), finished.clone());
                 }
                 emit_local_inventory_state_changed(&app, &finished);

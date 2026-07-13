@@ -443,7 +443,7 @@ impl AudioPlayer {
 
         if let Err(error) = spawn_result {
             if let Some(state) = self.app.try_state::<crate::app_state::AppState>() {
-                state.log_center.record(
+                state.log_center().record(
                     crate::logging::LogPayload::new(
                         crate::logging::LogLevel::Warn,
                         "player",
@@ -461,7 +461,7 @@ impl AudioPlayer {
 
         Arc::new(move || {
             if let Some(state) = app_for_finish.try_state::<crate::app_state::AppState>() {
-                state.player.finish_session(session_id);
+                state.player().finish_session(session_id);
             }
         })
     }
@@ -475,7 +475,7 @@ impl AudioPlayer {
                 return;
             }
             if let Some(state) = app_for_metrics.try_state::<crate::app_state::AppState>() {
-                state.log_center.record(
+                state.log_center().record(
                     crate::logging::LogPayload::new(
                         crate::logging::LogLevel::Debug,
                         "player",
@@ -509,7 +509,7 @@ impl AudioPlayer {
             }
             if let Some(state) = app_for_underrun.try_state::<crate::app_state::AppState>() {
                 state
-                    .player
+                    .player()
                     .start_rebuffering(session_id, sample_buffer.clone(), audio_format);
             }
         })
@@ -564,7 +564,7 @@ impl AudioPlayer {
                 }
             }
             self.rebuffering.store(false, Ordering::SeqCst);
-            app_state.log_center.record(
+            app_state.log_center().record(
                 crate::logging::LogPayload::new(
                     crate::logging::LogLevel::Warn,
                     "player",
@@ -578,9 +578,9 @@ impl AudioPlayer {
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
 
-        let player = Arc::clone(&app_state.player);
-        let playback_runtime = Arc::clone(&app_state.playback_runtime);
-        let log_center = Arc::clone(&app_state.log_center);
+        let player = Arc::clone(app_state.player());
+        let playback_runtime = Arc::clone(app_state.playback_runtime());
+        let log_center = Arc::clone(app_state.log_center());
         let stop_flag = self.stop_signal();
         let target_samples = rebuffer_target_samples(audio_format);
 
@@ -673,9 +673,9 @@ impl AudioPlayer {
                 return;
             }
             if let Some(state) = app_for_error.try_state::<crate::app_state::AppState>() {
-                let log_center = Arc::clone(&state.log_center);
-                let player = Arc::clone(&state.player);
-                let playback_runtime = Arc::clone(&state.playback_runtime);
+                let log_center = Arc::clone(state.log_center());
+                let player = Arc::clone(state.player());
+                let playback_runtime = Arc::clone(state.playback_runtime());
                 let message_for_log = message.clone();
                 let active_session_for_error = Arc::clone(&active_session);
                 let stop_flag_for_error = Arc::clone(&stop_flag);

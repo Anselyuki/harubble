@@ -233,7 +233,7 @@ export async function subscribeToTauriEvents(
   // 当前三个 player 事件的 handler 均为同步实现，seq guard 不产生实际效果，
   // 但已就位——一旦 handler 升级为 async（例如引入 await 操作），
   // 可直接启用 token 检查以防止过期载荷覆写。
-  const seq = createEventSequence();
+  const _seq = createEventSequence();
 
   const unlisteners: (() => void)[] = [];
 

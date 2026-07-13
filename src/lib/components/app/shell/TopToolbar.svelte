@@ -55,6 +55,7 @@
       size="icon"
       variant="ghost"
       class={`relative text-base ${toolbarIconButton({ active: downloadPanelOpen })}`}
+      data-testid="downloads-panel-trigger"
       onclick={onOpenDownloads}
       aria-label={labels.downloads}
       aria-pressed={downloadPanelOpen}
