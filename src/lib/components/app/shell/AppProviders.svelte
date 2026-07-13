@@ -283,8 +283,6 @@
     invertSongSelection: () => runtime.invertSongSelection(),
     toggleSongSelection: (songCid) => runtime.toggleSongSelection(songCid),
     isSongSelected: (songCid) => runtime.isSongSelected(songCid),
-    handleDownloadSelection: (songCids) =>
-      runtime.handleDownloadSelection(songCids),
   });
 
   setCollectionContext({

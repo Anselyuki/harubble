@@ -36,7 +36,6 @@ export interface LibraryContext {
   invertSongSelection: () => void;
   toggleSongSelection: (songCid: string) => void;
   isSongSelected: (songCid: string) => boolean;
-  handleDownloadSelection: (songCids: string[]) => void;
 }
 
 export function setLibraryContext(ctx: LibraryContext): void {
