@@ -6,6 +6,7 @@
 use super::cpal_helpers::*;
 use crate::player::backend::{
     AudioCallbackMetrics, AudioMetricsHandler, AudioUnderrunHandler, OutputFormat, PlaybackBackend,
+    CALLBACK_DURATION_BUCKETS,
 };
 use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
 use anyhow::{Context, Result};
@@ -166,10 +167,27 @@ impl From<OutputFormat> for ExactOutputFormat {
     }
 }
 
-#[derive(Default)]
 struct CallbackMetricCounters {
     silence_due_to_lock: AtomicU64,
     underrun_frames: AtomicU64,
+    callback_count: AtomicU64,
+    callback_elapsed_ns_total: AtomicU64,
+    callback_elapsed_ns_max: AtomicU64,
+    /// 回调运行时间 log2μs 直方图；桶预分配以避免回调路径分配。
+    callback_duration_buckets: [AtomicU64; CALLBACK_DURATION_BUCKETS],
+}
+
+impl Default for CallbackMetricCounters {
+    fn default() -> Self {
+        Self {
+            silence_due_to_lock: AtomicU64::new(0),
+            underrun_frames: AtomicU64::new(0),
+            callback_count: AtomicU64::new(0),
+            callback_elapsed_ns_total: AtomicU64::new(0),
+            callback_elapsed_ns_max: AtomicU64::new(0),
+            callback_duration_buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
 }
 
 impl CallbackMetricCounters {
@@ -183,12 +201,57 @@ impl CallbackMetricCounters {
         }
     }
 
+    /// 记录一次回调运行时间（纳秒），只在实时回调路径的收尾处调用。
+    ///
+    /// 所有操作使用 Relaxed 原子，不引入内存屏障；直方图桶预分配，路径内无堆分配。
+    fn record_callback_elapsed(&self, elapsed_ns: u64) {
+        self.callback_count.fetch_add(1, Ordering::Relaxed);
+        self.callback_elapsed_ns_total
+            .fetch_add(elapsed_ns, Ordering::Relaxed);
+        // fetch_max 更新历史峰值
+        let mut current = self.callback_elapsed_ns_max.load(Ordering::Relaxed);
+        while elapsed_ns > current {
+            match self.callback_elapsed_ns_max.compare_exchange_weak(
+                current,
+                elapsed_ns,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+        let bucket = callback_duration_bucket(elapsed_ns);
+        self.callback_duration_buckets[bucket].fetch_add(1, Ordering::Relaxed);
+    }
+
     fn drain(&self) -> AudioCallbackMetrics {
+        let mut buckets = [0u64; CALLBACK_DURATION_BUCKETS];
+        for (i, slot) in buckets.iter_mut().enumerate() {
+            *slot = self.callback_duration_buckets[i].swap(0, Ordering::Relaxed);
+        }
         AudioCallbackMetrics {
             silence_due_to_lock: self.silence_due_to_lock.swap(0, Ordering::Relaxed),
             underrun_frames: self.underrun_frames.swap(0, Ordering::Relaxed),
+            callback_count: self.callback_count.swap(0, Ordering::Relaxed),
+            callback_elapsed_ns_total: self.callback_elapsed_ns_total.swap(0, Ordering::Relaxed),
+            callback_elapsed_ns_max: self.callback_elapsed_ns_max.swap(0, Ordering::Relaxed),
+            callback_duration_buckets: buckets,
         }
     }
+}
+
+/// 把纳秒转成 log2μs 直方图桶索引。
+///
+/// 桶 i 覆盖 `[2^i μs, 2^(i+1) μs)`；桶 15（最后一桶）为 ≥32768μs 的溢出桶。
+/// 不使用浮点，只用整数移位，回调路径开销可忽略。
+fn callback_duration_bucket(elapsed_ns: u64) -> usize {
+    let micros = elapsed_ns / 1000;
+    if micros == 0 {
+        return 0;
+    }
+    let log2 = 63 - micros.leading_zeros() as usize;
+    log2.min(CALLBACK_DURATION_BUCKETS - 1)
 }
 
 pub struct CpalBackend {
@@ -583,8 +646,15 @@ fn write_output_data_with_metrics<T>(
 ) where
     T: Sample + FromSample<f32>,
 {
+    // P1-6 基准：记录回调运行时间。Instant::now() 在主流平台由 vDSO 实现，开销
+    // 约几十纳秒，远低于我们关心的微秒级抖动。收尾使用 record_callback_elapsed。
+    let callback_start = std::time::Instant::now();
+
     if stop_flag.load(Ordering::SeqCst) {
         data.fill(T::EQUILIBRIUM);
+        callback_metrics.record_callback_elapsed(
+            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
         return;
     }
 
@@ -599,6 +669,9 @@ fn write_output_data_with_metrics<T>(
     let Some(status) = samples.try_pop_realtime_frames_into(output, channels) else {
         write_smoothed_silence(data, output, channels, smoother, gain);
         callback_metrics.record_silence_due_to_lock();
+        callback_metrics.record_callback_elapsed(
+            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
         return;
     };
     if let Some(error) = status.error {
@@ -606,6 +679,9 @@ fn write_output_data_with_metrics<T>(
         if !buffer_error_reported.swap(true, Ordering::SeqCst) {
             error_handler(error);
         }
+        callback_metrics.record_callback_elapsed(
+            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
         return;
     }
 
@@ -629,6 +705,9 @@ fn write_output_data_with_metrics<T>(
     if status.finished {
         finish_fired.store(true, Ordering::SeqCst);
     }
+
+    callback_metrics
+        .record_callback_elapsed(callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
 }
 
 fn output_gain(volume: &AtomicU64) -> f32 {
@@ -693,7 +772,10 @@ fn report_callback_metrics(
     metrics_handler: &AudioMetricsHandler,
 ) {
     let metrics = callback_metrics.drain();
-    if metrics.silence_due_to_lock > 0 || metrics.underrun_frames > 0 {
+    // 只要有任意非零观测就上报：过去是"仅告警"（silence/underrun），P1-6 之后加入
+    // 回调计数与耗时；无回调时（stop/未开始）保持沉默。
+    if metrics.callback_count > 0 || metrics.silence_due_to_lock > 0 || metrics.underrun_frames > 0
+    {
         metrics_handler(metrics);
     }
 }
@@ -705,7 +787,7 @@ mod tests {
         choose_output_config_from_ranges, output_dither_lsb, write_output_data,
         write_output_data_with_metrics, CallbackMetricCounters, OutputSmoother, TpdfDither,
     };
-    use crate::player::backend::{AudioCallbackMetrics, OutputFormat, OutputSampleFormat};
+    use crate::player::backend::{OutputFormat, OutputSampleFormat};
     use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
     use cpal::{SampleFormat, SupportedBufferSize};
     use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -1406,13 +1488,10 @@ mod tests {
             frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
             0
         );
-        assert_eq!(
-            callback_metrics.drain(),
-            AudioCallbackMetrics {
-                silence_due_to_lock: 0,
-                underrun_frames: 2,
-            }
-        );
+        let drained = callback_metrics.drain();
+        assert_eq!(drained.silence_due_to_lock, 0);
+        assert_eq!(drained.underrun_frames, 2);
+        assert_eq!(drained.callback_count, 1);
         assert!(underrun_requested.load(std::sync::atomic::Ordering::SeqCst));
         assert!(errors.lock().unwrap().is_empty());
     }
@@ -1503,13 +1582,10 @@ mod tests {
         );
 
         assert_eq!(output, [0.25, -0.5, 0.75, -1.0]);
-        assert_eq!(
-            callback_metrics.drain(),
-            AudioCallbackMetrics {
-                silence_due_to_lock: 0,
-                underrun_frames: 0,
-            }
-        );
+        let drained = callback_metrics.drain();
+        assert_eq!(drained.silence_due_to_lock, 0);
+        assert_eq!(drained.underrun_frames, 0);
+        assert_eq!(drained.callback_count, 1);
         assert_eq!(
             frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
             2
@@ -1519,5 +1595,50 @@ mod tests {
         assert!(errors.lock().unwrap().is_empty());
 
         handle.join().expect("lock holder should finish");
+    }
+
+    #[test]
+    fn callback_duration_bucket_partitions_log2_microseconds() {
+        use super::callback_duration_bucket;
+        // < 1μs → 桶 0
+        assert_eq!(callback_duration_bucket(500), 0);
+        // 1μs → 桶 0（log2(1)=0）
+        assert_eq!(callback_duration_bucket(1_000), 0);
+        // 2μs → 桶 1
+        assert_eq!(callback_duration_bucket(2_000), 1);
+        // 4μs → 桶 2
+        assert_eq!(callback_duration_bucket(4_000), 2);
+        // 8μs → 桶 3
+        assert_eq!(callback_duration_bucket(8_000), 3);
+        // 1024μs → 桶 10（log2(1024)=10）
+        assert_eq!(callback_duration_bucket(1_024_000), 10);
+        // 32768μs → 溢出到最后一桶（15）
+        assert_eq!(callback_duration_bucket(32_768_000), 15);
+        // 100ms → 溢出到最后一桶
+        assert_eq!(callback_duration_bucket(100_000_000), 15);
+    }
+
+    #[test]
+    fn callback_metric_counters_record_and_drain() {
+        let counters = CallbackMetricCounters::default();
+        counters.record_callback_elapsed(500); // 桶 0
+        counters.record_callback_elapsed(2_000); // 桶 1
+        counters.record_callback_elapsed(4_000); // 桶 2
+        counters.record_underrun_frames(10);
+        counters.record_silence_due_to_lock();
+
+        let drained = counters.drain();
+        assert_eq!(drained.callback_count, 3);
+        assert_eq!(drained.callback_elapsed_ns_total, 6_500);
+        assert_eq!(drained.callback_elapsed_ns_max, 4_000);
+        assert_eq!(drained.underrun_frames, 10);
+        assert_eq!(drained.silence_due_to_lock, 1);
+        assert_eq!(drained.callback_duration_buckets[0], 1);
+        assert_eq!(drained.callback_duration_buckets[1], 1);
+        assert_eq!(drained.callback_duration_buckets[2], 1);
+        // 二次 drain 应清零
+        let empty = counters.drain();
+        assert_eq!(empty.callback_count, 0);
+        assert_eq!(empty.callback_duration_buckets[0], 0);
     }
 }

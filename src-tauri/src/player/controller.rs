@@ -475,6 +475,14 @@ impl AudioPlayer {
                 return;
             }
             if let Some(state) = app_for_metrics.try_state::<crate::app_state::AppState>() {
+                // P1-6 基准：把回调耗时统计一并写入日志上下文。
+                // avg_us = total_ns / count / 1000；桶数组直接序列化为 JSON 数组，供
+                // 后续基准报告脚本按需绘制直方图或近似百分位。
+                let avg_ns = if metrics.callback_count > 0 {
+                    metrics.callback_elapsed_ns_total / metrics.callback_count
+                } else {
+                    0
+                };
                 state.log_center().record(
                     crate::logging::LogPayload::new(
                         crate::logging::LogLevel::Debug,
@@ -488,6 +496,11 @@ impl AudioPlayer {
                         "playback.session_id": session_id,
                         "audio.callback_silence_due_to_lock": metrics.silence_due_to_lock,
                         "audio.callback_underrun_frames": metrics.underrun_frames,
+                        "audio.callback_count": metrics.callback_count,
+                        "audio.callback_elapsed_ns_total": metrics.callback_elapsed_ns_total,
+                        "audio.callback_elapsed_ns_avg": avg_ns,
+                        "audio.callback_elapsed_ns_max": metrics.callback_elapsed_ns_max,
+                        "audio.callback_duration_buckets": metrics.callback_duration_buckets,
                     })),
                 );
             }

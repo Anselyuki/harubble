@@ -67,7 +67,7 @@ pub async fn set_preferences(
     let locale = preferences.locale;
     preferences
         .validate(locale)
-        .map_err(|e| PreferencesError::Internal(e))?;
+        .map_err(PreferencesError::Internal)?;
     let previous_output_dir = state.preferences().output_dir.clone();
     // 通过 update_preferences 让 "读取当前 volume + 应用新字段 + 落盘" 都发生在
     // preferences_write_lock 内，避免与 set_playback_volume 之间产生 TOCTOU。
@@ -78,7 +78,7 @@ pub async fn set_preferences(
             current.volume = preserved_volume;
         })
         .await
-        .map_err(|e| PreferencesError::Io(e))?;
+        .map_err(PreferencesError::Io)?;
     if previous_output_dir != persisted.output_dir {
         spawn_inventory_scan(
             app,
@@ -140,7 +140,7 @@ pub async fn import_preferences(
     state
         .persist_preferences(imported_to_save)
         .await
-        .map_err(|e| PreferencesError::Io(e))?;
+        .map_err(PreferencesError::Io)?;
     if previous.output_dir != imported.output_dir {
         spawn_inventory_scan(
             app,
@@ -183,5 +183,5 @@ pub fn get_notification_permission_state(
 #[tauri::command]
 pub fn send_test_notification(state: State<'_, AppState>) -> Result<(), PreferencesError> {
     let app = state.player().app_handle();
-    crate::notification::notify_test(app).map_err(|e| PreferencesError::Internal(e))
+    crate::notification::notify_test(app).map_err(PreferencesError::Internal)
 }
