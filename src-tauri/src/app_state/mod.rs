@@ -110,7 +110,34 @@ impl AppState {
         );
         let local_inventory_service =
             LocalInventoryService::new(local_inventory_provenance_store.clone());
-        let search_data_dir = app_data_dir.join("library-search");
+        let legacy_search_dir = app_data_dir.join("library-search");
+        let new_search_dir = crate::storage_paths::search_index_root(&app)?;
+        if legacy_search_dir.exists() && !new_search_dir.exists() {
+            if let Err(err) = std::fs::rename(&legacy_search_dir, &new_search_dir) {
+                log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "storage",
+                        "storage.search_migration_failed",
+                        "Failed to migrate search index to cache dir, will rebuild",
+                    )
+                    .details(err.to_string()),
+                );
+                // 迁移失败：删除旧目录以避免重复迁移尝试，索引将在下次 inventory scan 时重建
+                let _ = std::fs::remove_dir_all(&legacy_search_dir);
+            } else {
+                log_center.record(LogPayload::new(
+                    LogLevel::Info,
+                    "storage",
+                    "storage.search_migrated",
+                    "Migrated search index from app_data_dir to app_cache_dir",
+                ));
+            }
+        } else if legacy_search_dir.exists() && new_search_dir.exists() {
+            // 两处都存在：删除旧位置（新位置已经是权威）
+            let _ = std::fs::remove_dir_all(&legacy_search_dir);
+        }
+        let search_data_dir = new_search_dir;
         let library_search_service =
             LibrarySearchService::new(search_data_dir, preferences.output_dir.clone());
         let db_path = prepare_local_database(&app_data_dir, Some(log_center.as_ref()))?;

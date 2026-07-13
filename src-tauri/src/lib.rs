@@ -57,6 +57,7 @@ mod player;
 mod preferences;
 mod search;
 mod startup_recovery;
+pub mod storage_paths;
 mod tag_editor;
 mod tag_registry;
 mod tag_registry_index;
