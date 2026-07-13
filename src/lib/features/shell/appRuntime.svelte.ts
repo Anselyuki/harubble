@@ -1,55 +1,14 @@
 import { tick } from 'svelte';
 import { listen } from '@tauri-apps/api/event';
-import {
-  open as openDialog,
-  save as saveDialog,
-} from '@tauri-apps/plugin-dialog';
 import type { PartialOptions } from 'overlayscrollbars';
 import { gsapScrollIntoView } from '$lib/design/gsap';
 import {
-  getAlbums,
-  getAlbumDetail,
   getDefaultOutputDir,
-  playSong,
-  playNext as playNextTrack,
-  playPrevious as playPreviousTrack,
-  pausePlayback,
-  resumePlayback,
-  seekCurrentPlayback,
   getPlayerState,
-  setPlaybackVolume,
   clearResponseCache,
   resetHttpClient,
-  getSongLyrics,
-  recordSongHeat,
-  createDownloadJob,
   listDownloadJobs,
-  cancelDownloadJob,
-  cancelDownloadTask,
-  retryDownloadJob,
-  retryDownloadTask,
-  clearDownloadHistory,
-  getPreferences,
-  setPreferences,
   getLocalInventorySnapshot,
-  searchLibrary,
-  getLatestAlbums,
-  getAlbumsBySeriesGroup,
-  getRecentHistory,
-  getHomepageStatus,
-  clearListeningHistory,
-  getTagDimensions,
-  getAlbumsByTagDimension,
-  getTagEditorMerged,
-  getTagEditorLocalOverlay,
-  setTagEditorEntityTag,
-  removeTagEditorEntityTag,
-  addTagEditorDimension,
-  removeTagEditorDimension,
-  applyTagEditorRemoteUpdate,
-  resolveTagEditorConflict,
-  exportTagEditorRegistry,
-  importTagEditorRegistry,
 } from '$lib/api';
 import {
   clearCache,
@@ -61,41 +20,13 @@ import type { AppErrorEvent } from '$lib/types';
 import { envStore } from '$lib/features/env/store.svelte';
 import { shellStore } from '$lib/features/shell/store.svelte';
 import { navigationStack } from './navigation.svelte';
-import { createSettingsController } from '$lib/features/shell/settings.svelte';
-import { createAlbumStageMotionController } from '$lib/features/shell/albumStageMotion.svelte';
-import { createLibraryController } from '$lib/features/library/controller.svelte';
-import { createPlayerController } from '$lib/features/player/controller.svelte';
-import { createDownloadController } from '$lib/features/download/controller.svelte';
-import { createHomeController } from '$lib/features/home/controller.svelte';
-import { createTagEditorController } from '$lib/features/tagEditor/controller.svelte';
-import { createCollectionController } from '$lib/features/collection/controller.svelte';
-import { createSearchController } from '$lib/features/search/controller.svelte';
-import {
-  listCollections,
-  getCollection,
-  createCollection,
-  updateCollection,
-  deleteCollection,
-  addSongsToCollection,
-  removeSongsFromCollection,
-  reorderCollectionSongs,
-  exportCollection,
-  importCollection,
-} from '$lib/collectionApi';
 import {
   bootstrapApp,
   subscribeToTauriEvents,
 } from '$lib/features/shell/appRuntimeBootstrap.svelte';
-import { localeState } from '$lib/i18n';
+import { createRuntimeComposites } from '$lib/features/shell/appRuntimeComposites.svelte';
 import * as m from '$lib/paraglide/messages.js';
 import { toast } from 'svelte-sonner';
-import { createSelectionManager } from './selectionManager.svelte';
-import { createThemeManager } from './themeManager.svelte';
-import { createNavigationManager } from './navigationManager.svelte';
-import { createDownloadBridge } from './downloadBridge.svelte';
-
-const MIN_DISPLAY_MS = 120;
-const DETAIL_SKELETON_DELAY_MS = 140;
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -111,192 +42,21 @@ export function createAppRuntime() {
     toast.error(message);
   }
 
-  // --- 子控制器创建 ---
-
-  const settingsController = createSettingsController({
-    getPreferences,
-    setPreferences,
-    notifyError,
-    onLocaleChanged: (locale) => localeState.applyBackendLocale(locale),
-  });
-
-  const albumStageMotionController = createAlbumStageMotionController({
-    getReducedMotion: () => envStore.prefersReducedMotion,
-    getViewportHeight: () => envStore.viewportHeight,
-    getLoadingDetail: () => libraryController.loadingDetail,
-    getIsViewTransitioning: () => navigationManager.isViewTransitioning,
-  });
-
-  const libraryController = createLibraryController({
-    delay,
-    detailSkeletonDelayMs: DETAIL_SKELETON_DELAY_MS,
-    minDetailDisplayMs: MIN_DISPLAY_MS,
-    getAlbums,
-    getAlbumDetail,
-    searchLibrary,
-    preloadAlbumArtwork: (album) => themeManager.preloadAlbumArtwork(album),
-    warmAlbumArtwork: (coverUrl) => themeManager.warmAlbumArtwork(coverUrl),
-    setAlbumStageAspectRatio: (value) =>
-      albumStageMotionController.setAspectRatio(value),
-    notifyError,
-  });
-
-  const playerController = createPlayerController({
-    playSong: async (songCid, coverUrl, context) => {
-      await playSong(songCid, coverUrl ?? undefined, context ?? undefined);
-    },
-    playNextTrack: async () => {
-      await playNextTrack();
-    },
-    playPreviousTrack: async () => {
-      await playPreviousTrack();
-    },
-    pausePlayback,
-    resumePlayback,
-    seekCurrentPlayback: async (positionSecs) => {
-      await seekCurrentPlayback(positionSecs);
-    },
-    setPlaybackVolume,
-    getPlayerState,
-    getSongLyrics,
-    recordSongHeat: (songCid, coverUrl) => {
-      // 热度是尽力而为的统计信号（元数据抓取失败、Tauri IPC 断开等都可能触发），
-      // 失败时不能弹 toast 打扰用户，也不能变成 unhandled rejection——加一个显式
-      // catch 把异常吞掉。真实的播放链路错误由其它更权威的通道呈现。
-      void recordSongHeat(songCid, coverUrl)
-        .then(() => {
-          void homeController.refreshRecentHistory();
-        })
-        .catch(() => {});
-    },
-    notifyError,
-  });
-
-  const downloadController = createDownloadController({
-    createDownloadJob,
-    cancelDownloadJob,
-    cancelDownloadTask,
-    retryDownloadJob,
-    retryDownloadTask,
-    clearDownloadHistory,
-    openDownloadPanel: async (resetFilters = false) => {
-      await shellStore.openDownloads({
-        notifyError,
-        beforeOpen: resetFilters
-          ? () => {
-              downloadController.resetFilters();
-            }
-          : undefined,
-      });
-    },
-    getDownloadOptions: () => ({
-      outputDir: settingsController.state.outputDir,
-      format: settingsController.state.format,
-      downloadLyrics: settingsController.state.downloadLyrics,
-    }),
-    notifyInfo,
-    notifyError,
-  });
-
-  const homeController = createHomeController({
-    getLatestAlbums,
-    getAlbumsBySeriesGroup,
-    getRecentHistory,
-    getHomepageStatus,
-    clearListeningHistory,
-    getTagDimensions,
-    getAlbumsByTagDimension,
-    notifyError,
-  });
-
-  const tagEditorController = createTagEditorController({
-    getTagEditorMerged,
-    getTagEditorLocalOverlay,
-    setTagEditorEntityTag,
-    removeTagEditorEntityTag,
-    addTagEditorDimension,
-    removeTagEditorDimension,
-    applyTagEditorRemoteUpdate,
-    resolveTagEditorConflict,
-    exportTagEditorRegistry,
-    importTagEditorRegistry,
-    pickSavePath: (defaultName) =>
-      saveDialog({
-        defaultPath: defaultName,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      }),
-    pickOpenPath: () =>
-      openDialog({
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      }),
-    getAlbumDetail: (albumCid: string) => getAlbumDetail(albumCid),
-    getAlbums: () => libraryController.albums,
-    notifyError,
-  });
-
-  const searchController = createSearchController({
-    getRecentHistory,
-    getAlbums: () => libraryController.albums,
-    notifyError,
-  });
-
-  const collectionController = createCollectionController({
-    listCollections,
-    getCollection,
-    createCollection,
-    updateCollection,
-    deleteCollection,
-    addSongsToCollection,
-    removeSongsFromCollection,
-    reorderCollectionSongs,
-    exportCollection,
-    importCollection,
-    notifyInfo,
-    notifyError,
-  });
-
-  // --- 子模块创建 ---
-
-  const selectionManager = createSelectionManager({
-    getSelectedAlbum: () => libraryController.selectedAlbum,
-  });
-
-  const themeManager = createThemeManager({
-    getSelectedAlbum: () => libraryController.selectedAlbum,
-    getCurrentView: () => shellStore.currentView,
-    getFullscreenOpen: () => playerController.fullscreenOpen,
-    getSettingsTheme: () => ({
-      presetId: settingsController.state.themePresetId,
-      customColors: settingsController.state.themeCustomColors,
-      colorScheme: settingsController.state.colorScheme,
-      dynamicAlbumAccent: settingsController.state.dynamicAlbumAccent,
-    }),
-  });
-
-  const navigationManager = createNavigationManager({
+  const {
+    settingsController,
     libraryController,
     playerController,
-    collectionController,
-    tagEditorController,
-    albumStageMotionController,
-    clearSongSelection: () => selectionManager.clearSongSelection(),
-    setSelectionModeEnabled: (value) =>
-      selectionManager.setSelectionModeEnabled(value),
-    notifyError,
-    getAlbums: () => libraryController.albums,
-    getSelectedAlbum: () => libraryController.selectedAlbum,
-    getShuffleEnabled: () => playerController.shuffleEnabled,
-    getPlaybackOrder: () => playerController.playbackOrder,
-  });
-
-  const downloadBridge = createDownloadBridge({
     downloadController,
-    playerController,
-    clearSongSelection: () => selectionManager.clearSongSelection(),
-    setSelectionModeEnabled: (value) =>
-      selectionManager.setSelectionModeEnabled(value),
-    notifyError,
-  });
+    homeController,
+    tagEditorController,
+    searchController,
+    collectionController,
+    albumStageMotionController,
+    selectionManager,
+    themeManager,
+    navigationManager,
+    downloadBridge,
+  } = createRuntimeComposites(notifyInfo, notifyError);
 
   // --- 本地状态 ---
 
