@@ -551,6 +551,11 @@ async fn collect_write_result(
                 &artifacts,
             )
             .await;
+        // 下载完成后不直接触发搜索索引增量更新：下载完成只改变本地文件系统状态，
+        // 搜索索引字段（标题、艺术家、简介、tag_values）不包含下载状态徽标。
+        // 正确的更新路径为：下载完成 → 触发库存扫描 → 扫描完成 → 搜索全量重建
+        // （全量重建已被 background_tasks 目录追踪，不会产生孤立后台任务）。
+        // 若未来搜索索引补充"本地可用性"字段，可在此处改为 schedule_local_tag_incremental_update。
         spawn_inventory_scan(app.clone(), state.clone(), root_output_dir, None);
     }
 

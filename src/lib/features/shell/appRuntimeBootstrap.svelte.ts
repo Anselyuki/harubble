@@ -11,6 +11,7 @@ import type {
 } from '$lib/types';
 import type { AppEventMap } from '$lib/appEvents';
 import * as m from '$lib/paraglide/messages.js';
+import { createEventSequence } from '$lib/features/shell/eventSequence.svelte';
 
 /**
  * `bootstrapApp` 所需的外部依赖。
@@ -228,6 +229,12 @@ export async function subscribeToTauriEvents(
   deps: EventSubscriptionDeps,
   shouldDispose: () => boolean
 ): Promise<() => void> {
+  // 事件序列跟踪器：为 player 事件提供客户端侧过期保护。
+  // 当前三个 player 事件的 handler 均为同步实现，seq guard 不产生实际效果，
+  // 但已就位——一旦 handler 升级为 async（例如引入 await 操作），
+  // 可直接启用 token 检查以防止过期载荷覆写。
+  const seq = createEventSequence();
+
   const unlisteners: (() => void)[] = [];
 
   const cleanup = () => {
@@ -260,6 +267,8 @@ export async function subscribeToTauriEvents(
   }
 
   try {
+    // seq 通道：'player-state'
+    // handler 当前为同步；若升级为 async，用 seq.next / seq.isCurrent 防止过期载荷覆写。
     if (
       !(await register('player-state-changed', (event) => {
         deps.setPlayerStateHydratedFromEvent(true);
@@ -269,6 +278,9 @@ export async function subscribeToTauriEvents(
       return cleanup;
     }
 
+    // seq 通道：'player-progress'
+    // 高频事件；handler 当前为同步。升级为 async 后启用 seq guard 可防止
+    // 慢处理函数以旧进度覆写后续进度。
     if (
       !(await register('player-progress', (event) => {
         deps.playerController.syncPlayerProgress(event.payload);
@@ -276,6 +288,10 @@ export async function subscribeToTauriEvents(
     ) {
       return cleanup;
     }
+
+    // seq 通道：'player-ended'
+    // 每首曲目触发一次；handler 当前为同步。升级为 async 后启用 seq guard
+    // 可确保慢速 end handler 不与下一首曲目的状态竞争。
     if (
       !(await register('player-ended', (event) => {
         deps.playerController.syncPlaybackEnded(event.payload);

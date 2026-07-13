@@ -129,3 +129,40 @@ jobs:
 
       - name: Run Rust clippy (strict)
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build-check:
+    name: build-check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: [changes, quality]
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-check-${{ matrix.os }}
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+
+      - name: Cargo check (cross-platform)
+        run: cargo check --workspace
