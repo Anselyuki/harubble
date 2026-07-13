@@ -35,6 +35,7 @@ mod album_metadata_cache;
 mod app_state;
 mod audio_cache;
 pub mod collection;
+mod command_registry;
 mod command_scheduling;
 pub mod commands;
 pub mod desktop_lifecycle;

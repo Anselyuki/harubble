@@ -469,6 +469,12 @@ pub(crate) const COMMAND_SPECS: &[CommandSpec] = &[
         CancelPolicy::Cooperative,
     ),
     spec(
+        "record_song_heat",
+        CommandDomain::PlaybackSideEffect,
+        CommandPriority::CriticalSideEffect,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
         "record_listening_history",
         CommandDomain::PlaybackSideEffect,
         CommandPriority::CriticalSideEffect,
@@ -537,75 +543,12 @@ mod tests {
     use super::{command_spec, CancelPolicy, CommandDomain, CommandPriority, COMMAND_SPECS};
     use std::collections::HashSet;
 
-    const REGISTERED_TAURI_COMMANDS: &[&str] = &[
-        "list_collections",
-        "get_collection",
-        "create_collection",
-        "update_collection",
-        "delete_collection",
-        "add_songs_to_collection",
-        "remove_songs_from_collection",
-        "reorder_collection_songs",
-        "export_collection",
-        "import_collection",
-        "get_albums",
-        "get_album_detail",
-        "get_song_detail",
-        "get_song_lyrics",
-        "extract_image_theme",
-        "get_image_data_url",
-        "get_default_output_dir",
-        "search_library",
-        "play_song",
-        "pause_playback",
-        "resume_playback",
-        "seek_current_playback",
-        "play_next",
-        "play_previous",
-        "get_player_state",
-        "set_playback_volume",
-        "show_main_window",
-        "get_preferences",
-        "set_preferences",
-        "export_preferences",
-        "import_preferences",
-        "get_local_inventory_snapshot",
-        "rescan_local_inventory",
-        "cancel_local_inventory_scan",
-        "get_audio_metadata",
-        "get_notification_permission_state",
-        "send_test_notification",
-        "list_log_records",
-        "get_log_file_status",
-        "clear_audio_cache",
-        "clear_response_cache",
-        "reset_http_client",
-        "create_download_job",
-        "list_download_jobs",
-        "get_download_job",
-        "cancel_download_job",
-        "cancel_download_task",
-        "retry_download_job",
-        "retry_download_task",
-        "clear_download_history",
-        "get_latest_albums",
-        "get_albums_by_series",
-        "get_recent_history",
-        "clear_listening_history",
-        "get_homepage_status",
-        "get_tag_dimensions",
-        "get_albums_by_tag_dimension",
-        "get_tag_editor_merged",
-        "get_tag_editor_local_overlay",
-        "set_tag_editor_entity_tag",
-        "remove_tag_editor_entity_tag",
-        "add_tag_editor_dimension",
-        "remove_tag_editor_dimension",
-        "apply_tag_editor_remote_update",
-        "resolve_tag_editor_conflict",
-        "export_tag_editor_registry",
-        "import_tag_editor_registry",
-    ];
+    macro_rules! extract_names {
+        ( $( ($path:path, $name:literal, $domain:ident, $priority:ident, $cancel:ident) ),* $(,)? ) => {
+            &[ $($name),* ]
+        }
+    }
+    const ALL_TAURI_COMMAND_NAMES: &[&str] = crate::for_each_tauri_command!(extract_names);
 
     const INTERNAL_SCHEDULED_ENTRIES: &[&str] = &[
         "record_listening_history",
@@ -627,7 +570,7 @@ mod tests {
             );
         }
 
-        for command in REGISTERED_TAURI_COMMANDS {
+        for command in ALL_TAURI_COMMAND_NAMES {
             assert!(
                 command_spec(command).is_some(),
                 "missing scheduling spec for {command}"
@@ -636,7 +579,7 @@ mod tests {
 
         for spec in COMMAND_SPECS {
             assert!(
-                REGISTERED_TAURI_COMMANDS.contains(&spec.name)
+                ALL_TAURI_COMMAND_NAMES.contains(&spec.name)
                     || INTERNAL_SCHEDULED_ENTRIES.contains(&spec.name),
                 "scheduling spec {} is neither registered with Tauri nor declared as an internal entry",
                 spec.name

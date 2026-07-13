@@ -217,6 +217,12 @@ fn flush_logs_on_exit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 fn main() {
+    macro_rules! build_invoke_handler {
+        ( $( ($path:path, $name:literal, $domain:ident, $priority:ident, $cancel:ident) ),* $(,)? ) => {
+            tauri::generate_handler![$($path),*]
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -267,76 +273,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::collection::list_collections,
-            commands::collection::get_collection,
-            commands::collection::create_collection,
-            commands::collection::update_collection,
-            commands::collection::delete_collection,
-            commands::collection::add_songs_to_collection,
-            commands::collection::remove_songs_from_collection,
-            commands::collection::reorder_collection_songs,
-            commands::collection::export_collection,
-            commands::collection::import_collection,
-            commands::library::get_albums,
-            commands::library::get_album_detail,
-            commands::library::get_song_detail,
-            commands::library::get_song_lyrics,
-            commands::library::extract_image_theme,
-            commands::library::get_image_data_url,
-            commands::library::get_default_output_dir,
-            commands::search::search_library,
-            commands::playback::play_song,
-            commands::playback::pause_playback,
-            commands::playback::resume_playback,
-            commands::playback::seek_current_playback,
-            commands::playback::play_next,
-            commands::playback::play_previous,
-            commands::playback::get_player_state,
-            commands::playback::set_playback_volume,
-            commands::window::show_main_window,
-            commands::preferences::get_preferences,
-            commands::preferences::set_preferences,
-            commands::preferences::export_preferences,
-            commands::preferences::import_preferences,
-            commands::local_inventory::get_local_inventory_snapshot,
-            commands::local_inventory::rescan_local_inventory,
-            commands::local_inventory::cancel_local_inventory_scan,
-            commands::local_inventory::get_audio_metadata,
-            commands::preferences::get_notification_permission_state,
-            commands::preferences::send_test_notification,
-            commands::logging::list_log_records,
-            commands::logging::get_log_file_status,
-            commands::downloads::clear_audio_cache,
-            commands::downloads::clear_response_cache,
-            commands::downloads::reset_http_client,
-            commands::downloads::create_download_job,
-            commands::downloads::list_download_jobs,
-            commands::downloads::get_download_job,
-            commands::downloads::cancel_download_job,
-            commands::downloads::cancel_download_task,
-            commands::downloads::retry_download_job,
-            commands::downloads::retry_download_task,
-            commands::downloads::clear_download_history,
-            commands::homepage::get_latest_albums,
-            commands::homepage::get_albums_by_series,
-            commands::homepage::get_recent_history,
-            commands::homepage::record_song_heat,
-            commands::homepage::clear_listening_history,
-            commands::homepage::get_homepage_status,
-            commands::tag_registry::get_tag_dimensions,
-            commands::tag_registry::get_albums_by_tag_dimension,
-            commands::tag_editor::get_tag_editor_merged,
-            commands::tag_editor::get_tag_editor_local_overlay,
-            commands::tag_editor::set_tag_editor_entity_tag,
-            commands::tag_editor::remove_tag_editor_entity_tag,
-            commands::tag_editor::add_tag_editor_dimension,
-            commands::tag_editor::remove_tag_editor_dimension,
-            commands::tag_editor::apply_tag_editor_remote_update,
-            commands::tag_editor::resolve_tag_editor_conflict,
-            commands::tag_editor::export_tag_editor_registry,
-            commands::tag_editor::import_tag_editor_registry,
-        ])
+        .invoke_handler(harubble::for_each_tauri_command!(build_invoke_handler))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
