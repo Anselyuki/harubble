@@ -139,9 +139,19 @@ env → library → player → download → home / search / collection / tagEdit
 ### IPC 规则
 
 - **UI 展示组件禁止直接调用 `invoke` / `listen`**
-- IPC 入口集中在 `lib/api.ts`、`lib/settingsApi.ts`、`lib/collectionApi.ts`
-- 事件订阅集中在 `appRuntime.svelte.ts` / `appRuntimeBootstrap.svelte.ts`
+- Rust command 注册统一维护在 `src-tauri/src/command_registry.rs`；新增或删除 command 时只修改这份注册表
+- `src-tauri/src/command_scheduling.rs` 的 `COMMAND_SPECS` 是 command 调度元数据来源，必须与注册表保持覆盖一致
+- 前端 command bridge 集中在 `lib/api.ts`、`lib/settingsApi.ts`、`lib/collectionApi.ts`
+- `lib/appEvents.ts` 的 `AppEventMap` 统一维护事件名与载荷类型
+- 事件订阅集中在 `appRuntime.svelte.ts` / `appRuntimeBootstrap.svelte.ts`；`features/player/miniPlayerBridge.ts` 是迷你播放器独立窗口的受控例外
 - controller / shell / bridge 层承担 IPC 与事件转译
+
+修改 command、事件名或载荷后，至少运行以下契约检查：
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml command_scheduling::tests::command_registry_covers_all_tauri_commands -- --nocapture
+bunx vitest run src/lib/features/contract/ipc-contract.test.ts
+```
 
 ### 响应式粒度
 
@@ -159,6 +169,17 @@ env → library → player → download → home / search / collection / tagEdit
 关键表面语义：`surface.window` / `.sidebar` / `.workspace` / `.sheet` / `.dock` / `.flyout` / `.state`。
 
 阴影 / 边框 token：`--hero-card-shadow`、`--stage-shell-shadow`、`--sheet-border` 等在 `app.css` 顶部定义，深浅色自动切换。
+
+Token 归属：
+
+| 类型            | 内容                                          | 维护入口                                          |
+| --------------- | --------------------------------------------- | ------------------------------------------------- |
+| App theme       | 背景、文字、边框、surface                     | `applyAppThemeTokenSet`                           |
+| Context theme   | accent、album accent、wave                    | `applyContextThemePalette`                        |
+| Component alias | `toolbar-*`、`stage-*`、`player-*` 等组件语义 | `app.css`，不由 JS 运行时直接写入                 |
+| 静态 token      | motion、easing、font                          | `app.css` / `design/gsap.ts` / `styles/fonts.css` |
+
+`@theme inline` 只把 Tailwind token 映射到现有语义变量，不另建颜色来源。新增颜色时先确定所属层级，组件内不要复制主题值或直接写入根变量。
 
 ### 字体方案
 
@@ -297,20 +318,10 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 
 - 局部大范围的语义视觉（如 `.app-dialog`、`.sheet-section`、`.settings-field`）继续用普通 CSS 显式声明 padding / spacing / 排版，避免堆砌重复的 utility 组合；这些语义 class 优先级足以覆盖 utility 层。
 - 组件内一次性、局部的间距调整优先用 Tailwind utility 或组件 variant，不再需要 `!important` / `px-3!` 之类的硬刚写法。
-- 历史决策与迁移原因见 `docs/history/decisions.md` 决策 9 的正文与 2026-07 注记。
 
 ## 6. 国际化（i18n）
 
-语言来源：`AppPreferences.locale` 是唯一来源，前端只镜像后端偏好。
-
-前端翻译层使用 `@inlang/paraglide-js`，构建期生成类型安全 message 函数到 `src/lib/paraglide/`。
-
-规则：
-
-1. 用户可见文案必须通过 Paraglide message，不得硬编码
-2. 新增 `zh-CN` message 时必须同步新增 `en-US` message
-3. 动态文案使用参数化模板，不做字符串拼接
-4. 上游内容数据（专辑名、歌曲名、歌词等）不翻译
+国际化的语言来源、前后端资源结构和文案规则统一见 [internationalization.md](./internationalization.md)。前端只镜像 `AppPreferences.locale`，不另行持久化语言。
 
 响应式更新：组件文案必须显式依赖 `localeState.current` 建立响应式依赖。高频组件使用聚合 `$derived.by()` 模式，低频面板可用 `{#key localeState.current}`。
 
@@ -350,7 +361,5 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 ## 9. 相关文档
 
 - Rust rustdoc（`cargo doc`）：后端类型、命令、事件的接口文档
-- [roadmap.md](../history/roadmap.md)：后端路线图
-- [decisions.md](../history/decisions.md)：技术选型决策记录
 - [internationalization.md](./internationalization.md)：国际化架构参考
 - [release-process.md](../process/release-process.md)：CI 与发布流程

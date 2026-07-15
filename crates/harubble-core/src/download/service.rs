@@ -112,7 +112,7 @@ pub struct TaskStateUpdate {
 
 /// 已完成异步准备但尚未注册到队列中的下载批次。
 ///
-/// 该结构体由 [`DownloadService::prepare_job`] 返回，封装了经过请求验证、ID 生成
+/// 该结构体由 [`prepare_job`] 返回，封装了经过请求验证、ID 生成
 /// 与上游 API 查询后的批次元数据与子任务列表，可稳定交由
 /// [`DownloadService::register_prepared_job`] 在短临界区内完成入队。
 pub struct PreparedJob {

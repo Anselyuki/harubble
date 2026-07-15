@@ -82,6 +82,7 @@ Command 作用域、资源域和调度优先级的当前实现见 [playback-comm
 18. **No realtime lock wait:** `SampleBuffer` 使用 lock-free 的 `crossbeam_queue::ArrayQueue<f32>`，实时回调与解码线程之间没有可竞争的采样队列互斥锁；采样弹出走 `try_pop_realtime_frames_into`，从不阻塞。若 `PlayerState` 状态锁被 UI/媒体同步暂时占用，本次回调继续输出音频，只跳过进度快照写入。
 19. **Dedicated playback resource domain:** 播放 command、媒体控制切歌/seek、播放启动和音频流下载必须使用 `PlaybackActor`、`playback_api` 与 `harubble-playback` runtime；普通 UI、视觉辅助、下载、搜索和后台预热任务不得复用播放客户端或播放 runtime。
 20. **No new background work during playback startup:** 播放器处于 `Loading` 时，下载执行循环、本地库存扫描、搜索索引重建、belong 预热和 tag registry 同步不能领取新后台工作；已启动的下载或扫描只通过常规取消语义结束，不因播放启动被硬停。
+21. **No realtime side effects:** 音频实时回调的正常热路径不得新增锁等待、IO、日志写入、channel send wait 或无界分配；观测数据只能写入原子计数器或预分配结构，由非实时线程聚合。
 
 ## Startup Flow
 
@@ -145,7 +146,7 @@ Frontend controller state is a projection of backend state:
 - `player-progress` updates time only when the same session remains active.
 - `player-ended` must carry `sessionId`; stale ended events are ignored.
 - `isPlayTogglePending` is UI-only pending state and must clear once backend snapshot reaches the target state.
-- Lyrics, album artwork data URL conversion and album theme extraction are VisualAux tasks. They run through `image_api`, wait for the playback load gate, serialize behind the backend `visual_aux_lock`, and still rely on frontend request sequencing to discard stale results.
+- Lyrics, cached artwork path resolution and album theme extraction are VisualAux tasks. They wait for the playback load gate, serialize behind the backend `visual_aux_lock`, and still rely on frontend request sequencing to discard stale results. Artwork is stored in the bounded disk cache and exposed through the Tauri asset protocol.
 
 Frontend must not synthesize backend states that contradict `PlayerState`. Buttons may show pending/loading, but playback truth comes from backend events or `get_player_state`.
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 - 技术栈：Rust + Tauri 2 + Vite + Svelte 5
 - 形态：跨平台桌面应用（当前发布产物覆盖 macOS / Windows / Linux）
-- 当前状态：核心功能链路（下载、播放、库存、搜索、合集、Tag Editor）已稳定；当前主线聚焦于搜索体验打磨（12B/12C）与前端文档收敛
+- 当前状态：下载、播放、库存、搜索、合集和 Tag Editor 等核心领域已落地；进行中的任务以当前代码、Issues 和 PR 为准，仓库文档不维护阶段完成清单
 
 ## 常用命令
 
@@ -33,9 +33,12 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 ## 关键入口
 
-- `src-tauri/src/main.rs`：Tauri 入口、command 注册与应用启动 wiring
+- `src-tauri/src/main.rs`：Tauri 二进制入口与应用启动 wiring
+- `src-tauri/src/command_registry.rs`：Tauri command 注册单一事实源
+- `src-tauri/src/command_scheduling.rs`：command 调度元数据与资源域约束
 - `src-tauri/src/app_state/mod.rs`：后端共享状态组合，聚合播放器、下载、库存、偏好、日志与搜索服务。已拆分为 `api_clients` / `download_subsystem` / `preferences` / `playback` / `media_controls` 子模块
-- `src/App.svelte`：前端根装配层，负责 controller 初始化、Tauri 事件订阅、跨域状态协调与壳层组件编排
+- `src/App.svelte`：前端壳层入口，实例化 runtime，并装配侧栏、路由、播放器和侧边面板
+- `src/lib/features/shell/appRuntime.svelte.ts`：controller 初始化、Tauri 事件订阅与跨域状态协调
 - `src/lib/api.ts`：主 Tauri command bridge
 - `src/lib/settingsApi.ts`：设置面板专用 IPC bridge
 - `src/lib/collectionApi.ts`：合集专用 IPC bridge
@@ -54,18 +57,10 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 ## 真相来源
 
-- **后端契约真相**：Rust rustdoc（`cargo doc`）+ `src/lib/api.ts` 类型定义
+- **后端契约真相**：Rust rustdoc（`cargo doc`）、`src-tauri/src/command_registry.rs` 与前端 bridge/type 定义
 - **前端架构真相**：`docs/reference/frontend-guide.md`
 - **发布流程真相**：`.github/workflows/ci.yml`、`.github/workflows/distribute.yml` 与 `docs/process/release-process.md`
-- **阶段记录**：`docs/history/roadmap.md`
-- **技术决策背景**：`docs/history/decisions.md`
 - **文档目录**：`docs/README.md`
-
-## 当前实现状态
-
-- **已稳定**：Phase 1–10、下载历史增强、日志 viewer、偏好系统、本地库存标记链路、Phase 12A 库内搜索 MVP、合集系统（官方 + 用户 CRUD + 导入导出）、Tag Editor（双层编辑 + 三路合并 + 冲突解决）
-- **已部分落地**：Phase 12B 的 `intro / belong` 命中表达、拼音召回与搜索排序增强
-- **仍在演进**：Phase 11 的条件触发型后端增强、Phase 12B 剩余搜索增强、Phase 12C 歌词检索，以及前端 controller / 文档收敛
 
 ## 代码层约定
 
@@ -88,6 +83,8 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - 后端”端点”指的是 Tauri command，不是 HTTP server route
 - 共享数据结构优先在 Rust 侧定义，再让前端 `types.ts` 保持形状一致
 - 涉及并发、异步或后台任务时，不跨 `await` 持有锁，不改变 cancel / stop / worker 生命周期，也不改变资源清理顺序
+- 新增或删除 Tauri command 时只修改 `src-tauri/src/command_registry.rs`，并同步维护 `COMMAND_SPECS`、前端 bridge/type 与契约测试
+- `src-tauri/src/main.rs` 顶部必须保留 `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`；新增 GUI 二进制入口时同步设置，`@tauri-apps/api` 与 Rust `tauri` crate 保持 minor 版本一致
 - 所有对外暴露的 API 都必须编写函数文档，且文档内容统一使用中文：
   - 至少说明用途、入参语义、出参/返回值语义以及关键副作用或错误场景
   - 层级较高、承担入口职责的 API，还应补充适用场景、使用注意事项与调用约束
@@ -107,6 +104,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - 前端代码与 Markdown 文档默认使用 Prettier 统一格式化；前端静态规则检查默认使用 ESLint；Rust 代码格式化默认使用 `cargo fmt --all`
 - `bun run check` 默认包含格式、lint、类型、前端构建与 `cargo check --workspace`，`cargo test --workspace` 需单独执行
 - 结构性重构、测试整理与文档补充默认视为行为保持变更；不要改业务分支语义、状态流转顺序、事件顺序、错误语义或日志 key
+- 行为保持类变更应保持单一目的和清晰边界，通过相关测试后再合入，不把命名整理、业务修正和契约变更混在同一批 diff 中
 
 ### 测试
 
@@ -119,4 +117,3 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 - 未经用户明确指示，不要新建分支；默认在当前分支上工作，涉及分支切换、新建分支、基于分支的推送或 PR 准备时先确认
 - 所有提交、PR 及相关 git / GitHub 协作文案一律使用中文
-- 如果本轮改动属于测试整理、结构性重构或审批材料补充，优先对照 `docs/process/review-rules.md` 中的通用规则，而不是把实现细节写进审批文档
