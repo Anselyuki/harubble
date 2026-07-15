@@ -470,6 +470,17 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     }
   }
 
+  function shouldRestartCompletedTrack() {
+    return (
+      currentSong !== null &&
+      !isPlaying &&
+      !isPaused &&
+      !hasNext &&
+      duration > 0 &&
+      progress >= duration - 0.05
+    );
+  }
+
   async function handlePlaybackEnded(songCid: string) {
     const requestSeq = ++playbackEndRequestSeq;
 
@@ -524,7 +535,11 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     if (pendingPlayToggleTarget || isLoading) return;
     pendingPlayToggleTarget = 'playing';
     try {
-      await deps.resumePlayback();
+      if (shouldRestartCompletedTrack()) {
+        await deps.seekCurrentPlayback(0);
+      } else {
+        await deps.resumePlayback();
+      }
     } catch (error) {
       pendingPlayToggleTarget = null;
       deps.notifyError(

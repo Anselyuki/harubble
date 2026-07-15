@@ -146,6 +146,79 @@ describe('createPlayerController', () => {
     });
   });
 
+  describe('resume', () => {
+    it('restarts a completed track from the beginning when no next track exists', async () => {
+      const seekCurrentPlayback = vi.fn().mockResolvedValue(undefined);
+      const resumePlayback = vi.fn().mockResolvedValue(undefined);
+      const deps = makeDeps({
+        seekCurrentPlayback,
+        resumePlayback,
+        getPlayerState: vi.fn().mockResolvedValue(
+          makePlayerState({
+            sessionId: 2,
+            songCid: 'song-a',
+            songName: 'Song A',
+            isPlaying: true,
+            progress: 0,
+            duration: 180,
+          })
+        ),
+      });
+      const ctrl = createPlayerController(deps);
+      ctrl.syncPlayerState(
+        makePlayerState({
+          songCid: 'song-a',
+          songName: 'Song A',
+          progress: 180,
+          duration: 180,
+          hasNext: false,
+        })
+      );
+
+      await ctrl.resume();
+
+      expect(seekCurrentPlayback).toHaveBeenCalledOnce();
+      expect(seekCurrentPlayback).toHaveBeenCalledWith(0);
+      expect(resumePlayback).not.toHaveBeenCalled();
+      expect(ctrl.isPlaying).toBe(true);
+      expect(ctrl.progress).toBe(0);
+    });
+
+    it('keeps using resume for a paused track', async () => {
+      const seekCurrentPlayback = vi.fn().mockResolvedValue(undefined);
+      const resumePlayback = vi.fn().mockResolvedValue(undefined);
+      const deps = makeDeps({
+        seekCurrentPlayback,
+        resumePlayback,
+        getPlayerState: vi.fn().mockResolvedValue(
+          makePlayerState({
+            songCid: 'song-a',
+            songName: 'Song A',
+            isPlaying: true,
+            progress: 90,
+            duration: 180,
+          })
+        ),
+      });
+      const ctrl = createPlayerController(deps);
+      ctrl.syncPlayerState(
+        makePlayerState({
+          songCid: 'song-a',
+          songName: 'Song A',
+          isPaused: true,
+          progress: 90,
+          duration: 180,
+          hasNext: false,
+        })
+      );
+
+      await ctrl.resume();
+
+      expect(resumePlayback).toHaveBeenCalledOnce();
+      expect(seekCurrentPlayback).not.toHaveBeenCalled();
+    });
+  });
+
   describe('syncPlayerProgress heat', () => {
     it('fires recordSongHeat once at 50% progress', () => {
       const recordSongHeat = vi.fn();

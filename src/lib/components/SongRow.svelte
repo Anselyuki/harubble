@@ -125,7 +125,22 @@
 
   function handleRowPlay() {
     if (selectionMode) return;
-    onclick?.();
+    if (isPlaying) {
+      onTogglePlay?.();
+    } else {
+      onclick?.();
+    }
+  }
+
+  function handleRowDoubleClick(event: MouseEvent) {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest('button, a, input, select, textarea, [role="menuitem"]')
+    ) {
+      return;
+    }
+    handleRowPlay();
   }
 
   function computeExtraTags(
@@ -169,7 +184,7 @@
   tabindex="0"
   aria-label={song.name}
   onclick={handleRowActivate}
-  ondblclick={handleRowPlay}
+  ondblclick={handleRowDoubleClick}
   onkeydown={(e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();

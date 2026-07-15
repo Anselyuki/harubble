@@ -24,6 +24,7 @@
     SkipForward,
   } from '@lucide/svelte';
   import * as m from '$lib/paraglide/messages.js';
+  import { imageDataSrc } from '$lib/imageDataSrc';
 
   type PendingAction = 'play' | 'previous' | 'next' | 'seek';
   type PlayToggleTarget = 'playing' | 'paused';
@@ -234,7 +235,7 @@
   <section class="track-row" aria-label={m.mini_player_track_section_aria()}>
     <div class="cover-shell" aria-hidden="true" data-tauri-drag-region>
       {#if playerState.coverUrl}
-        <img class="cover-art" src={playerState.coverUrl} alt="" />
+        <img class="cover-art" use:imageDataSrc={playerState.coverUrl} alt="" />
       {:else}
         <Music2 size={24} strokeWidth={1.8} />
       {/if}

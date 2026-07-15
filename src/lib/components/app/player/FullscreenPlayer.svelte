@@ -7,7 +7,7 @@
     gsapScrollIntoView,
     MOTION,
   } from '$lib/design/gsap';
-  import { getImageDataUrl } from '$lib/api';
+  import { getImageSrc } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import {
@@ -18,6 +18,7 @@
   import { formatTime } from '$lib/features/player/formatUtils';
   import MotionMarqueeInner from '$lib/components/MotionMarqueeInner.svelte';
   import { lyricActiveTween } from '$lib/design/actions';
+  import { Repeat, Repeat1 } from '@lucide/svelte';
 
   const player = getPlayerContext();
   const download = getDownloadContext();
@@ -163,9 +164,9 @@
     }
     void (async () => {
       try {
-        const dataUrl = await getImageDataUrl(coverUrl);
+        const imageSrc = await getImageSrc(coverUrl);
         if (seq !== coverRequestSeq) return;
-        resolvedCoverUrl = dataUrl;
+        resolvedCoverUrl = imageSrc;
       } catch {
         if (seq !== coverRequestSeq) return;
         resolvedCoverUrl = null;
@@ -501,23 +502,11 @@
         disabled={player.isLoading}
         onclick={() => player.toggleRepeat(nextRepeatMode(player.repeatMode))}
       >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 8h10.8"></path>
-          <path d="m13.3 5.4 2.7 2.6-2.7 2.6"></path>
-          <path d="M19 16H8.2"></path>
-          <path d="m10.7 18.6-2.7-2.6 2.7-2.6"></path>
-          {#if player.repeatMode === 'one'}
-            <circle
-              cx="12"
-              cy="12"
-              r="3.15"
-              fill="rgba(255,255,255,0.12)"
-              stroke="currentColor"
-            ></circle>
-            <path d="M12 10.3v3.4"></path>
-            <path d="m11.4 10.9.6-.6"></path>
-          {/if}
-        </svg>
+        {#if player.repeatMode === 'one'}
+          <Repeat1 class="fs-repeat-mode-icon" aria-hidden="true" />
+        {:else}
+          <Repeat class="fs-repeat-mode-icon" aria-hidden="true" />
+        {/if}
       </button>
     </div>
   </div>

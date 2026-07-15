@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getImageDataUrl } from '$lib/api';
+  import { getImageSrc } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import {
@@ -16,6 +16,7 @@
   import VolumeCapsule from '$lib/components/app/player/VolumeCapsule.svelte';
   import type { LyricLine } from '$lib/features/player/lyrics';
   import type { PlaybackFormatState } from '$lib/types';
+  import { Repeat, Repeat1 } from '@lucide/svelte';
   import {
     gsap,
     getMotionDuration,
@@ -292,9 +293,9 @@
     }
     void (async () => {
       try {
-        const dataUrl = await getImageDataUrl(coverUrl);
+        const imageSrc = await getImageSrc(coverUrl);
         if (requestSeq !== coverRequestSeq) return;
-        resolvedCoverUrl = dataUrl;
+        resolvedCoverUrl = imageSrc;
       } catch {
         if (requestSeq !== coverRequestSeq) return;
         resolvedCoverUrl = null;
@@ -812,17 +813,11 @@
         disabled={!canRepeat}
         onclick={handleRepeatToggle}
       >
-        <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 8h10.8"></path>
-          <path d="m13.3 5.4 2.7 2.6-2.7 2.6"></path>
-          <path d="M19 16H8.2"></path>
-          <path d="m10.7 18.6-2.7-2.6 2.7-2.6"></path>
-          {#if repeatMode === 'one'}
-            <circle class="repeat-badge" cx="12" cy="12" r="3.15"></circle>
-            <path d="M12 10.3v3.4"></path>
-            <path d="m11.4 10.9.6-.6"></path>
-          {/if}
-        </svg>
+        {#if repeatMode === 'one'}
+          <Repeat1 class="repeat-mode-icon" aria-hidden="true" />
+        {:else}
+          <Repeat class="repeat-mode-icon" aria-hidden="true" />
+        {/if}
       </button>
     </div>
 
@@ -1550,9 +1545,10 @@
     stroke: none;
   }
 
-  .control-icon .repeat-badge {
-    fill: color-mix(in srgb, currentColor 12%, transparent);
-    stroke: currentColor;
+  .icon-button :global(svg.repeat-mode-icon) {
+    width: 15px;
+    height: 15px;
+    stroke-width: 2.35;
   }
 
   .stateful-icon .toggle-badge,
