@@ -1,13 +1,14 @@
 //! 媒体库与详情读取相关的 Tauri command。
 //!
 //! 当前暴露的接口覆盖专辑列表、专辑详情、单曲详情、歌词文本、远程封面主题提取，
-//! 以及远程封面 data URL 转换与默认下载目录建议值读取，主要服务于前端的浏览、播放前预取与展示增强场景。
+//! 以及远程封面磁盘缓存与默认下载目录建议值读取，主要服务于前端的浏览、播放前预取与展示增强场景。
 
 use crate::app_state::AppState;
+use crate::image_cache;
+use crate::storage_paths;
 use crate::theme;
-use base64::Engine;
 use std::fmt;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 // ─── 错误类型 ─────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,13 @@ impl fmt::Display for LibraryError {
 }
 
 impl std::error::Error for LibraryError {}
+
+fn map_image_cache_error(error: image_cache::ImageCacheError) -> LibraryError {
+    match error {
+        image_cache::ImageCacheError::Network(error) => LibraryError::Network(error.to_string()),
+        image_cache::ImageCacheError::Storage(error) => LibraryError::Internal(error.to_string()),
+    }
+}
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
@@ -138,18 +146,28 @@ pub async fn get_song_lyrics(
 /// 该接口会发起网络请求并在阻塞线程中执行图片分析，调用方应避免把它作为高频实时操作。
 #[tauri::command]
 pub async fn extract_image_theme(
+    app: AppHandle,
     state: State<'_, AppState>,
     image_url: String,
 ) -> Result<theme::ThemePalette, LibraryError> {
     harubble_core::validate_download_url(&image_url)
         .map_err(|e| LibraryError::Internal(e.to_string()))?;
+    let cache_dir = storage_paths::image_cache_root(&app).map_err(LibraryError::Internal)?;
     state
         .dispatch_visual_aux("extract_image_theme", move |state| async move {
-            let bytes = state
-                .image_api_client()
-                .download_bytes_coalesced(&image_url)
-                .await
-                .map_err(|e| LibraryError::Network(e.to_string()))?;
+            let image_path = image_cache::get_or_download(
+                cache_dir,
+                image_url,
+                state.image_api_client().clone(),
+            )
+            .await
+            .map_err(map_image_cache_error)?;
+            let bytes = tokio::fs::read(&image_path).await.map_err(|error| {
+                LibraryError::Internal(format!(
+                    "failed to read cached image {}: {error}",
+                    image_path.display()
+                ))
+            })?;
 
             tokio::task::spawn_blocking(move || theme::extract_theme_palette(&bytes))
                 .await
@@ -159,39 +177,22 @@ pub async fn extract_image_theme(
         .await
 }
 
-fn encode_image_data_url(mime: &str, bytes: &[u8]) -> String {
-    format!(
-        "data:{};base64,{}",
-        mime,
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
-}
-
-/// 下载图片并返回 data URL，供前端直接渲染。
+/// 下载图片到受控磁盘缓存，并返回供 asset protocol 使用的绝对路径。
 ///
-/// 适用于需要把远端封面转换为可直接绑定到 `<img>` 或 CSS 背景的内联资源场景。
-/// 入参 `image_url` 为远端图片地址；返回值为带 MIME 前缀的完整 data URL 字符串。
-/// 该接口会把整张图片载入内存并进行 Base64 编码，不适合对大图或高频批量列表长时间重复调用。
+/// 缓存按 URL 哈希命名并按总字节数回收，命中时不会访问远端 CDN。
 #[tauri::command]
-pub async fn get_image_data_url(
+pub async fn get_cached_image_path(
+    app: AppHandle,
     state: State<'_, AppState>,
     image_url: String,
 ) -> Result<String, LibraryError> {
     harubble_core::validate_download_url(&image_url)
         .map_err(|e| LibraryError::Internal(e.to_string()))?;
-    state
-        .dispatch_visual_aux("get_image_data_url", move |state| async move {
-            let bytes = state
-                .image_api_client()
-                .download_bytes_coalesced(&image_url)
-                .await
-                .map_err(|e| LibraryError::Network(e.to_string()))?;
-
-            let mime = harubble_core::audio::detect_image_mime(&bytes)
-                .unwrap_or("application/octet-stream");
-            Ok(encode_image_data_url(mime, &bytes))
-        })
+    let cache_dir = storage_paths::image_cache_root(&app).map_err(LibraryError::Internal)?;
+    let path = image_cache::get_or_download(cache_dir, image_url, state.image_api_client().clone())
         .await
+        .map_err(map_image_cache_error)?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// 返回默认下载输出目录。

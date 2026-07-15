@@ -1,5 +1,5 @@
 import type { AlbumDetail, ThemePalette } from '$lib/types';
-import { extractImageTheme, getImageDataUrl } from '$lib/api';
+import { extractImageTheme, getImageSrc } from '$lib/api';
 import {
   resolveAppThemeTokenSet,
   applyAppThemeTokenSet,
@@ -55,7 +55,7 @@ export function createThemeManager(deps: ThemeManagerDeps) {
   function warmAlbumArtwork(coverUrl: string): void {
     if (warmingUrl === coverUrl && warmingPromise) return;
     warmingUrl = coverUrl;
-    warmingPromise = getImageDataUrl(coverUrl).catch(() => coverUrl);
+    warmingPromise = getImageSrc(coverUrl).catch(() => coverUrl);
   }
 
   async function preloadAlbumArtwork(
@@ -64,15 +64,15 @@ export function createThemeManager(deps: ThemeManagerDeps) {
     const sourceUrl = getPreferredAlbumArtworkUrl(album);
     if (!sourceUrl) return null;
 
-    const dataUrlPromise =
+    const imageSrcPromise =
       warmingUrl === sourceUrl && warmingPromise
         ? warmingPromise
-        : getImageDataUrl(sourceUrl).catch(() => sourceUrl);
+        : getImageSrc(sourceUrl).catch(() => sourceUrl);
     warmingUrl = null;
     warmingPromise = null;
 
     const [resolvedUrl] = await Promise.all([
-      dataUrlPromise,
+      imageSrcPromise,
       extractImageTheme(sourceUrl).catch(() => null),
     ]);
     const meta = await preloadImage(resolvedUrl);
@@ -157,9 +157,9 @@ export function createThemeManager(deps: ThemeManagerDeps) {
     void (async () => {
       if (requestSeq !== artworkRequestSeq) return;
       try {
-        const dataUrl = await getImageDataUrl(sourceUrl);
+        const imageSrc = await getImageSrc(sourceUrl);
         if (requestSeq !== artworkRequestSeq) return;
-        selectedAlbumArtworkUrl = dataUrl;
+        selectedAlbumArtworkUrl = imageSrc;
       } catch {
         if (requestSeq !== artworkRequestSeq) return;
         selectedAlbumArtworkUrl = null;

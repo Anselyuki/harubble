@@ -14,8 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
 dirs = "5"
+filetime = "0.2"
 cpal = "0.17"
 crossbeam-queue = "0.3"
 hound = "3"
@@ -27,7 +27,7 @@ serde_json = "1"
 harubble_core = { path = "../crates/harubble-core" }
 souvlaki = "0.8"
 symphonia = { version = "0.5.5", features = ["flac", "mp3", "wav"] }
-tauri = { version = "2", features = ["custom-protocol", "tray-icon"] }
+tauri = { version = "2", features = ["custom-protocol", "tray-icon", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 toml = "0.8"

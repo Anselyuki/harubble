@@ -77,7 +77,7 @@ macro_rules! for_each_tauri_command {
             (commands::library::get_song_detail, "get_song_detail", InteractiveUi, Interactive, Cooperative),
             (commands::library::get_song_lyrics, "get_song_lyrics", VisualAux, Visual, LatestWins),
             (commands::library::extract_image_theme, "extract_image_theme", VisualAux, Visual, LatestWins),
-            (commands::library::get_image_data_url, "get_image_data_url", VisualAux, Visual, LatestWins),
+            (commands::library::get_cached_image_path, "get_cached_image_path", VisualAux, Visual, Cooperative),
             (commands::library::get_default_output_dir, "get_default_output_dir", InteractiveUi, Interactive, NeverCancel),
 
             // ── Search (1) ───────────────────────────────────────────────────

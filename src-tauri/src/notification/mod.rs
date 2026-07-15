@@ -134,7 +134,7 @@ pub fn notify_playback_changed(app: &AppHandle, player_state: &PlayerState) {
 
     tauri::async_runtime::spawn(async move {
         let cover_path = if let Some(ref url) = cover_url {
-            cover::download_to_temp(&app_for_task, url).await
+            cover::get_cached_path(&app_for_task, url).await
         } else {
             None
         };

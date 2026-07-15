@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   cacheManager,
@@ -42,11 +42,10 @@ const CACHE_KEY_ALBUM_DETAIL = 'album_detail:';
 const CACHE_KEY_SONG_DETAIL = 'song_detail:';
 const CACHE_KEY_SONG_LYRICS = 'song_lyrics:';
 const CACHE_KEY_IMAGE_THEME = 'image_theme:';
-const CACHE_KEY_IMAGE_DATA_URL = 'image_data_url:';
 const IMAGE_RESOURCE_CONCURRENCY_LIMIT = 1;
 
 const inflightImageThemeRequests = new Map<string, Promise<ThemePalette>>();
-const inflightImageDataUrlRequests = new Map<string, Promise<string>>();
+const inflightImageSrcRequests = new Map<string, Promise<string>>();
 const queuedImageResourceRequests: (() => void)[] = [];
 let activeImageResourceRequestCount = 0;
 
@@ -287,37 +286,25 @@ export async function extractImageTheme(
   }
 }
 
-export async function getImageDataUrl(imageUrl: string): Promise<string> {
-  const cacheKey = `${CACHE_KEY_IMAGE_DATA_URL}${imageUrl}`;
-  const inflight = inflightImageDataUrlRequests.get(cacheKey);
+export async function getImageSrc(imageUrl: string): Promise<string> {
+  const inflight = inflightImageSrcRequests.get(imageUrl);
   if (inflight) {
     return inflight;
   }
 
   const request = (async () => {
-    const cached = await cacheManager.covers.get(cacheKey);
-    if (cached.found) {
-      return cached.data;
-    }
-
-    return scheduleImageResourceRequest(async () => {
-      const queuedCached = await cacheManager.covers.get(cacheKey);
-      if (queuedCached.found) {
-        return queuedCached.data;
-      }
-
-      const data = await invoke<string>('get_image_data_url', { imageUrl });
-      await cacheManager.covers.set(cacheKey, data);
-      return data;
+    const cachedPath = await invoke<string>('get_cached_image_path', {
+      imageUrl,
     });
+    return convertFileSrc(cachedPath);
   })();
-  inflightImageDataUrlRequests.set(cacheKey, request);
+  inflightImageSrcRequests.set(imageUrl, request);
 
   try {
     return await request;
   } finally {
-    if (inflightImageDataUrlRequests.get(cacheKey) === request) {
-      inflightImageDataUrlRequests.delete(cacheKey);
+    if (inflightImageSrcRequests.get(imageUrl) === request) {
+      inflightImageSrcRequests.delete(imageUrl);
     }
   }
 }

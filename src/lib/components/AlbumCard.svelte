@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Album } from '$lib/types';
   import { lazyLoad } from '$lib/lazyLoad';
+  import MotionSpinner from '$lib/components/MotionSpinner.svelte';
   import {
     getDownloadBadgeLabel,
     shouldShowAlbumListDownloadBadge,
@@ -18,6 +19,8 @@
     selected?: boolean;
     loading?: boolean;
     reducedMotion?: boolean;
+    coverPreloadRoot?: Element | null;
+    coverPreloadMargin?: string;
     testId?: string;
     onclick?: () => void;
   }
@@ -28,6 +31,8 @@
     selected = false,
     loading = false,
     reducedMotion = false,
+    coverPreloadRoot = null,
+    coverPreloadMargin = '150px',
     testId = 'album-card',
     onclick,
   }: Props = $props();
@@ -133,14 +138,18 @@
 >
   <div
     class="album-cover-wrapper"
-    use:lazyLoad={{ rootMargin: '150px', reducedMotion }}
+    use:lazyLoad={{
+      root: coverPreloadRoot,
+      rootMargin: coverPreloadMargin,
+      reducedMotion,
+    }}
     data-src={album.coverUrl}
   >
     <div class="album-cover-placeholder">♪</div>
     <img class="album-cover-img" alt={album.name} />
     {#if loading}
       <div class="album-cover-loading" aria-hidden="true">
-        <span class="album-cover-spinner"></span>
+        <MotionSpinner className="album-cover-spinner" {reducedMotion} />
       </div>
     {/if}
   </div>
@@ -259,13 +268,10 @@
     backdrop-filter: blur(2px);
   }
 
-  .album-cover-spinner {
+  .album-cover-loading :global(.album-cover-spinner) {
     width: 20px;
     height: 20px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: motion-spin 0.9s linear infinite;
+    color: white;
   }
 
   .album-info {

@@ -82,6 +82,14 @@ pub fn search_index_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_cache_root_with_fallback(app)?.join("library-search"))
 }
 
+/// 返回封面图片磁盘缓存目录（属于可重建缓存）。
+pub fn image_cache_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = app_cache_root_with_fallback(app)?.join("image-cache");
+    std::fs::create_dir_all(&path)
+        .map_err(|e| format!("failed to create {}: {e}", path.display()))?;
+    Ok(path)
+}
+
 /// 检查一个路径是否是相对于给定根目录内的（防目录遍历攻击场景使用）。
 ///
 /// 简单地对比 canonicalize 前缀；根目录必须存在且可访问。

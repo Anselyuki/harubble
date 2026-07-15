@@ -391,10 +391,10 @@ pub(crate) const COMMAND_SPECS: &[CommandSpec] = &[
         CancelPolicy::LatestWins,
     ),
     spec(
-        "get_image_data_url",
+        "get_cached_image_path",
         CommandDomain::VisualAux,
         CommandPriority::Visual,
-        CancelPolicy::LatestWins,
+        CancelPolicy::Cooperative,
     ),
     spec(
         "create_download_job",
@@ -661,7 +661,7 @@ mod tests {
         for name in [
             "get_song_lyrics",
             "extract_image_theme",
-            "get_image_data_url",
+            "get_cached_image_path",
             "create_download_job",
             "retry_download_job",
             "rescan_local_inventory",
@@ -671,6 +671,14 @@ mod tests {
             assert_ne!(spec.domain, CommandDomain::PlaybackTransition);
             assert_ne!(spec.domain, CommandDomain::PlaybackControl);
         }
+    }
+
+    #[test]
+    fn cached_image_requests_do_not_supersede_each_other() {
+        let spec = command_spec("get_cached_image_path").expect("spec");
+        assert_eq!(spec.domain, CommandDomain::VisualAux);
+        assert_eq!(spec.priority, CommandPriority::Visual);
+        assert_eq!(spec.cancel_policy, CancelPolicy::Cooperative);
     }
 
     #[test]
