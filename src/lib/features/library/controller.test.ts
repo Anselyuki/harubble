@@ -62,13 +62,6 @@ function makeDeps(
     minDetailDisplayMs: 0,
     getAlbums: vi.fn().mockResolvedValue([]),
     getAlbumDetail: vi.fn().mockResolvedValue(makeAlbumDetail('a')),
-    searchLibrary: vi.fn().mockResolvedValue({
-      items: [],
-      total: 0,
-      query: '',
-      scope: 'all',
-      indexState: 'ready',
-    }),
     preloadAlbumArtwork: vi.fn().mockResolvedValue(null),
     warmAlbumArtwork: vi.fn(),
     setAlbumStageAspectRatio: vi.fn(),

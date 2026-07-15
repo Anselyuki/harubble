@@ -133,7 +133,6 @@ export function createRuntimeComposites(
     minDetailDisplayMs: MIN_DISPLAY_MS,
     getAlbums,
     getAlbumDetail,
-    searchLibrary,
     preloadAlbumArtwork: (album) => themeManager.preloadAlbumArtwork(album),
     warmAlbumArtwork: (coverUrl) => themeManager.warmAlbumArtwork(coverUrl),
     setAlbumStageAspectRatio: (value) =>
@@ -243,6 +242,7 @@ export function createRuntimeComposites(
   const searchController = createSearchController({
     getRecentHistory,
     getAlbums: () => libraryController.albums,
+    searchLibrary,
     notifyError,
   });
 

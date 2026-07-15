@@ -7,6 +7,7 @@ import type {
   LocalInventorySnapshot,
   LocalInventoryScanProgressEvent,
   AppErrorEvent,
+  LibraryIndexState,
 } from '$lib/types';
 
 /**
@@ -24,6 +25,7 @@ export interface AppEventMap {
   'app-error-recorded': AppErrorEvent;
   'local-inventory-state-changed': LocalInventorySnapshot;
   'local-inventory-scan-progress': LocalInventoryScanProgressEvent;
+  'library-search-index-state-changed': LibraryIndexState;
   'homepage-belong-ready': void;
 }
 

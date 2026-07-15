@@ -1,10 +1,12 @@
 use crate::app_state::AppState;
 use crate::logging::{LogLevel, LogPayload};
 use crate::preferences::Locale;
+use crate::search::emit_library_search_index_state_changed;
 use crate::search::index::{sanitize_search_request, LibrarySearchIndex};
 use crate::search::snapshot::{
-    build_library_search_snapshot, load_library_search_snapshot, save_library_search_snapshot,
-    LibrarySearchAlbumRecord, LibrarySearchSnapshot, LibrarySearchSongRecord,
+    build_library_search_snapshot, cleanup_obsolete_search_indexes, load_library_search_snapshot,
+    save_library_search_snapshot, LibrarySearchAlbumRecord, LibrarySearchSnapshot,
+    LibrarySearchSongRecord,
 };
 use anyhow::Result;
 use harubble_core::{
@@ -63,7 +65,10 @@ impl LibrarySearchService {
         }
     }
 
-    pub(crate) async fn prepare_for_inventory_scan(&self, root_output_dir: String) {
+    pub(crate) async fn prepare_for_inventory_scan(
+        &self,
+        root_output_dir: String,
+    ) -> LibraryIndexState {
         let mut state = self.state.lock().await;
         state.current_output_dir = root_output_dir.clone();
         state.current_inventory_version = None;
@@ -74,6 +79,7 @@ impl LibrarySearchService {
         } else {
             LibraryIndexState::NotReady
         };
+        state.index_state
     }
 
     pub(crate) async fn start_rebuild(&self, inventory: &LocalInventorySnapshot) -> u64 {
@@ -112,13 +118,13 @@ impl LibrarySearchService {
         generation: u64,
         root_output_dir: &str,
         inventory_version: &str,
-    ) {
+    ) -> LibraryIndexState {
         let mut state = self.state.lock().await;
         if state.build_generation != generation
             || state.current_inventory_version.as_deref() != Some(inventory_version)
             || state.current_output_dir != root_output_dir
         {
-            return;
+            return state.index_state;
         }
 
         state.index_state = if state.active_index.is_some()
@@ -128,6 +134,7 @@ impl LibrarySearchService {
         } else {
             LibraryIndexState::NotReady
         };
+        state.index_state
     }
 
     /// 从当前磁盘快照读取"歌曲 CID → 专辑 CID"映射。
@@ -250,7 +257,7 @@ impl LibrarySearchService {
             (state.index_state, state.active_index.clone())
         };
 
-        if index_state != LibraryIndexState::Ready {
+        if index_state == LibraryIndexState::NotReady {
             return Ok(SearchLibraryResponse::empty(
                 sanitized.query,
                 sanitized.scope,
@@ -262,7 +269,7 @@ impl LibrarySearchService {
             return Ok(SearchLibraryResponse::empty(
                 sanitized.query,
                 sanitized.scope,
-                LibraryIndexState::NotReady,
+                index_state,
             ));
         };
 
@@ -279,11 +286,16 @@ impl LibrarySearchService {
             total,
             query: sanitized.query,
             scope: sanitized.scope,
-            index_state: LibraryIndexState::Ready,
+            index_state,
         })
     }
 
-    pub(crate) fn schedule_rebuild(&self, state: AppState, inventory: LocalInventorySnapshot) {
+    pub(crate) fn schedule_rebuild(
+        &self,
+        app: tauri::AppHandle,
+        state: AppState,
+        inventory: LocalInventorySnapshot,
+    ) {
         if inventory.status != LocalInventoryStatus::Completed {
             return;
         }
@@ -308,6 +320,7 @@ impl LibrarySearchService {
                     }
 
                     let generation = service.start_rebuild(&inventory).await;
+                    emit_library_search_index_state_changed(&app, LibraryIndexState::Building);
                     let snapshot_result = build_library_search_snapshot(
                         state.api_client().clone(),
                         state.tag_registry().clone(),
@@ -332,13 +345,14 @@ impl LibrarySearchService {
                                 ))
                                 .details(error.to_string()),
                             );
-                            service
+                            let next_state = service
                                 .fail_rebuild(
                                     generation,
                                     &inventory.root_output_dir,
                                     &inventory.inventory_version,
                                 )
                                 .await;
+                            emit_library_search_index_state_changed(&app, next_state);
                             return;
                         }
                     };
@@ -346,8 +360,9 @@ impl LibrarySearchService {
                     let base_dir = service.base_dir.clone();
                     let snapshot_for_build = snapshot.clone();
                     let build_result = tokio::task::spawn_blocking(move || -> Result<_> {
+                        let index = LibrarySearchIndex::build(&base_dir, &snapshot_for_build)?;
                         save_library_search_snapshot(&base_dir, &snapshot_for_build)?;
-                        LibrarySearchIndex::build(&base_dir, &snapshot_for_build)
+                        Ok(index)
                     })
                     .await;
 
@@ -367,13 +382,14 @@ impl LibrarySearchService {
                                 ))
                                 .details(error.to_string()),
                             );
-                            service
+                            let next_state = service
                                 .fail_rebuild(
                                     generation,
                                     &inventory.root_output_dir,
                                     &inventory.inventory_version,
                                 )
                                 .await;
+                            emit_library_search_index_state_changed(&app, next_state);
                             return;
                         }
                         Err(error) => {
@@ -390,18 +406,42 @@ impl LibrarySearchService {
                                 ))
                                 .details(error.to_string()),
                             );
-                            service
+                            let next_state = service
                                 .fail_rebuild(
                                     generation,
                                     &inventory.root_output_dir,
                                     &inventory.inventory_version,
                                 )
                                 .await;
+                            emit_library_search_index_state_changed(&app, next_state);
                             return;
                         }
                     };
 
-                    if !service.publish_rebuild(generation, &snapshot, index).await {
+                    if service.publish_rebuild(generation, &snapshot, index).await {
+                        emit_library_search_index_state_changed(&app, LibraryIndexState::Ready);
+                        let base_dir = service.base_dir.clone();
+                        let inventory_version = snapshot.inventory_version.clone();
+                        let cleanup_result = tokio::task::spawn_blocking(move || {
+                            cleanup_obsolete_search_indexes(&base_dir, &inventory_version)
+                        })
+                        .await
+                        .map_err(|error| {
+                            anyhow::anyhow!("search index cleanup worker failed: {error}")
+                        })
+                        .and_then(|result| result);
+                        if let Err(error) = cleanup_result {
+                            state.record_log(
+                                LogPayload::new(
+                                    LogLevel::Warn,
+                                    "library-search",
+                                    "library_search.index_cleanup_failed",
+                                    "Failed to clean obsolete search indexes",
+                                )
+                                .details(error.to_string()),
+                            );
+                        }
+                    } else {
                         state.record_log(
                             LogPayload::new(
                                 LogLevel::Info,
@@ -568,5 +608,39 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.index_state, LibraryIndexState::Stale);
+        assert_eq!(response.total, 1);
+    }
+
+    #[tokio::test]
+    async fn serves_previous_index_while_rebuilding() {
+        let temp_dir = tempdir().expect("temp dir");
+        let service =
+            LibrarySearchService::new(temp_dir.path().to_path_buf(), "/tmp/music".to_string());
+        let ready_generation = service.start_rebuild(&inventory_snapshot("inv-1")).await;
+        let ready_snapshot = search_snapshot("inv-1");
+        let ready_index =
+            LibrarySearchIndex::build(temp_dir.path(), &ready_snapshot).expect("index");
+        assert!(
+            service
+                .publish_rebuild(ready_generation, &ready_snapshot, ready_index)
+                .await
+        );
+
+        service.start_rebuild(&inventory_snapshot("inv-2")).await;
+        let response = service
+            .search(
+                harubble_core::SearchLibraryRequest {
+                    query: "alpha".to_string(),
+                    scope: harubble_core::LibrarySearchScope::All,
+                    limit: None,
+                    offset: None,
+                },
+                Locale::default(),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.index_state, LibraryIndexState::Building);
+        assert_eq!(response.total, 1);
     }
 }

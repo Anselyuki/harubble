@@ -7,6 +7,7 @@ import type {
   DownloadJobSnapshot,
   DownloadTaskProgressEvent,
   LocalInventorySnapshot,
+  LibraryIndexState,
   AppErrorEvent,
 } from '$lib/types';
 import type { AppEventMap } from '$lib/appEvents';
@@ -97,6 +98,9 @@ export interface EventSubscriptionDeps {
         onSelectionInvalidated: () => void;
       }
     ) => Promise<void>;
+  };
+  searchController: {
+    handleIndexStateChanged: (state: LibraryIndexState) => void;
   };
   homeController: {
     handleBelongReady: () => void;
@@ -344,6 +348,13 @@ export async function subscribeToTauriEvents(
             },
           }
         );
+      }))
+    ) {
+      return cleanup;
+    }
+    if (
+      !(await register('library-search-index-state-changed', (event) => {
+        deps.searchController.handleIndexStateChanged(event.payload);
       }))
     ) {
       return cleanup;

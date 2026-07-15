@@ -1,5 +1,9 @@
-import type { Album } from '$lib/types';
-import type { LibrarySearchScope } from '$lib/types';
+import type {
+  Album,
+  LibraryIndexState,
+  LibrarySearchScope,
+  SearchLibraryResponse,
+} from '$lib/types';
 
 export interface RecentQuery {
   query: string;
@@ -11,14 +15,24 @@ let query = $state('');
 let scope = $state<LibrarySearchScope>('all');
 let recentPlayed = $state<Album[]>([]);
 let recentQueries = $state<RecentQuery[]>([]);
-let loading = $state(false);
+let recentPlayedLoading = $state(false);
+let searchLoading = $state(false);
+let loadingMore = $state(false);
+let response = $state<SearchLibraryResponse | null>(null);
+let searchError = $state<string | null>(null);
+let indexState = $state<LibraryIndexState>('notReady');
 
 function reset() {
   query = '';
   scope = 'all';
   recentPlayed = [];
   recentQueries = [];
-  loading = false;
+  recentPlayedLoading = false;
+  searchLoading = false;
+  loadingMore = false;
+  response = null;
+  searchError = null;
+  indexState = 'notReady';
 }
 
 export const searchStore = {
@@ -46,11 +60,41 @@ export const searchStore = {
   set recentQueries(v: RecentQuery[]) {
     recentQueries = v;
   },
-  get loading() {
-    return loading;
+  get recentPlayedLoading() {
+    return recentPlayedLoading;
   },
-  set loading(v: boolean) {
-    loading = v;
+  set recentPlayedLoading(v: boolean) {
+    recentPlayedLoading = v;
+  },
+  get searchLoading() {
+    return searchLoading;
+  },
+  set searchLoading(v: boolean) {
+    searchLoading = v;
+  },
+  get loadingMore() {
+    return loadingMore;
+  },
+  set loadingMore(v: boolean) {
+    loadingMore = v;
+  },
+  get response() {
+    return response;
+  },
+  set response(v: SearchLibraryResponse | null) {
+    response = v;
+  },
+  get searchError() {
+    return searchError;
+  },
+  set searchError(v: string | null) {
+    searchError = v;
+  },
+  get indexState() {
+    return indexState;
+  },
+  set indexState(v: LibraryIndexState) {
+    indexState = v;
   },
   reset,
 };

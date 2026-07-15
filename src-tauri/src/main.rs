@@ -255,7 +255,7 @@ fn main() {
                 None,
             );
             spawn_belong_warmup(app.handle().clone(), &state);
-            spawn_tag_registry_sync(&state);
+            spawn_tag_registry_sync(app.handle().clone(), &state);
             spawn_network_monitor(&state);
             app.manage(state);
             if let Err(error) = desktop_lifecycle::install_background_entrypoint(app.handle()) {

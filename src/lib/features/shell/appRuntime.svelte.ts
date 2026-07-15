@@ -188,6 +188,7 @@ export function createAppRuntime() {
         playerController,
         downloadController,
         libraryController,
+        searchController,
         homeController,
         handleAppErrorEvent,
         clearSongSelection: () => selectionManager.clearSongSelection(),
@@ -347,18 +348,6 @@ export function createAppRuntime() {
     },
     get errorMsg() {
       return libraryController.errorMsg;
-    },
-    get librarySearchQuery() {
-      return libraryController.librarySearchQuery;
-    },
-    get librarySearchScope() {
-      return libraryController.librarySearchScope;
-    },
-    get librarySearchLoading() {
-      return libraryController.librarySearchLoading;
-    },
-    get librarySearchResponse() {
-      return libraryController.librarySearchResponse;
     },
     get showDetailSkeleton() {
       return libraryController.showDetailSkeleton;

@@ -1045,7 +1045,7 @@ fn record_playback_side_effect_metrics(
 /// 变更专辑数量少于阈值时，只重建这些专辑的快照记录与 Tantivy 文档；
 /// 变更规模较大或增量过程失败时，回退为全量重建。
 /// 网络失败时静默使用本地缓存，不阻塞应用启动。
-pub fn spawn_tag_registry_sync(state: &AppState) {
+pub fn spawn_tag_registry_sync(app: tauri::AppHandle, state: &AppState) {
     let state = state.clone();
     let directory = state.task_directory.clone();
 
@@ -1115,7 +1115,7 @@ pub fn spawn_tag_registry_sync(state: &AppState) {
 
                 match sync_result {
                     Ok(Some((old_registry, new_registry))) => {
-                        apply_tag_registry_change(state, old_registry, new_registry).await;
+                        apply_tag_registry_change(app, state, old_registry, new_registry).await;
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -1148,6 +1148,7 @@ const TAG_REGISTRY_INCREMENTAL_THRESHOLD: usize = 50;
 ///    构建失败或增量返回 `Ok(false)` / `Err(_)` 则回退为全量重建。
 /// 4. 否则直接触发全量重建。
 async fn apply_tag_registry_change(
+    app: tauri::AppHandle,
     state: AppState,
     old_registry: crate::tag_registry::TagRegistry,
     new_registry: crate::tag_registry::TagRegistry,
@@ -1197,7 +1198,7 @@ async fn apply_tag_registry_change(
     let inventory = state.local_inventory_service.snapshot().await;
     state
         .library_search_service
-        .schedule_rebuild(state.clone(), inventory);
+        .schedule_rebuild(app, state.clone(), inventory);
 }
 
 /// 尝试执行增量搜索索引刷新。

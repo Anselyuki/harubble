@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Album, HistoryEntry } from '$lib/types';
+import type {
+  Album,
+  HistoryEntry,
+  SearchLibraryRequest,
+  SearchLibraryResponse,
+} from '$lib/types';
 import { createSearchController } from './controller.svelte';
 import { searchStore } from './store.svelte';
 import * as m from '$lib/paraglide/messages.js';
@@ -37,6 +42,18 @@ function makeHistoryEntry(
   };
 }
 
+function makeSearchItem(index: number) {
+  return {
+    kind: 'song' as const,
+    albumCid: `album-${index}`,
+    songCid: `song-${index}`,
+    albumTitle: `Album ${index}`,
+    songTitle: `Song ${index}`,
+    artistLine: 'Artist',
+    matchedFields: ['title' as const],
+  };
+}
+
 function makeDeps(
   overrides: Partial<Parameters<typeof createSearchController>[0]> = {}
 ) {
@@ -45,16 +62,28 @@ function makeDeps(
       .fn<(limit: number) => Promise<HistoryEntry[]>>()
       .mockResolvedValue([]),
     getAlbums: vi.fn<() => Album[]>().mockReturnValue([]),
+    searchLibrary: vi
+      .fn<(request: SearchLibraryRequest) => Promise<SearchLibraryResponse>>()
+      .mockImplementation(async (request) => ({
+        items: [],
+        total: 0,
+        query: request.query,
+        scope: request.scope,
+        indexState: 'ready',
+      })),
     notifyError: vi.fn<(message: string) => void>(),
     ...overrides,
   };
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
   localStorage.clear();
 });
 
 afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
   // 模块级 $state 会在测试间残留，显式 reset。
   searchStore.reset();
 });
@@ -174,7 +203,7 @@ describe('createSearchController - loadRecentPlayed', () => {
     await p1;
 
     expect(ctrl.recentPlayed.map((a) => a.cid)).toEqual(['b']);
-    expect(ctrl.loading).toBe(false);
+    expect(ctrl.recentPlayedLoading).toBe(false);
   });
 
   it('sets loading true while in-flight and false on completion', async () => {
@@ -187,10 +216,10 @@ describe('createSearchController - loadRecentPlayed', () => {
     const ctrl = createSearchController(deps);
 
     const p = ctrl.loadRecentPlayed();
-    expect(ctrl.loading).toBe(true);
+    expect(ctrl.recentPlayedLoading).toBe(true);
     resolve([]);
     await p;
-    expect(ctrl.loading).toBe(false);
+    expect(ctrl.recentPlayedLoading).toBe(false);
   });
 
   it('notifies error and clears loading on rejection', async () => {
@@ -211,7 +240,7 @@ describe('createSearchController - loadRecentPlayed', () => {
         error: m.domain_generic_error(),
       })
     );
-    expect(ctrl.loading).toBe(false);
+    expect(ctrl.recentPlayedLoading).toBe(false);
   });
 
   it('does not notify error for a superseded rejected load', async () => {
@@ -248,7 +277,7 @@ describe('createSearchController - submitSearch & saveRecentQuery', () => {
   it('does not save when the query is empty or whitespace only', () => {
     const ctrl = createSearchController(makeDeps());
     ctrl.setQuery('   ');
-    ctrl.submitSearch();
+    void ctrl.submitSearch();
     expect(ctrl.recentQueries).toEqual([]);
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
@@ -257,7 +286,7 @@ describe('createSearchController - submitSearch & saveRecentQuery', () => {
     const ctrl = createSearchController(makeDeps());
     ctrl.setScope('songs');
     ctrl.setQuery('  hello  ');
-    ctrl.submitSearch();
+    void ctrl.submitSearch();
 
     expect(ctrl.recentQueries[0]?.query).toBe('hello');
     expect(ctrl.recentQueries[0]?.scope).toBe('songs');
@@ -268,11 +297,11 @@ describe('createSearchController - submitSearch & saveRecentQuery', () => {
   it('dedups an existing query+scope pair, moving it to the head', () => {
     const ctrl = createSearchController(makeDeps());
     ctrl.setQuery('foo');
-    ctrl.submitSearch();
+    void ctrl.submitSearch();
     ctrl.setQuery('bar');
-    ctrl.submitSearch();
+    void ctrl.submitSearch();
     ctrl.setQuery('foo'); // 与首条相同 query+scope，应从尾部去重并回到 head
-    ctrl.submitSearch();
+    void ctrl.submitSearch();
 
     expect(ctrl.recentQueries.map((e) => e.query)).toEqual(['foo', 'bar']);
   });
@@ -281,9 +310,9 @@ describe('createSearchController - submitSearch & saveRecentQuery', () => {
     const ctrl = createSearchController(makeDeps());
     ctrl.setQuery('foo');
     ctrl.setScope('all');
-    ctrl.submitSearch();
+    void ctrl.submitSearch();
     ctrl.setScope('albums');
-    ctrl.submitSearch();
+    void ctrl.submitSearch();
 
     expect(ctrl.recentQueries).toHaveLength(2);
     expect(ctrl.recentQueries.map((e) => e.scope)).toEqual(['albums', 'all']);
@@ -293,7 +322,7 @@ describe('createSearchController - submitSearch & saveRecentQuery', () => {
     const ctrl = createSearchController(makeDeps());
     for (const q of ['q1', 'q2', 'q3', 'q4', 'q5']) {
       ctrl.setQuery(q);
-      ctrl.submitSearch();
+      void ctrl.submitSearch();
     }
     expect(ctrl.recentQueries).toHaveLength(4);
     expect(ctrl.recentQueries.map((e) => e.query)).toEqual([
@@ -324,14 +353,225 @@ describe('createSearchController - rerunQuery', () => {
     const ctrl = createSearchController(makeDeps());
     ctrl.setQuery('bar');
     ctrl.setScope('all');
-    ctrl.submitSearch();
+    void ctrl.submitSearch();
 
-    ctrl.rerunQuery({ query: 'foo', scope: 'songs', timestamp: 1 });
+    void ctrl.rerunQuery({ query: 'foo', scope: 'songs', timestamp: 1 });
 
     expect(ctrl.query).toBe('foo');
     expect(ctrl.scope).toBe('songs');
     expect(ctrl.recentQueries[0]?.query).toBe('foo');
     expect(ctrl.recentQueries[0]?.scope).toBe('songs');
+  });
+});
+
+describe('createSearchController - backend search', () => {
+  it('debounces query changes and sends the first page request', async () => {
+    const searchLibrary = vi
+      .fn<(request: SearchLibraryRequest) => Promise<SearchLibraryResponse>>()
+      .mockImplementation(async (request) => ({
+        items: [makeSearchItem(1)],
+        total: 1,
+        query: request.query,
+        scope: request.scope,
+        indexState: 'ready',
+      }));
+    const ctrl = createSearchController(makeDeps({ searchLibrary }));
+
+    ctrl.setQuery('  alpha  ');
+
+    expect(ctrl.searchLoading).toBe(true);
+    expect(searchLibrary).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(220);
+
+    expect(searchLibrary).toHaveBeenCalledWith({
+      query: 'alpha',
+      scope: 'all',
+      limit: 20,
+      offset: 0,
+    });
+    expect(ctrl.response?.items).toHaveLength(1);
+    expect(ctrl.searchLoading).toBe(false);
+  });
+
+  it('only applies the latest search result', async () => {
+    let resolveAlpha!: (response: SearchLibraryResponse) => void;
+    let resolveBeta!: (response: SearchLibraryResponse) => void;
+    const searchLibrary = vi
+      .fn<(request: SearchLibraryRequest) => Promise<SearchLibraryResponse>>()
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (resolveAlpha = resolve))
+      )
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (resolveBeta = resolve))
+      );
+    const ctrl = createSearchController(makeDeps({ searchLibrary }));
+
+    ctrl.setQuery('alpha');
+    const alphaRequest = ctrl.submitSearch()!;
+    ctrl.setQuery('beta');
+    const betaRequest = ctrl.submitSearch()!;
+
+    resolveBeta({
+      items: [makeSearchItem(2)],
+      total: 1,
+      query: 'beta',
+      scope: 'all',
+      indexState: 'ready',
+    });
+    await betaRequest;
+    resolveAlpha({
+      items: [makeSearchItem(1)],
+      total: 1,
+      query: 'alpha',
+      scope: 'all',
+      indexState: 'ready',
+    });
+    await alphaRequest;
+
+    expect(ctrl.response?.query).toBe('beta');
+    expect(ctrl.response?.items[0]?.songCid).toBe('song-2');
+  });
+
+  it('invalidates an in-flight result as soon as a new query is scheduled', async () => {
+    let resolveAlpha!: (response: SearchLibraryResponse) => void;
+    const searchLibrary = vi
+      .fn<(request: SearchLibraryRequest) => Promise<SearchLibraryResponse>>()
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (resolveAlpha = resolve))
+      )
+      .mockImplementationOnce(async (request) => ({
+        items: [makeSearchItem(2)],
+        total: 1,
+        query: request.query,
+        scope: request.scope,
+        indexState: 'ready',
+      }));
+    const ctrl = createSearchController(makeDeps({ searchLibrary }));
+
+    ctrl.setQuery('alpha');
+    const alphaRequest = ctrl.submitSearch()!;
+    ctrl.setQuery('beta');
+    resolveAlpha({
+      items: [makeSearchItem(1)],
+      total: 1,
+      query: 'alpha',
+      scope: 'all',
+      indexState: 'ready',
+    });
+    await alphaRequest;
+
+    expect(ctrl.response).toBeNull();
+    expect(ctrl.searchLoading).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(220);
+
+    expect(ctrl.response?.query).toBe('beta');
+    expect(ctrl.response?.items[0]?.songCid).toBe('song-2');
+  });
+
+  it('loads and appends the next page', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) =>
+      makeSearchItem(index)
+    );
+    const secondPage = Array.from({ length: 5 }, (_, index) =>
+      makeSearchItem(index + 20)
+    );
+    const searchLibrary = vi
+      .fn<(request: SearchLibraryRequest) => Promise<SearchLibraryResponse>>()
+      .mockResolvedValueOnce({
+        items: firstPage,
+        total: 25,
+        query: 'alpha',
+        scope: 'all',
+        indexState: 'ready',
+      })
+      .mockResolvedValueOnce({
+        items: secondPage,
+        total: 25,
+        query: 'alpha',
+        scope: 'all',
+        indexState: 'ready',
+      });
+    const ctrl = createSearchController(makeDeps({ searchLibrary }));
+    ctrl.setQuery('alpha');
+    await ctrl.submitSearch();
+
+    await ctrl.loadMore();
+
+    expect(searchLibrary).toHaveBeenLastCalledWith({
+      query: 'alpha',
+      scope: 'all',
+      limit: 20,
+      offset: 20,
+    });
+    expect(ctrl.response?.items).toHaveLength(25);
+  });
+
+  it('refreshes the active query when the index becomes ready', async () => {
+    const searchLibrary = vi
+      .fn<(request: SearchLibraryRequest) => Promise<SearchLibraryResponse>>()
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+        query: 'alpha',
+        scope: 'all',
+        indexState: 'building',
+      })
+      .mockResolvedValueOnce({
+        items: [makeSearchItem(1)],
+        total: 1,
+        query: 'alpha',
+        scope: 'all',
+        indexState: 'ready',
+      });
+    const ctrl = createSearchController(makeDeps({ searchLibrary }));
+    ctrl.setQuery('alpha');
+    await ctrl.submitSearch();
+
+    ctrl.handleIndexStateChanged('ready');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(searchLibrary).toHaveBeenCalledTimes(2);
+    expect(ctrl.response?.items).toHaveLength(1);
+    expect(ctrl.indexState).toBe('ready');
+  });
+
+  it('preserves visible results while the index is rebuilding', async () => {
+    const ctrl = createSearchController(makeDeps());
+    ctrl.setQuery('alpha');
+    await ctrl.submitSearch();
+    searchStore.response = {
+      items: [makeSearchItem(1)],
+      total: 1,
+      query: 'alpha',
+      scope: 'all',
+      indexState: 'ready',
+    };
+
+    ctrl.handleIndexStateChanged('building');
+
+    expect(ctrl.response?.items).toHaveLength(1);
+    expect(ctrl.response?.indexState).toBe('building');
+  });
+
+  it('stores a localized search error and notifies the user', async () => {
+    const notifyError = vi.fn();
+    const ctrl = createSearchController(
+      makeDeps({
+        searchLibrary: vi.fn().mockRejectedValue({ code: 'internal' }),
+        notifyError,
+      })
+    );
+    ctrl.setQuery('alpha');
+
+    await ctrl.submitSearch();
+
+    expect(ctrl.searchError).toBe(m.domain_generic_error());
+    expect(notifyError).toHaveBeenCalledWith(
+      m.search_error_failed({ error: m.domain_generic_error() })
+    );
+    expect(ctrl.searchLoading).toBe(false);
   });
 });
 
@@ -357,7 +597,7 @@ describe('createSearchController - setQuery / setScope / dispose', () => {
     expect(ctrl.scope).toBe('all');
     expect(ctrl.recentQueries).toEqual([]);
     expect(ctrl.recentPlayed).toEqual([]);
-    expect(ctrl.loading).toBe(false);
+    expect(ctrl.recentPlayedLoading).toBe(false);
 
     ctrl.init();
     expect(getRecentHistory).toHaveBeenCalledTimes(2);

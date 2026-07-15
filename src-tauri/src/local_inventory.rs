@@ -5,6 +5,7 @@ use crate::local_inventory_provenance::{
 use crate::local_inventory_scan::{
     collect_local_audio_evidence, ScanCollectionOutcome, ScanCollectionResult,
 };
+use crate::search::emit_library_search_index_state_changed;
 use harubble_core::{
     aggregate_album_download_badge, album_badge_from_evidence, matched_track_evidence,
     track_badge_from_matches, Album, AlbumDetail, LocalAudioFileEvidence,
@@ -240,10 +241,11 @@ pub fn spawn_inventory_scan(
                     .local_inventory()
                     .begin_scan(root_output_dir.clone(), mode)
                     .await;
-                state
+                let search_index_state = state
                     .library_search()
                     .prepare_for_inventory_scan(root_output_dir.clone())
                     .await;
+                emit_library_search_index_state_changed(&app, search_index_state);
                 emit_local_inventory_state_changed(&app, &started);
 
                 let inventory_version = started.inventory_version.clone();
@@ -285,9 +287,11 @@ pub fn spawn_inventory_scan(
                     }
                 };
                 if finished.status == LocalInventoryStatus::Completed {
-                    state
-                        .library_search()
-                        .schedule_rebuild(state.clone(), finished.clone());
+                    state.library_search().schedule_rebuild(
+                        app.clone(),
+                        state.clone(),
+                        finished.clone(),
+                    );
                 }
                 emit_local_inventory_state_changed(&app, &finished);
             },

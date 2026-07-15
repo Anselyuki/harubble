@@ -40,6 +40,8 @@
       runtime={{
         searchController: runtime.searchController,
         handleSelectAlbum: runtime.handleSelectAlbum,
+        handleSelectSearchResult: runtime.handleSelectSearchResult,
+        albums: runtime.albums,
         prefersReducedMotion: runtime.prefersReducedMotion,
         loadingAlbumCid: runtime.loadingAlbumCid,
       }}
@@ -80,11 +82,7 @@
       selectedAlbumCid={runtime.selectedAlbumCid}
       loadingAlbumCid={runtime.loadingAlbumCid}
       reducedMotion={runtime.prefersReducedMotion}
-      searchQuery={runtime.librarySearchQuery}
-      searchLoading={runtime.librarySearchLoading}
-      searchResponse={runtime.librarySearchResponse}
       onSelectAlbum={runtime.handleSelectAlbum}
-      onSelectSearchResult={runtime.handleSelectSearchResult}
     />
   {:else if runtime.currentView === 'library'}
     <LibraryView {runtime} />

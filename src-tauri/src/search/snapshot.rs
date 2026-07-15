@@ -261,6 +261,63 @@ pub(crate) fn inventory_index_dir(base_dir: &Path, inventory_version: &str) -> P
     indexes_root_dir(base_dir).join(index_directory_name(inventory_version))
 }
 
+/// 删除除当前版本外的历史搜索索引目录。
+///
+/// 搜索索引属于可重建缓存，每次库存扫描都会生成新的版本目录。调用方在确认
+/// `keep_inventory_version` 已可正常打开后可调用本函数回收旧版本，避免缓存目录
+/// 随应用启动次数持续增长。
+pub(crate) fn cleanup_obsolete_search_indexes(
+    base_dir: &Path,
+    keep_inventory_version: &str,
+) -> Result<usize> {
+    let indexes_dir = indexes_root_dir(base_dir);
+    if !indexes_dir.exists() {
+        return Ok(0);
+    }
+
+    let keep_dir_name = index_directory_name(keep_inventory_version);
+    let mut removed = 0;
+    let mut first_error = None;
+    for entry in std::fs::read_dir(&indexes_dir)
+        .with_context(|| format!("failed to read {}", indexes_dir.display()))?
+    {
+        let entry = match entry
+            .with_context(|| format!("failed to read entry in {}", indexes_dir.display()))
+        {
+            Ok(entry) => entry,
+            Err(error) => {
+                first_error.get_or_insert(error);
+                continue;
+            }
+        };
+        let file_type = match entry
+            .file_type()
+            .with_context(|| format!("failed to inspect {}", entry.path().display()))
+        {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                first_error.get_or_insert(error);
+                continue;
+            }
+        };
+        if !file_type.is_dir() || entry.file_name() == keep_dir_name.as_str() {
+            continue;
+        }
+        match std::fs::remove_dir_all(entry.path())
+            .with_context(|| format!("failed to remove {}", entry.path().display()))
+        {
+            Ok(()) => removed += 1,
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    Ok(removed)
+}
+
 fn join_artists(artists: &[String]) -> Option<String> {
     let line = artists
         .iter()
@@ -323,4 +380,34 @@ fn index_directory_name(inventory_version: &str) -> String {
             _ => '_',
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cleanup_obsolete_search_indexes, indexes_root_dir, inventory_index_dir};
+    use tempfile::tempdir;
+
+    #[test]
+    fn cleanup_keeps_only_the_active_index_directory() {
+        let temp_dir = tempdir().expect("temp dir");
+        let indexes_dir = indexes_root_dir(temp_dir.path());
+        std::fs::create_dir_all(inventory_index_dir(temp_dir.path(), "inv-current"))
+            .expect("current index");
+        std::fs::create_dir_all(inventory_index_dir(temp_dir.path(), "inv-old-1"))
+            .expect("old index 1");
+        std::fs::create_dir_all(inventory_index_dir(temp_dir.path(), "inv-old-2"))
+            .expect("old index 2");
+
+        let removed =
+            cleanup_obsolete_search_indexes(temp_dir.path(), "inv-current").expect("cleanup");
+
+        assert_eq!(removed, 2);
+        assert!(inventory_index_dir(temp_dir.path(), "inv-current").is_dir());
+        assert_eq!(
+            std::fs::read_dir(indexes_dir)
+                .expect("read indexes")
+                .count(),
+            1
+        );
+    }
 }
