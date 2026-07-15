@@ -3,6 +3,7 @@
   import { localeState } from '$lib/i18n';
   import { imageDataSrc } from '$lib/imageDataSrc';
   import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
+  import MotionSpinner from '$lib/components/MotionSpinner.svelte';
   import type { Album } from '$lib/types';
 
   interface Props {
@@ -62,7 +63,10 @@
             />
             {#if loadingAlbumCid === album.cid}
               <div class="album-cover-loading" aria-hidden="true">
-                <span class="album-cover-spinner"></span>
+                <MotionSpinner
+                  className="album-cover-spinner"
+                  {reducedMotion}
+                />
               </div>
             {/if}
           </div>
@@ -146,13 +150,10 @@
     backdrop-filter: blur(2px);
   }
 
-  .album-cover-spinner {
+  .album-cover-loading :global(.album-cover-spinner) {
     width: 22px;
     height: 22px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: motion-spin 0.9s linear infinite;
+    color: white;
   }
 
   .album-name {

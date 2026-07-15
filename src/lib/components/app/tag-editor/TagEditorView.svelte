@@ -21,6 +21,7 @@
   interface Props {
     runtime: {
       isMacOS: boolean;
+      prefersReducedMotion: boolean;
       tagEditorController: {
         merged: TagEditorRegistry | null;
         localOverlay: TagEditorRegistry | null;
@@ -119,6 +120,7 @@
             onSelectSong={controller.selectSongForEdit}
             onAddDimension={controller.addDimension}
             onRemoveDimension={controller.removeDimension}
+            reducedMotion={runtime.prefersReducedMotion}
           />
         {/if}
 
