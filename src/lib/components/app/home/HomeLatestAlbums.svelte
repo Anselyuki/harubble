@@ -4,6 +4,7 @@
   import { imageDataSrc } from '$lib/imageDataSrc';
   import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
   import MotionSpinner from '$lib/components/MotionSpinner.svelte';
+  import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
   import type { Album } from '$lib/types';
 
   interface Props {
@@ -22,6 +23,14 @@
     onSelect,
   }: Props = $props();
 
+  let scrollEl: HTMLDivElement | undefined = $state();
+  let rubberTween: gsap.core.Tween | null = null;
+  let rubberIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  let rubberOffset = 0;
+
+  const MAX_RUBBER = 96;
+  const RUBBER_IDLE_MS = 90;
+
   const labels = $derived.by(() => {
     void localeState.current;
     return {
@@ -29,6 +38,70 @@
       empty: m.home_empty_albums(),
     };
   });
+
+  $effect(() => {
+    return () => {
+      if (rubberIdleTimer) clearTimeout(rubberIdleTimer);
+      rubberTween?.kill();
+    };
+  });
+
+  function applyRubberOffset(el: HTMLDivElement, next: number): void {
+    rubberOffset = next;
+    gsap.set(el, { x: next });
+  }
+
+  function scheduleRubberSnap(el: HTMLDivElement): void {
+    if (rubberIdleTimer) clearTimeout(rubberIdleTimer);
+    rubberIdleTimer = setTimeout(() => {
+      rubberIdleTimer = null;
+      if (rubberOffset === 0) return;
+      rubberTween?.kill();
+      rubberTween = gsap.to(el, {
+        x: 0,
+        duration: getMotionDuration(MOTION.SLOW),
+        ease: 'ios-spring',
+        onUpdate: () => {
+          rubberOffset = gsap.getProperty(el, 'x') as number;
+        },
+        onComplete: () => {
+          rubberOffset = 0;
+          rubberTween = null;
+        },
+      });
+    }, RUBBER_IDLE_MS);
+  }
+
+  function handleWheel(e: WheelEvent): void {
+    if (!scrollEl) return;
+    // 触控板横向手势直接放行（deltaX 主导时不劫持）。
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
+    if (maxScroll <= 0) return;
+    e.preventDefault();
+
+    const el = scrollEl;
+    const delta = e.deltaY;
+    const atStart = el.scrollLeft <= 0;
+    const atEnd = el.scrollLeft >= maxScroll - 1;
+    const pushingPastStart = atStart && delta < 0;
+    const pushingPastEnd = atEnd && delta > 0;
+
+    if (pushingPastStart || pushingPastEnd) {
+      if (reducedMotion) return;
+      rubberTween?.kill();
+      rubberTween = null;
+      // 阻尼曲线：越接近上限越难继续拉动。
+      const damping = 1 - Math.min(Math.abs(rubberOffset) / MAX_RUBBER, 0.95);
+      const next = rubberOffset - delta * 0.3 * damping;
+      applyRubberOffset(el, Math.max(-MAX_RUBBER, Math.min(MAX_RUBBER, next)));
+      scheduleRubberSnap(el);
+      return;
+    }
+
+    el.scrollLeft += delta;
+    if (rubberOffset !== 0) scheduleRubberSnap(el);
+  }
 </script>
 
 <section class="latest-albums" aria-label={labels.title}>
@@ -43,7 +116,7 @@
   {:else if albums.length === 0}
     <p class="empty-hint">{labels.empty}</p>
   {:else}
-    <div class="album-scroll">
+    <div class="album-scroll" bind:this={scrollEl} onwheel={handleWheel}>
       {#each albums as album, index (album.cid)}
         <button
           class="album-card-wrapper"
@@ -83,6 +156,8 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    /* 阻断橡皮筋 transform 引发的横向溢出：不创建滚动容器，仅裁剪。 */
+    overflow-x: clip;
   }
 
   .section-title {
@@ -98,8 +173,15 @@
     align-items: flex-start;
     gap: 0.75rem;
     overflow-x: auto;
+    overflow-y: hidden;
     padding-bottom: 0.5rem;
-    scrollbar-width: thin;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior-x: contain;
+  }
+
+  .album-scroll::-webkit-scrollbar {
+    display: none;
   }
 
   .album-card-wrapper {

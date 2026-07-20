@@ -76,3 +76,59 @@ desktop-menu-pause = Pause
 desktop-menu-next = Next Track
 desktop-menu-show = Show Harubble
 desktop-menu-quit = Quit Harubble
+
+## Application menu bar
+
+appmenu-app = Harubble
+appmenu-edit = Edit
+appmenu-window = Window
+appmenu-view = View
+appmenu-playback = Playback
+
+appmenu-app-preferences = Preferences…
+appmenu-app-test-notification = Send Test Notification
+
+appmenu-file = File
+appmenu-file-new-collection = New Collection…
+appmenu-file-import-collection = Import Collection…
+appmenu-file-export-collection = Export Current Collection…
+appmenu-file-import-tag-registry = Import Tag Library…
+appmenu-file-export-tag-registry = Export Tag Library…
+appmenu-file-import-preferences = Import Preferences…
+appmenu-file-export-preferences = Export Preferences…
+appmenu-file-clear-listening-history = Clear Listening History
+appmenu-file-clear-download-history = Clear Download History
+
+appmenu-view-home = Home
+appmenu-view-search = Search
+appmenu-view-overview = All Albums
+appmenu-view-library = Library
+appmenu-view-collection = Collections
+appmenu-view-tag-editor = Tag Editor
+appmenu-view-go-back = Back
+appmenu-view-toggle-sidebar = Toggle Sidebar
+appmenu-view-toggle-downloads = Downloads
+appmenu-view-refresh = Refresh
+appmenu-view-rescan-inventory = Rescan Local Library
+appmenu-view-logs = View Logs…
+appmenu-view-appearance = Appearance
+appmenu-view-appearance-auto = Follow System
+appmenu-view-appearance-light = Light
+appmenu-view-appearance-dark = Dark
+
+appmenu-playback-toggle = Play / Pause
+appmenu-playback-next = Next Track
+appmenu-playback-previous = Previous Track
+appmenu-playback-seek-forward = Skip Forward 10s
+appmenu-playback-seek-backward = Skip Backward 10s
+appmenu-playback-volume-up = Volume Up
+appmenu-playback-volume-down = Volume Down
+appmenu-playback-toggle-mute = Toggle Mute
+appmenu-playback-toggle-shuffle = Shuffle
+appmenu-playback-repeat = Repeat
+appmenu-playback-repeat-off = Repeat Off
+appmenu-playback-repeat-all = Repeat All
+appmenu-playback-repeat-one = Repeat One
+appmenu-playback-toggle-lyrics = Show Lyrics
+appmenu-playback-toggle-playlist = Show Playlist
+appmenu-playback-toggle-fullscreen = Fullscreen Player

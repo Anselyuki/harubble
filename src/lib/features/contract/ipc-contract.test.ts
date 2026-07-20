@@ -3,8 +3,12 @@ import { assertType, describe, it, expect } from 'vitest';
 // Type-level assertions: TypeScript compiler verifies these at build time.
 // If a wrapper's return type drifts from the declared shape in types.ts,
 // the assignment below will produce a tsc error — no runtime needed.
-import type { Collection, CollectionSummary } from '$lib/types';
-import type { PlayerState, PlaybackStartResult } from '$lib/types';
+import type {
+  AlbumCatalogSnapshot,
+  Collection,
+  CollectionSummary,
+} from '$lib/types';
+import type { AlbumDetail, PlayerState, PlaybackStartResult } from '$lib/types';
 
 import {
   listCollections,
@@ -17,7 +21,10 @@ import {
 
 import {
   getAlbums,
+  getAlbumCatalog,
+  refreshAlbumCatalog,
   getAlbumDetail,
+  refreshAlbumDetail,
   getSongDetail,
   getSongLyrics,
   extractImageTheme,
@@ -57,6 +64,11 @@ assertType<() => Promise<CollectionSummary[]>>(listCollections);
 assertType<(id: string) => Promise<Collection>>(getCollection);
 assertType<() => Promise<PlayerState>>(getPlayerState);
 assertType<(songCid: string) => Promise<PlaybackStartResult>>(playSong);
+assertType<() => Promise<AlbumCatalogSnapshot>>(getAlbumCatalog);
+assertType<() => Promise<AlbumCatalogSnapshot>>(refreshAlbumCatalog);
+assertType<
+  (albumCid: string, inventoryVersion?: string | null) => Promise<AlbumDetail>
+>(refreshAlbumDetail);
 
 // ─── Collection ───────────────────────────────────────────────────────────────
 
@@ -87,8 +99,17 @@ describe('IPC contract — Library domain', () => {
   it('getAlbums is a callable function', () => {
     expect(typeof getAlbums).toBe('function');
   });
+  it('getAlbumCatalog is a callable function', () => {
+    expect(typeof getAlbumCatalog).toBe('function');
+  });
+  it('refreshAlbumCatalog is a callable function', () => {
+    expect(typeof refreshAlbumCatalog).toBe('function');
+  });
   it('getAlbumDetail is a callable function', () => {
     expect(typeof getAlbumDetail).toBe('function');
+  });
+  it('refreshAlbumDetail is a callable function', () => {
+    expect(typeof refreshAlbumDetail).toBe('function');
   });
   it('getSongDetail is a callable function', () => {
     expect(typeof getSongDetail).toBe('function');

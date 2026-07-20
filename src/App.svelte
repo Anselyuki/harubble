@@ -309,6 +309,7 @@
         bind:colorScheme={runtime.settingsState.colorScheme}
         bind:dynamicAlbumAccent={runtime.settingsState.dynamicAlbumAccent}
         settingsLogRefreshToken={runtime.settingsState.settingsLogRefreshToken}
+        settingsInitialSection={runtime.shellStore.settingsInitialSection}
         notifyInfo={runtime.notifyInfo}
         notifyError={runtime.notifyError}
         onOutputDirChange={runtime.handleOutputDirChange}

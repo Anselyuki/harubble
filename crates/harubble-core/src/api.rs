@@ -337,6 +337,13 @@ impl ApiClient {
         }
     }
 
+    fn invalidate_completed_api_response(&self, method: &str, resource: &str) {
+        let cache_key = Self::cache_key(method, resource);
+        if let Ok(mut cache) = self.response_cache.lock() {
+            cache.pop(&cache_key);
+        }
+    }
+
     fn get_or_create_inflight_download_request(
         &self,
         cache_key: &str,
@@ -625,6 +632,24 @@ impl ApiClient {
         self.clear_completed_response_cache();
     }
 
+    /// 仅失效专辑列表的已完成响应缓存。
+    ///
+    /// 该操作不会清除其他 API 资源的缓存，也不会移除正在进行的专辑列表请求。
+    /// 后续调用 [`ApiClient::get_albums`] 时，若已有同资源请求在执行会继续复用；
+    /// 否则将重新访问上游。
+    pub fn invalidate_albums_response_cache(&self) {
+        self.invalidate_completed_api_response("GET", "albums");
+    }
+
+    /// 仅失效指定专辑详情的已完成响应缓存。
+    ///
+    /// 该操作不会清除专辑列表、其他专辑详情或其他 API 资源的缓存，也不会移除
+    /// 正在进行的同专辑详情请求。后续调用 [`ApiClient::get_album_detail`] 时，若已有
+    /// 同资源请求在执行会继续复用；否则将重新访问上游。
+    pub fn invalidate_album_detail_response_cache(&self, album_cid: &str) {
+        self.invalidate_completed_api_response("GET", &format!("album/{album_cid}/detail"));
+    }
+
     /// 获取专辑列表。
     ///
     /// 返回值为上游当前可见的专辑列表；当缓存命中时不会发起新的网络请求。
@@ -889,6 +914,12 @@ mod tests {
         )
     }
 
+    fn albums_body(cid: &str, name: &str) -> String {
+        format!(
+            r#"{{"code":0,"msg":"ok","data":[{{"cid":"{cid}","name":"{name}","coverUrl":"https://example.com/{cid}.jpg","artistes":["Test Artist"]}}]}}"#
+        )
+    }
+
     #[tokio::test]
     async fn returns_cached_album_detail_without_second_network_call() {
         let server = MockServer::start();
@@ -959,6 +990,144 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(20)).await;
 
         client.reset_http_client().expect("reset should succeed");
+        let second = client.get_album_detail("alpha").await.expect("second call");
+        let first = first
+            .await
+            .expect("first task should complete")
+            .expect("first call");
+
+        assert_eq!(first.cid, "alpha");
+        assert_eq!(second.cid, "alpha");
+        album_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn invalidating_albums_cache_preserves_other_completed_responses() {
+        let server = MockServer::start();
+        let albums_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/albums");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(albums_body("alpha", "Alpha"));
+        });
+        let detail_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/alpha/detail");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(album_detail_body("alpha", "Alpha"));
+        });
+        let client =
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client");
+
+        client.get_albums().await.expect("albums first");
+        client
+            .get_album_detail("alpha")
+            .await
+            .expect("detail first");
+        client.invalidate_albums_response_cache();
+        client
+            .get_albums()
+            .await
+            .expect("albums after invalidation");
+        client
+            .get_album_detail("alpha")
+            .await
+            .expect("detail remains cached");
+
+        albums_mock.assert_hits(2);
+        detail_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn invalidating_albums_cache_keeps_inflight_request_coalesced() {
+        let server = MockServer::start();
+        let albums_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/albums");
+            then.status(200)
+                .header("content-type", "application/json")
+                .delay(Duration::from_millis(100))
+                .body(albums_body("alpha", "Alpha"));
+        });
+        let client = Arc::new(
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client"),
+        );
+        let first_client = Arc::clone(&client);
+        let first = tokio::spawn(async move { first_client.get_albums().await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        client.invalidate_albums_response_cache();
+        let second = client.get_albums().await.expect("second call");
+        let first = first
+            .await
+            .expect("first task should complete")
+            .expect("first call");
+
+        assert_eq!(first[0].cid, "alpha");
+        assert_eq!(second[0].cid, "alpha");
+        albums_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn invalidating_one_album_detail_preserves_other_completed_responses() {
+        let server = MockServer::start();
+        let albums_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/albums");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(albums_body("alpha", "Alpha"));
+        });
+        let alpha_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/alpha/detail");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(album_detail_body("alpha", "Alpha"));
+        });
+        let beta_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/beta/detail");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(album_detail_body("beta", "Beta"));
+        });
+        let client =
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client");
+
+        client.get_albums().await.expect("albums first");
+        client.get_album_detail("alpha").await.expect("alpha first");
+        client.get_album_detail("beta").await.expect("beta first");
+        client.invalidate_album_detail_response_cache("alpha");
+        client
+            .get_album_detail("alpha")
+            .await
+            .expect("alpha after invalidation");
+        client
+            .get_album_detail("beta")
+            .await
+            .expect("beta remains cached");
+        client.get_albums().await.expect("albums remain cached");
+
+        alpha_mock.assert_hits(2);
+        beta_mock.assert_hits(1);
+        albums_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn invalidating_album_detail_keeps_same_resource_inflight_coalesced() {
+        let server = MockServer::start();
+        let album_mock = server.mock(|when, then| {
+            when.method(GET).path("/api/album/alpha/detail");
+            then.status(200)
+                .header("content-type", "application/json")
+                .delay(Duration::from_millis(100))
+                .body(album_detail_body("alpha", "Alpha"));
+        });
+        let client = Arc::new(
+            ApiClient::new_for_test(format!("{}/api", server.base_url()), 100).expect("client"),
+        );
+        let first_client = Arc::clone(&client);
+        let first = tokio::spawn(async move { first_client.get_album_detail("alpha").await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        client.invalidate_album_detail_response_cache("alpha");
         let second = client.get_album_detail("alpha").await.expect("second call");
         let first = first
             .await

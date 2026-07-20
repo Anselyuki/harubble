@@ -8,6 +8,7 @@ import {
 } from './cache';
 import type {
   Album,
+  AlbumCatalogSnapshot,
   AlbumDetail,
   SongDetail,
   ThemePalette,
@@ -36,6 +37,7 @@ import type {
   TagEditorMergeResult,
   ConflictResolution,
   AudioFileMetadata,
+  RepeatMode,
 } from './types';
 
 const CACHE_KEY_ALBUM_DETAIL = 'album_detail:';
@@ -115,6 +117,14 @@ export async function getAlbums(): Promise<Album[]> {
   return invoke('get_albums');
 }
 
+export async function getAlbumCatalog(): Promise<AlbumCatalogSnapshot> {
+  return invoke<AlbumCatalogSnapshot>('get_album_catalog');
+}
+
+export async function refreshAlbumCatalog(): Promise<AlbumCatalogSnapshot> {
+  return invoke<AlbumCatalogSnapshot>('refresh_album_catalog');
+}
+
 export async function getAlbumDetail(
   albumCid: string,
   inventoryVersion?: string | null
@@ -127,6 +137,21 @@ export async function getAlbumDetail(
   }
 
   const data = await invoke<AlbumDetail>('get_album_detail', { albumCid });
+  await cacheManager.albums.set(cacheKey, data, [
+    createAlbumCacheTag(albumCid),
+    createInventoryCacheTag(inventoryVersion),
+  ]);
+  return data;
+}
+
+export async function refreshAlbumDetail(
+  albumCid: string,
+  inventoryVersion?: string | null
+): Promise<AlbumDetail> {
+  await cacheManager.invalidateByTag(createAlbumCacheTag(albumCid));
+  const data = await invoke<AlbumDetail>('refresh_album_detail', { albumCid });
+  const cacheScope = inventoryVersion ?? 'unversioned';
+  const cacheKey = `${CACHE_KEY_ALBUM_DETAIL}${cacheScope}:${albumCid}`;
   await cacheManager.albums.set(cacheKey, data, [
     createAlbumCacheTag(albumCid),
     createInventoryCacheTag(inventoryVersion),
@@ -502,4 +527,69 @@ export async function importTagEditorRegistry(
   path: string
 ): Promise<TagEditorMergeResult> {
   return invoke<TagEditorMergeResult>('import_tag_editor_registry', { path });
+}
+
+/**
+ * 同步循环 / 随机播放的勾选态到系统菜单。
+ *
+ * 前端在 `playerController.repeatMode` 或 `playerController.shuffleEnabled`
+ * 变化时调用；后端负责在已挂载的菜单里调用对应 `CheckMenuItem::set_checked`。
+ * 菜单尚未构建（例如启动早期）时返回错误字符串，前端可忽略。
+ */
+export async function syncPlaybackMenuState(
+  repeatMode: RepeatMode,
+  shuffleEnabled: boolean
+): Promise<void> {
+  return invoke('sync_playback_menu_state', {
+    repeatMode,
+    shuffleEnabled,
+  });
+}
+
+/**
+ * 本地库存扫描的校验强度。
+ *
+ * 与后端 `harubble_core::local_inventory::VerificationMode` 保持一致；
+ * 前端调用方通常传 `undefined`，让后端沿用当前偏好中的默认值。
+ */
+export type LocalInventoryVerificationMode =
+  | 'none'
+  | 'whenAvailable'
+  | 'strict';
+
+/**
+ * 触发一次本地库存重扫。
+ *
+ * 命令是异步启动扫描，立即返回**当前**快照；真正的扫描结果通过
+ * `local-inventory-state-changed` 事件推送到前端订阅方。菜单入口通常
+ * 忽略返回值，仅利用副作用触发扫描。
+ */
+export async function rescanLocalInventory(
+  verificationMode?: LocalInventoryVerificationMode
+): Promise<LocalInventorySnapshot> {
+  return invoke<LocalInventorySnapshot>('rescan_local_inventory', {
+    verificationMode: verificationMode ?? null,
+  });
+}
+
+/**
+ * 导出当前偏好到指定文件路径。
+ *
+ * 调用方需先弹出保存对话框拿到路径；后端会以 TOML 写盘。
+ */
+export async function exportPreferences(
+  outputPath: string
+): Promise<AppPreferences> {
+  return invoke<AppPreferences>('export_preferences', { outputPath });
+}
+
+/**
+ * 从指定文件导入偏好。
+ *
+ * 后端校验文件后覆盖当前偏好并同步落盘；若下载目录变化会自动触发一次库存重扫。
+ */
+export async function importPreferences(
+  inputPath: string
+): Promise<AppPreferences> {
+  return invoke<AppPreferences>('import_preferences', { inputPath });
 }

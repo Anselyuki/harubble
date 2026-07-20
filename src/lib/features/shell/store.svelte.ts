@@ -1,5 +1,6 @@
 import * as m from '$lib/paraglide/messages.js';
 import type SettingsSheet from '$lib/components/app/shell/SettingsSheet.svelte';
+import type { SettingsSection } from '$lib/components/app/shell/settingsSection';
 import type DownloadTasksSheet from '$lib/components/app/shell/DownloadTasksSheet.svelte';
 
 interface OpenSideSheetOptions {
@@ -19,6 +20,7 @@ export type AppView =
   | 'collection';
 
 let settingsOpen = $state(false);
+let settingsInitialSection = $state<SettingsSection | null>(null);
 let downloadPanelOpen = $state(false);
 let SettingsSheetView = $state<SettingsSheetComponent | null>(null);
 let DownloadTasksSheetView = $state<DownloadTasksSheetComponent | null>(null);
@@ -64,6 +66,7 @@ function init() {
 
 function dispose() {
   settingsOpen = false;
+  settingsInitialSection = null;
   downloadPanelOpen = false;
   currentView = 'home';
   sidebarCollapsed = false;
@@ -138,7 +141,9 @@ async function ensureDownloadTasksSheetLoaded(
 }
 
 async function openSettings(
-  options: Pick<OpenSideSheetOptions, 'notifyError'>
+  options: Pick<OpenSideSheetOptions, 'notifyError'> & {
+    section?: SettingsSection | null;
+  }
 ): Promise<boolean> {
   const requestSeq = ++sideSheetRequestSeq;
   const loaded = await ensureSettingsSheetLoaded(options.notifyError);
@@ -146,6 +151,7 @@ async function openSettings(
     return false;
   }
 
+  settingsInitialSection = options.section ?? null;
   settingsOpen = true;
   downloadPanelOpen = false;
   return true;
@@ -199,6 +205,12 @@ export const shellStore = {
   },
   set settingsOpen(value: boolean) {
     settingsOpen = value;
+    if (!value) {
+      settingsInitialSection = null;
+    }
+  },
+  get settingsInitialSection() {
+    return settingsInitialSection;
   },
   get downloadPanelOpen() {
     return downloadPanelOpen;

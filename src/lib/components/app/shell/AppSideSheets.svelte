@@ -1,5 +1,6 @@
 <script lang="ts">
   import type SettingsSheet from '$lib/components/app/shell/SettingsSheet.svelte';
+  import type { SettingsSection } from '$lib/components/app/shell/settingsSection';
   import type DownloadTasksSheet from '$lib/components/app/shell/DownloadTasksSheet.svelte';
   import type { Locale } from '$lib/i18n/types';
   import {
@@ -30,6 +31,7 @@
     colorScheme?: ColorScheme;
     dynamicAlbumAccent?: boolean;
     settingsLogRefreshToken: number;
+    settingsInitialSection?: SettingsSection | null;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
     onOutputDirChange: (outputDir: string) => boolean | Promise<boolean>;
@@ -52,6 +54,7 @@
     colorScheme = $bindable<ColorScheme>('auto'),
     dynamicAlbumAccent = $bindable<boolean>(true),
     settingsLogRefreshToken,
+    settingsInitialSection = null,
     notifyInfo,
     notifyError,
     onOutputDirChange,
@@ -75,6 +78,7 @@
     bind:colorScheme
     bind:dynamicAlbumAccent
     logRefreshToken={settingsLogRefreshToken}
+    initialSection={settingsInitialSection}
     {notifyInfo}
     {notifyError}
     {onOutputDirChange}

@@ -185,6 +185,7 @@
   "player_unknown_artist": "未知艺术家",
   "player_status_loading": "加载中",
   "player_status_paused": "已暂停",
+  "player_repeat_off": "关闭循环",
   "player_repeat_one": "单曲循环",
   "player_repeat_all": "列表循环",
   "player_lyrics_close": "关闭歌词",
@@ -529,5 +530,10 @@
   "mini_player_track_section_aria": "当前曲目",
   "mini_player_previous_aria": "上一首",
   "mini_player_next_aria": "下一首",
-  "ui_close": "关闭"
+  "ui_close": "关闭",
+  "menu_export_collection_no_selection": "没有选中的合集，请先在侧栏选择一个合集",
+  "menu_test_notification_sent": "已发送测试通知",
+  "menu_rescan_inventory_started": "本地库存重扫已开始",
+  "menu_preferences_exported": "偏好已导出",
+  "menu_preferences_imported": "偏好已导入"
 }

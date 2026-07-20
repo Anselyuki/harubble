@@ -9,6 +9,7 @@ import type {
   LocalInventorySnapshot,
   LibraryIndexState,
   AppErrorEvent,
+  AlbumCatalogRefreshedEvent,
 } from '$lib/types';
 import type { AppEventMap } from '$lib/appEvents';
 import * as m from '$lib/paraglide/messages.js';
@@ -102,6 +103,11 @@ export interface EventSubscriptionDeps {
   searchController: {
     handleIndexStateChanged: (state: LibraryIndexState) => void;
   };
+  albumCatalogController: {
+    handleRefreshedEvent: (
+      event: AlbumCatalogRefreshedEvent
+    ) => void | Promise<void>;
+  };
   homeController: {
     handleBelongReady: () => void;
   };
@@ -112,6 +118,7 @@ export interface EventSubscriptionDeps {
     version: string | null | undefined
   ) => Promise<void>;
   setPlayerStateHydratedFromEvent: (value: boolean) => void;
+  handleMenuCommand: (id: string) => void | Promise<void>;
 }
 /**
  * 应用启动引导流程。
@@ -360,8 +367,22 @@ export async function subscribeToTauriEvents(
       return cleanup;
     }
     if (
+      !(await register('album-catalog-refreshed', async (event) => {
+        await deps.albumCatalogController.handleRefreshedEvent(event.payload);
+      }))
+    ) {
+      return cleanup;
+    }
+    if (
       !(await register('homepage-belong-ready', () => {
         deps.homeController.handleBelongReady();
+      }))
+    ) {
+      return cleanup;
+    }
+    if (
+      !(await register('app-menu-command', async (event) => {
+        await deps.handleMenuCommand(event.payload.id);
       }))
     ) {
       return cleanup;

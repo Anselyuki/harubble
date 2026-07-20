@@ -28,7 +28,7 @@
   }
 
   let {
-    open = $bindable(),
+    open = false,
     dimensionKey,
     dimensionLabel,
     values,
@@ -46,7 +46,7 @@
   let cardEl: HTMLElement | undefined = $state();
   let tabContentEl: HTMLElement | undefined = $state();
   let sliderEl: HTMLElement | undefined = $state();
-  let searchTabRef: TagSearchTab | undefined = $state();
+  let editingTag = $state<TagEditorLocalizedValue | null>(null);
   let cardTop = $state(0);
   let cardLeft = $state(0);
 
@@ -126,13 +126,13 @@
     createValues = {};
     createI18n = false;
     activeTab = 'search';
-    searchTabRef?.cancelEdit();
+    editingTag = null;
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      if (searchTabRef?.hasEditingTag()) {
-        searchTabRef.cancelEdit();
+      if (editingTag !== null) {
+        editingTag = null;
       } else {
         closeCard();
       }
@@ -366,8 +366,8 @@
       <div class="tab-content" bind:this={tabContentEl}>
         {#if activeTab === 'search'}
           <TagSearchTab
-            bind:this={searchTabRef}
             bind:searchQuery
+            bind:editingTag
             {searchResults}
             {values}
             tagLocales={TAG_LOCALES}

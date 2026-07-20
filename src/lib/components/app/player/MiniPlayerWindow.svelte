@@ -1,6 +1,6 @@
 <script lang="ts">
   // MiniPlayerWindow 是 secondary window 的受控 IPC 例外 — 详见 miniPlayerBridge.ts。
-  import { onDestroy, onMount } from 'svelte';
+  import { flushSync, onDestroy, onMount } from 'svelte';
   import {
     getPlayerState,
     pausePlayback,
@@ -14,15 +14,8 @@
   } from '$lib/features/player/miniPlayerBridge';
   import type { PlayerState } from '$lib/types';
   import { formatTime } from '$lib/features/player/formatUtils';
-  import {
-    ExternalLink,
-    Loader2,
-    Music2,
-    Pause,
-    Play,
-    SkipBack,
-    SkipForward,
-  } from '@lucide/svelte';
+  import PlayToggleGlyph from '$lib/components/app/player/PlayToggleGlyph.svelte';
+  import { ExternalLink, Music2, SkipBack, SkipForward } from '@lucide/svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { imageDataSrc } from '$lib/imageDataSrc';
 
@@ -49,8 +42,11 @@
   let playerState = $state<PlayerState>(EMPTY_PLAYER_STATE);
   let pendingAction = $state<PendingAction | null>(null);
   let pendingPlayTarget = $state<PlayToggleTarget | null>(null);
+  let playToggleTransitionKey = $state(0);
   let seekPreview = $state<number | null>(null);
+  let prefersReducedMotion = $state(false);
   let mediaQuery: MediaQueryList | null = null;
+  let reducedMotionQuery: MediaQueryList | null = null;
 
   const hasSong = $derived(Boolean(playerState.songCid));
   const title = $derived(playerState.songName || 'Harubble');
@@ -81,6 +77,10 @@
     const dark = mediaQuery?.matches ?? false;
     document.documentElement.classList.toggle('dark', dark);
     document.documentElement.classList.toggle('light', !dark);
+  }
+
+  function applyReducedMotion() {
+    prefersReducedMotion = reducedMotionQuery?.matches ?? false;
   }
 
   function hasTauriRuntime(): boolean {
@@ -137,6 +137,8 @@
   function togglePlayback() {
     if (!hasSong || playerState.isLoading || pendingAction || pendingPlayTarget)
       return;
+    playToggleTransitionKey += 1;
+    flushSync();
     pendingPlayTarget = playerState.isPlaying ? 'paused' : 'playing';
     void runAction('play', () =>
       (playerState.isPlaying ? pausePlayback() : resumePlayback()).then(
@@ -176,6 +178,10 @@
     applySystemTheme();
     mediaQuery.addEventListener('change', applySystemTheme);
 
+    reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    applyReducedMotion();
+    reducedMotionQuery.addEventListener('change', applyReducedMotion);
+
     if (hasTauriRuntime()) {
       void getPlayerState()
         .then((state) => {
@@ -212,6 +218,8 @@
       lifecycle.disposed = true;
       mediaQuery?.removeEventListener('change', applySystemTheme);
       mediaQuery = null;
+      reducedMotionQuery?.removeEventListener('change', applyReducedMotion);
+      reducedMotionQuery = null;
       while (unlisteners.length) {
         unlisteners.pop()?.();
       }
@@ -294,17 +302,17 @@
       aria-label={playLabel}
       title={playLabel}
       disabled={!hasSong || playerState.isLoading || pendingAction !== null}
+      aria-busy={playButtonLoading}
       onclick={togglePlayback}
     >
-      {#if playerState.isLoading || pendingPlayTarget !== null}
-        <span class="spin">
-          <Loader2 size={19} strokeWidth={1.8} />
-        </span>
-      {:else if playerState.isPlaying}
-        <Pause size={19} strokeWidth={2} />
-      {:else}
-        <Play size={19} strokeWidth={2} />
-      {/if}
+      <PlayToggleGlyph
+        isPlaying={playerState.isPlaying}
+        isLoading={playerState.isLoading}
+        isPending={pendingPlayTarget !== null}
+        transitionKey={playToggleTransitionKey}
+        reducedMotion={prefersReducedMotion}
+        size="19px"
+      />
     </button>
 
     <button
@@ -535,19 +543,11 @@
     opacity: 0.42;
   }
 
+  .play-button[aria-busy='true']:disabled {
+    opacity: 1;
+  }
+
   .open-button {
     align-self: start;
-  }
-
-  .spin {
-    display: grid;
-    place-items: center;
-    animation: motion-spin var(--motion-spinner) linear infinite;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .spin {
-      animation: none;
-    }
   }
 </style>

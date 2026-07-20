@@ -37,10 +37,11 @@ pub async fn get_latest_albums(
     limit: u32,
 ) -> Result<Vec<Album>, HomepageError> {
     let albums = state
-        .api_client()
-        .get_albums()
+        .album_catalog()
+        .get()
         .await
-        .map_err(|e| HomepageError::Network(e.to_string()))?;
+        .map_err(HomepageError::Network)?
+        .albums;
     let enriched = state.attach_album_enrichment(albums).await;
     Ok(enriched.into_iter().take(limit as usize).collect())
 }
@@ -58,10 +59,11 @@ pub async fn get_albums_by_series(
     state: State<'_, AppState>,
 ) -> Result<Vec<SeriesGroup>, HomepageError> {
     let albums = state
-        .api_client()
-        .get_albums()
+        .album_catalog()
+        .get()
         .await
-        .map_err(|e| HomepageError::Network(e.to_string()))?;
+        .map_err(HomepageError::Network)?
+        .albums;
     let enriched = state.attach_album_enrichment(albums).await;
     let cache = state.album_metadata_cache().clone();
     let belongs = tokio::task::spawn_blocking(move || cache.get_all_belongs())

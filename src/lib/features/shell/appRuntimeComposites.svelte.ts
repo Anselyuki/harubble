@@ -14,8 +14,10 @@ import {
   save as saveDialog,
 } from '@tauri-apps/plugin-dialog';
 import {
-  getAlbums,
+  getAlbumCatalog,
+  refreshAlbumCatalog,
   getAlbumDetail,
+  refreshAlbumDetail,
   playSong,
   playNext as playNextTrack,
   playPrevious as playPreviousTrack,
@@ -35,7 +37,6 @@ import {
   getPreferences,
   setPreferences,
   searchLibrary,
-  getLatestAlbums,
   getAlbumsBySeriesGroup,
   getRecentHistory,
   getHomepageStatus,
@@ -70,6 +71,7 @@ import { shellStore } from '$lib/features/shell/store.svelte';
 import { createSettingsController } from '$lib/features/shell/settings.svelte';
 import { createAlbumStageMotionController } from '$lib/features/shell/albumStageMotion.svelte';
 import { createLibraryController } from '$lib/features/library/controller.svelte';
+import { createAlbumCatalogController } from '$lib/features/library/albumCatalog.svelte';
 import { createPlayerController } from '$lib/features/player/controller.svelte';
 import { createDownloadController } from '$lib/features/download/controller.svelte';
 import { createHomeController } from '$lib/features/home/controller.svelte';
@@ -83,6 +85,7 @@ import { createDownloadBridge } from './downloadBridge.svelte';
 import { localeState } from '$lib/i18n';
 
 export interface RuntimeComposites {
+  albumCatalogController: ReturnType<typeof createAlbumCatalogController>;
   settingsController: ReturnType<typeof createSettingsController>;
   libraryController: ReturnType<typeof createLibraryController>;
   playerController: ReturnType<typeof createPlayerController>;
@@ -120,6 +123,19 @@ export function createRuntimeComposites(
     onLocaleChanged: (locale) => localeState.applyBackendLocale(locale),
   });
 
+  const albumCatalogController = createAlbumCatalogController({
+    getAlbumCatalog,
+    refreshAlbumCatalog,
+    onRemoteCatalogChanged: async (albums) => {
+      await libraryController.handleRemoteCatalogChanged(albums, {
+        onSelectionInvalidated: () => {
+          selectionManager.clearSongSelection();
+          selectionManager.setSelectionModeEnabled(false);
+        },
+      });
+    },
+  });
+
   const albumStageMotionController = createAlbumStageMotionController({
     getReducedMotion: () => envStore.prefersReducedMotion,
     getViewportHeight: () => envStore.viewportHeight,
@@ -131,8 +147,9 @@ export function createRuntimeComposites(
     delay,
     detailSkeletonDelayMs: DETAIL_SKELETON_DELAY_MS,
     minDetailDisplayMs: MIN_DISPLAY_MS,
-    getAlbums,
+    albumCatalog: albumCatalogController,
     getAlbumDetail,
+    refreshAlbumDetail,
     preloadAlbumArtwork: (album) => themeManager.preloadAlbumArtwork(album),
     warmAlbumArtwork: (coverUrl) => themeManager.warmAlbumArtwork(coverUrl),
     setAlbumStageAspectRatio: (value) =>
@@ -204,7 +221,7 @@ export function createRuntimeComposites(
   });
 
   homeController = createHomeController({
-    getLatestAlbums,
+    albumCatalog: albumCatalogController,
     getAlbumsBySeriesGroup,
     getRecentHistory,
     getHomepageStatus,
@@ -235,13 +252,13 @@ export function createRuntimeComposites(
         filters: [{ name: 'JSON', extensions: ['json'] }],
       }),
     getAlbumDetail: (albumCid: string) => getAlbumDetail(albumCid),
-    getAlbums: () => libraryController.albums,
+    getAlbums: () => albumCatalogController.albums,
     notifyError,
   });
 
   const searchController = createSearchController({
     getRecentHistory,
-    getAlbums: () => libraryController.albums,
+    getAlbums: () => albumCatalogController.albums,
     searchLibrary,
     notifyError,
   });
@@ -289,7 +306,7 @@ export function createRuntimeComposites(
     setSelectionModeEnabled: (value) =>
       selectionManager.setSelectionModeEnabled(value),
     notifyError,
-    getAlbums: () => libraryController.albums,
+    getAlbums: () => albumCatalogController.albums,
     getSelectedAlbum: () => libraryController.selectedAlbum,
     getShuffleEnabled: () => playerController.shuffleEnabled,
     getPlaybackOrder: () => playerController.playbackOrder,
@@ -305,6 +322,7 @@ export function createRuntimeComposites(
   });
 
   return {
+    albumCatalogController,
     settingsController,
     libraryController,
     playerController,

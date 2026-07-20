@@ -58,11 +58,11 @@ pub(crate) struct LibrarySearchSongRecord {
 
 pub(crate) async fn build_library_search_snapshot(
     api: Arc<ApiClient>,
+    albums: Vec<harubble_core::Album>,
     tag_registry: crate::tag_registry::TagRegistryService,
     root_output_dir: String,
     inventory_version: String,
 ) -> Result<LibrarySearchSnapshot> {
-    let albums = api.get_albums().await?;
     let mut album_records = Vec::with_capacity(albums.len());
     let mut song_records = Vec::new();
 

@@ -31,6 +31,7 @@
 //! 业务语义本身仍尽量下沉到 `harubble_core`，因此当你需要修改下载模型、搜索结果或音频写盘契约时，
 //! 通常应该优先检查 `harubble_core` 的公开 API，再回到这里看宿主层如何接入。
 
+mod album_catalog;
 mod album_metadata_cache;
 mod app_state;
 mod audio_cache;
@@ -49,6 +50,9 @@ mod local_inventory;
 mod local_inventory_provenance;
 mod local_inventory_scan;
 mod logging;
+#[cfg(target_os = "macos")]
+mod macos_cache_recovery;
+mod menu;
 mod migration;
 mod network_monitor;
 mod notification;
@@ -64,6 +68,18 @@ mod tag_registry;
 mod tag_registry_index;
 mod theme;
 
+/// 桌面应用菜单栏挂载入口。
+///
+/// 在 `main.rs` 启动阶段或偏好中的 `locale` 变化后调用；从当前管理的 [`AppState`]
+/// 读取语言并按 Fluent i18n 渲染菜单。详见 [`menu`] 模块。
+pub fn install_menu(app: &tauri::AppHandle<tauri::Wry>) -> tauri::Result<()> {
+    use tauri::Manager;
+    let locale = app
+        .try_state::<AppState>()
+        .map(|state: tauri::State<'_, AppState>| state.preferences().locale)
+        .unwrap_or_default();
+    menu::install(app, locale)
+}
 /// 启动 belong 预热后台任务。
 ///
 /// 适用于应用启动阶段在后台异步预热 belong 缓存，以便首页"按系列浏览"功能在用户打开时
@@ -94,6 +110,9 @@ pub use local_inventory::spawn_inventory_scan;
 ///
 /// 适用于构造结构化日志并通过公共后端入口统一记录。
 pub use logging::{LogLevel, LogPayload};
+/// Repairs an empty or unreadable macOS URL cache database before WebKit starts.
+#[cfg(target_os = "macos")]
+pub use macos_cache_recovery::repair_macos_url_cache;
 /// 启动网络配置变更监听后台任务。
 ///
 /// 在 macOS 上监听系统代理与网络路由变化，自动重建 HTTP 客户端。

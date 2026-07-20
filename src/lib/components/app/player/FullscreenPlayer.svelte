@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flushSync } from 'svelte';
   import {
     gsap,
     animateIn,
@@ -16,9 +17,12 @@
     getShellContext,
   } from '$lib/contexts';
   import { formatTime } from '$lib/features/player/formatUtils';
+  import { getNextRepeatMode } from '$lib/features/player/repeatMode';
+  import type { RepeatMode } from '$lib/types';
   import MotionMarqueeInner from '$lib/components/MotionMarqueeInner.svelte';
+  import PlayToggleGlyph from '$lib/components/app/player/PlayToggleGlyph.svelte';
   import { lyricActiveTween } from '$lib/design/actions';
-  import { Repeat, Repeat1 } from '@lucide/svelte';
+  import { Repeat, Repeat1, Shuffle } from '@lucide/svelte';
 
   const player = getPlayerContext();
   const download = getDownloadContext();
@@ -43,6 +47,14 @@
   const playButtonLoading = $derived(
     player.isLoading || player.isPlayTogglePending
   );
+  let playToggleTransitionKey = $state(0);
+
+  function handlePlayToggle() {
+    if (playButtonLoading) return;
+    playToggleTransitionKey += 1;
+    flushSync();
+    void onTogglePlay();
+  }
 
   function handleDownload() {
     if (player.currentSong) {
@@ -72,10 +84,6 @@
 
   function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
-  }
-
-  function nextRepeatMode(mode: 'all' | 'one'): 'all' | 'one' {
-    return mode === 'all' ? 'one' : 'all';
   }
 
   function readRangeValue(event: Event): number {
@@ -125,6 +133,7 @@
       noLyrics: m.player_fullscreen_no_lyrics(),
       lyricsLoading: m.player_lyrics_loading(),
       unknownArtist: m.player_unknown_artist(),
+      repeatOff: m.player_repeat_off(),
       repeatOne: m.player_repeat_one(),
       repeatAll: m.player_repeat_all(),
     };
@@ -133,9 +142,12 @@
   const artistText = $derived(
     song.artists.length ? song.artists.join(' · ') : labels.unknownArtist
   );
-  const repeatLabel = $derived(
-    player.repeatMode === 'one' ? labels.repeatOne : labels.repeatAll
-  );
+  const repeatLabel = $derived.by(() => {
+    const mode: RepeatMode = player.repeatMode;
+    if (mode === 'one') return labels.repeatOne;
+    if (mode === 'all') return labels.repeatAll;
+    return labels.repeatOff;
+  });
 
   const downloadButtonLabel = $derived.by(() => {
     switch (downloadState) {
@@ -418,29 +430,23 @@
     <div class="fullscreen-controls">
       <button
         type="button"
-        class="fs-btn"
+        class="fs-btn fs-mode-toggle"
         aria-label={m.player_aria_shuffle()}
         aria-pressed={player.shuffleEnabled}
         disabled={player.isLoading}
         onclick={() => player.toggleShuffle(!player.shuffleEnabled)}
       >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 7h2.2c1.5 0 2.8.6 3.8 1.6L19 16.6"></path>
-          <path d="m16.2 16.6 2.8.1-.1-2.8"></path>
-          <path d="M5 17h2.2c1.5 0 2.8-.6 3.8-1.6l2-2"></path>
-          <path d="m16.2 7.4 2.8-.1-.1 2.8"></path>
-        </svg>
+        <Shuffle class="fs-mode-icon" aria-hidden="true" />
       </button>
 
       <button
         type="button"
-        class="fs-btn"
+        class="fs-btn fs-transport-button"
         aria-label={m.player_aria_previous()}
         disabled={!player.hasPrevious || player.isLoading}
         onclick={() => player.playPrevious()}
       >
         <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="4.75" y="6.15" width="1.95" height="11.7" rx="0.75"></rect>
           <path d="M18.6 6.9v10.2L11.75 12z"></path>
           <path d="M12.2 6.9v10.2L5.35 12z"></path>
         </svg>
@@ -450,45 +456,35 @@
         type="button"
         class="fs-btn fs-play"
         class:playing={player.isPlaying}
-        aria-label={player.isPlaying
-          ? m.player_aria_pause()
-          : player.isPaused
-            ? m.player_aria_resume()
-            : m.player_aria_play()}
+        aria-label={playButtonLoading
+          ? m.player_status_loading()
+          : player.isPlaying
+            ? m.player_aria_pause()
+            : player.isPaused
+              ? m.player_aria_resume()
+              : m.player_aria_play()}
         disabled={playButtonLoading}
-        onclick={() => onTogglePlay()}
+        aria-busy={playButtonLoading}
+        onclick={handlePlayToggle}
       >
-        {#if playButtonLoading}
-          <svg class="fs-spin" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M12 5a7 7 0 1 1-6.3 4"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.2"
-              stroke-linecap="round"
-            ></path>
-          </svg>
-        {:else if player.isPlaying}
-          <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="7.15" y="5.95" width="3.4" height="12.1" rx="1.25"></rect>
-            <rect x="13.45" y="5.95" width="3.4" height="12.1" rx="1.25"></rect>
-          </svg>
-        {:else}
-          <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M8.2 6.3v11.4L17.35 12z"></path>
-          </svg>
-        {/if}
+        <PlayToggleGlyph
+          isPlaying={player.isPlaying}
+          isLoading={player.isLoading}
+          isPending={player.isPlayTogglePending}
+          transitionKey={playToggleTransitionKey}
+          reducedMotion={shell.prefersReducedMotion}
+          size="52px"
+        />
       </button>
 
       <button
         type="button"
-        class="fs-btn"
+        class="fs-btn fs-transport-button"
         aria-label={m.player_aria_next()}
         disabled={!player.hasNext || player.isLoading}
         onclick={() => player.playNext()}
       >
         <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="17.3" y="6.15" width="1.95" height="11.7" rx="0.75"></rect>
           <path d="M5.4 6.9v10.2L12.25 12z"></path>
           <path d="M11.8 6.9v10.2L18.65 12z"></path>
         </svg>
@@ -496,16 +492,17 @@
 
       <button
         type="button"
-        class="fs-btn"
+        class="fs-btn fs-mode-toggle fs-repeat-toggle"
         aria-label={m.player_aria_repeat_toggle({ mode: repeatLabel })}
-        aria-pressed={player.repeatMode === 'one'}
+        aria-pressed={player.repeatMode !== 'off'}
         disabled={player.isLoading}
-        onclick={() => player.toggleRepeat(nextRepeatMode(player.repeatMode))}
+        onclick={() =>
+          player.toggleRepeat(getNextRepeatMode(player.repeatMode))}
       >
         {#if player.repeatMode === 'one'}
-          <Repeat1 class="fs-repeat-mode-icon" aria-hidden="true" />
+          <Repeat1 class="fs-mode-icon" aria-hidden="true" />
         {:else}
-          <Repeat class="fs-repeat-mode-icon" aria-hidden="true" />
+          <Repeat class="fs-mode-icon" aria-hidden="true" />
         {/if}
       </button>
     </div>

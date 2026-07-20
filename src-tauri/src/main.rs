@@ -44,8 +44,8 @@ use anyhow::Context;
 use harubble::{
     commands,
     desktop_lifecycle::{self, DesktopLifecycleState},
-    initialize_download_bridge, spawn_belong_warmup, spawn_inventory_scan, spawn_network_monitor,
-    spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
+    initialize_download_bridge, install_menu, spawn_belong_warmup, spawn_inventory_scan,
+    spawn_network_monitor, spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
 };
 #[cfg(target_os = "macos")]
 use tauri::WebviewWindowBuilder;
@@ -217,6 +217,11 @@ fn flush_logs_on_exit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = harubble::repair_macos_url_cache() {
+        eprintln!("[cache-recovery] failed to repair macOS URL cache: {error}");
+    }
+
     macro_rules! build_invoke_handler {
         ( $( ($path:path, $name:literal, $domain:ident, $priority:ident, $cancel:ident) ),* $(,)? ) => {
             tauri::generate_handler![$($path),*]
@@ -258,6 +263,9 @@ fn main() {
             spawn_tag_registry_sync(app.handle().clone(), &state);
             spawn_network_monitor(&state);
             app.manage(state);
+            if let Err(error) = install_menu(app.handle()) {
+                eprintln!("[menu] failed to install app menu: {error}");
+            }
             if let Err(error) = desktop_lifecycle::install_background_entrypoint(app.handle()) {
                 if let Some(state) = app.handle().try_state::<AppState>() {
                     state.record_log(

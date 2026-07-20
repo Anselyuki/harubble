@@ -121,7 +121,25 @@ pub(crate) const COMMAND_SPECS: &[CommandSpec] = &[
         CancelPolicy::Cooperative,
     ),
     spec(
+        "get_album_catalog",
+        CommandDomain::InteractiveUi,
+        CommandPriority::Interactive,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "refresh_album_catalog",
+        CommandDomain::InteractiveUi,
+        CommandPriority::Interactive,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
         "get_album_detail",
+        CommandDomain::InteractiveUi,
+        CommandPriority::Interactive,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "refresh_album_detail",
         CommandDomain::InteractiveUi,
         CommandPriority::Interactive,
         CancelPolicy::Cooperative,
@@ -335,6 +353,12 @@ pub(crate) const COMMAND_SPECS: &[CommandSpec] = &[
         CommandDomain::InteractiveUi,
         CommandPriority::Interactive,
         CancelPolicy::NeverCancel,
+    ),
+    spec(
+        "sync_playback_menu_state",
+        CommandDomain::VisualAux,
+        CommandPriority::Visual,
+        CancelPolicy::LatestWins,
     ),
     spec(
         "list_log_records",

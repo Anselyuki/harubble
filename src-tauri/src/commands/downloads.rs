@@ -80,8 +80,8 @@ pub fn clear_audio_cache(state: State<'_, AppState>) -> Result<u64, DownloadErro
 /// 该接口只影响内存中的 API 响应缓存，不会删除已完成下载的文件，也不会影响下载任务历史。
 /// 普通业务、播放、视觉资源与下载链路使用独立客户端，因此会同时清理全部资源域的响应缓存。
 #[tauri::command]
-pub fn clear_response_cache(state: State<'_, AppState>) -> Result<(), DownloadError> {
-    state.clear_api_response_caches();
+pub async fn clear_response_cache(state: State<'_, AppState>) -> Result<(), DownloadError> {
+    state.clear_api_response_caches().await;
     Ok(())
 }
 

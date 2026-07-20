@@ -8,6 +8,7 @@ pub(crate) use api_clients::ApiClients;
 pub(crate) use download_subsystem::DownloadSubsystem;
 pub(crate) use preferences::PreferencesSubsystem;
 
+use crate::album_catalog::AlbumCatalogService;
 use crate::album_metadata_cache::AlbumMetadataCacheService;
 use crate::background_tasks::TaskDirectory;
 use crate::collection::CollectionService;
@@ -61,6 +62,7 @@ use tokio::sync::{Mutex, MutexGuard};
 pub struct AppState {
     player: Arc<AudioPlayer>,
     api_clients: ApiClients,
+    album_catalog: AlbumCatalogService,
     playback_runtime: Arc<tokio::runtime::Runtime>,
     playback_actor: PlaybackActor,
     playback_load_gate: PlaybackLoadGate,
@@ -93,7 +95,7 @@ impl AppState {
     pub fn new(app: tauri::AppHandle) -> Result<Self, String> {
         let log_center = Arc::new(LogCenter::new(app.clone())?);
         let player = AudioPlayer::new(app.clone()).map_err(|e| e.to_string())?;
-        let api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let api = Arc::new(harubble_core::ApiClient::new().map_err(|e| e.to_string())?);
         let playback_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
         let image_api = harubble_core::ApiClient::new_image().map_err(|e| e.to_string())?;
         let download_api = harubble_core::ApiClient::new_download().map_err(|e| e.to_string())?;
@@ -172,11 +174,12 @@ impl AppState {
         let state = Self {
             player: Arc::new(player),
             api_clients: ApiClients {
-                api: Arc::new(api),
+                api: Arc::clone(&api),
                 playback_api: Arc::new(playback_api),
                 image_api: Arc::new(image_api),
                 download_api: Arc::new(download_api),
             },
+            album_catalog: AlbumCatalogService::new(api, app.clone()),
             playback_runtime: Arc::new(playback_runtime),
             playback_actor,
             playback_load_gate: PlaybackLoadGate::new(),
@@ -258,6 +261,11 @@ impl AppState {
     /// 返回专辑元数据缓存服务。
     pub(crate) fn album_metadata_cache(&self) -> &AlbumMetadataCacheService {
         &self.album_metadata_cache
+    }
+
+    /// 返回共享专辑目录服务。
+    pub(crate) fn album_catalog(&self) -> &AlbumCatalogService {
+        &self.album_catalog
     }
 
     /// 返回本地库存服务。
@@ -451,11 +459,12 @@ impl AppState {
         self.prefs.preferences_store.clone()
     }
 
-    pub(crate) fn clear_api_response_caches(&self) {
+    pub(crate) async fn clear_api_response_caches(&self) {
         self.api_clients.api.clear_response_cache();
         self.api_clients.playback_api.clear_response_cache();
         self.api_clients.image_api.clear_response_cache();
         self.api_clients.download_api.clear_response_cache();
+        self.album_catalog.clear_snapshot().await;
     }
 
     pub(crate) fn reset_http_clients(&self) -> Result<(), String> {
@@ -779,18 +788,13 @@ impl AppState {
 
     /// 收集首页仪表盘状态，聚合平台专辑总数、本地库存与下载会话。
     ///
-    /// 跨领域协调：api.get_albums + local_inventory.snapshot + download.download_service.lock().await.snapshot。
+    /// 跨领域协调：album_catalog.get + local_inventory.snapshot + download.download_service.lock().await.snapshot。
     /// 避免 command 直接持有下载服务锁。
     pub(crate) async fn homepage_status(
         &self,
     ) -> Result<harubble_core::homepage::HomepageStatus, String> {
-        let albums = self
-            .api_clients
-            .api
-            .get_albums()
-            .await
-            .map_err(|e| e.to_string())?;
-        let platform_album_count = albums.len() as u32;
+        let catalog = self.album_catalog.get().await?;
+        let platform_album_count = catalog.albums.len() as u32;
 
         let inventory_snapshot = self.local_inventory_service.snapshot().await;
         let local_downloaded_count = inventory_snapshot.matched_track_count as u32;
@@ -831,6 +835,7 @@ impl AppState {
 /// 并发度上限为 5，避免对上游 API 造成过大压力。
 pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
     let api = state.api_clients.api.clone();
+    let album_catalog = state.album_catalog.clone();
     let cache = state.album_metadata_cache.clone();
     let log_center = state.log_center.clone();
     let state_for_gate = state.clone();
@@ -840,8 +845,8 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
             .wait_for_background_io_gate("belong_warmup", Duration::from_millis(250))
             .await;
 
-        let albums = match api.get_albums().await {
-            Ok(albums) => albums,
+        let albums = match album_catalog.get().await {
+            Ok(snapshot) => snapshot.albums,
             Err(e) => {
                 log_center.record(
                     LogPayload::new(

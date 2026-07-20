@@ -4,6 +4,7 @@ import type {
   PlayerState,
   PlaybackEndedEvent,
   PlaybackFormatState,
+  RepeatMode,
 } from '$lib/types';
 import { parseLyricText } from './lyrics';
 import { buildPlaybackContext } from './queue';
@@ -37,7 +38,6 @@ interface PlayerControllerDeps {
   notifyError: (message: string) => void;
 }
 
-type RepeatMode = 'all' | 'one';
 type PlayToggleTarget = 'playing' | 'paused';
 
 interface PlayerSong {
@@ -65,7 +65,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let progress = $state(0);
   let duration = $state(0);
   let shuffleEnabled = $state(false);
-  let repeatMode = $state<RepeatMode>('all');
+  let repeatMode = $state<RepeatMode>('off');
   let playbackEntries = $state<PlaybackQueueEntry[]>([]);
   let playbackOrder = $state<PlaybackQueueEntry[]>([]);
   let playbackIndex = $state(-1);
@@ -381,18 +381,25 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       }
     }
 
+    // pendingPlayToggleTarget 只表达对当前曲目 pause/resume 的意图；一旦切歌，
+    // 旧意图便无法再由后续 player-state-changed 匹配上（新曲目会立即 is_playing=true，
+    // 而不会经过对应的 is_paused=true），必须在此清掉，否则会导致按钮永远停在 loading。
+    pendingPlayToggleTarget = null;
     playingCid = entry.cid;
     const requestSeq = ++playRequestSeq;
     try {
       const context = buildPlaybackContext(playbackOrder, playbackIndex);
       await deps.playSong(entry.cid, entry.coverUrl ?? null, context ?? null);
       if (requestSeq !== playRequestSeq) return;
-      // 事件回环 (player-state-changed) 是主要同步路径；仅在事件尚未把 currentSong
-      // 推进到 entry.cid 的窄窗口（IPC ack 早于事件到达）里做一次兜底拉取，避免
-      // 无条件二次同步导致把已通过事件推进的 UI 状态回滚到较旧的快照。
-      if (currentSong?.cid !== entry.cid) {
+      // loading 事件通常先于 IPC ack 到达，因此不能只用 currentSong 判断是否已经
+      // 落定；否则最终 state-changed 一旦漏掉，播放按钮会永久停在 loading。
+      if (currentSong?.cid !== entry.cid || isLoading) {
         try {
-          syncPlayerState(await deps.getPlayerState());
+          const state = await deps.getPlayerState();
+          if (requestSeq !== playRequestSeq) return;
+          // 读取期间事件可能已经把状态推进到最终态，此时保留更新的事件结果。
+          if (currentSong?.cid === entry.cid && !isLoading) return;
+          syncPlayerState(state);
         } catch {
           // 兜底拉取失败无需向用户呈现，后续事件仍会继续同步。
         }
@@ -475,7 +482,8 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       currentSong !== null &&
       !isPlaying &&
       !isPaused &&
-      !hasNext &&
+      (!hasNext ||
+        (repeatMode === 'off' && playbackIndex === playbackOrder.length - 1)) &&
       duration > 0 &&
       progress >= duration - 0.05
     );
@@ -501,8 +509,10 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     );
     if (currentIndex < 0) return;
 
-    const nextIndex =
-      currentIndex + 1 >= playbackOrder.length ? 0 : currentIndex + 1;
+    const reachedQueueEnd = currentIndex === playbackOrder.length - 1;
+    if (repeatMode === 'off' && reachedQueueEnd) return;
+
+    const nextIndex = reachedQueueEnd ? 0 : currentIndex + 1;
     if (requestSeq !== playbackEndRequestSeq) return;
     await playQueueEntry(playbackOrder[nextIndex], playbackOrder, nextIndex, {
       forceRestart: true,
@@ -647,7 +657,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     progress = 0;
     duration = 0;
     shuffleEnabled = false;
-    repeatMode = 'all';
+    repeatMode = 'off';
     playbackEntries = [];
     playbackOrder = [];
     playbackIndex = -1;

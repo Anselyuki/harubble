@@ -5,13 +5,12 @@ import { gsapScrollIntoView } from '$lib/design/gsap';
 import {
   getDefaultOutputDir,
   getPlayerState,
-  clearResponseCache,
   resetHttpClient,
   listDownloadJobs,
   getLocalInventorySnapshot,
+  syncPlaybackMenuState,
 } from '$lib/api';
 import {
-  clearCache,
   createInventoryCacheTag,
   invalidateByTag,
   warmCacheManager,
@@ -25,8 +24,10 @@ import {
   subscribeToTauriEvents,
 } from '$lib/features/shell/appRuntimeBootstrap.svelte';
 import { createRuntimeComposites } from '$lib/features/shell/appRuntimeComposites.svelte';
+import { createAlbumCatalogRefreshScheduler } from '$lib/features/library/albumCatalogRefreshScheduler';
 import * as m from '$lib/paraglide/messages.js';
 import { toast } from 'svelte-sonner';
+import { dispatchMenuCommand } from '$lib/features/shell/menuCommands';
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -43,6 +44,7 @@ export function createAppRuntime() {
   }
 
   const {
+    albumCatalogController,
     settingsController,
     libraryController,
     playerController,
@@ -57,6 +59,12 @@ export function createAppRuntime() {
     navigationManager,
     downloadBridge,
   } = createRuntimeComposites(notifyInfo, notifyError);
+
+  const albumCatalogRefreshScheduler = createAlbumCatalogRefreshScheduler({
+    ensureFresh: () => albumCatalogController.ensureFresh(),
+    isDocumentVisible: () => document.visibilityState === 'visible',
+    timers: window,
+  });
 
   // --- 本地状态 ---
 
@@ -129,8 +137,6 @@ export function createAppRuntime() {
     selectionManager.clearSongSelection();
     selectionManager.setSelectionModeEnabled(false);
     try {
-      await clearCache();
-      await clearResponseCache();
       await libraryController.reloadAlbumsAndRefreshCurrentSelection({
         afterSelect: async () => {
           await tick();
@@ -189,6 +195,7 @@ export function createAppRuntime() {
         downloadController,
         libraryController,
         searchController,
+        albumCatalogController,
         homeController,
         handleAppErrorEvent,
         clearSongSelection: () => selectionManager.clearSongSelection(),
@@ -198,15 +205,59 @@ export function createAppRuntime() {
         setPlayerStateHydratedFromEvent: (value) => {
           playerStateHydratedFromEvent = value;
         },
+        handleMenuCommand,
       },
       shouldDispose
     );
+  }
+
+  function handleMenuCommand(id: string): Promise<void> {
+    return dispatchMenuCommand(id, {
+      runtime: {
+        handleRefresh,
+        handleToggleDownloads: downloadBridge.handleToggleDownloads,
+        handleToggleSettings: downloadBridge.handleToggleSettings,
+        openSettingsAt: async (section) => {
+          await shellStore.openSettings({ notifyError, section });
+        },
+        toggleSidebar: () => shellStore.toggleSidebar(),
+        navigateToTop: navigationManager.navigateToTop,
+        goBack: navigationManager.goBack,
+        get canGoBack() {
+          return navigationManager.canGoBack;
+        },
+      },
+      playerController,
+      settingsController,
+      collectionController: {
+        get selectedCollectionId() {
+          return collectionController.selectedCollectionId;
+        },
+        openCreateDialog: collectionController.openCreateDialog,
+        handleImport: collectionController.handleImport,
+        handleExport: collectionController.handleExport,
+      },
+      tagEditorController: {
+        importRegistry: tagEditorController.importRegistry,
+        exportRegistry: tagEditorController.exportRegistry,
+      },
+      homeController: {
+        handleClearHistory: homeController.handleClearHistory,
+      },
+      downloadController: {
+        handleClearDownloadHistory:
+          downloadController.handleClearDownloadHistory,
+      },
+      notifyError,
+      notifyInfo,
+    });
   }
 
   function teardownAppRuntime(unsubscribe: (() => void) | null) {
     shellStore.dispose();
     envStore.dispose();
     libraryController.dispose();
+    albumCatalogController.dispose();
     playerController.dispose();
     downloadController.dispose();
     albumStageMotionController.dispose();
@@ -234,10 +285,19 @@ export function createAppRuntime() {
     let unsubscribe: (() => void) | null = null;
 
     const handleOnline = () => {
-      void resetHttpClient().catch(() => {});
+      void resetHttpClient()
+        .catch(() => {})
+        .finally(() => albumCatalogRefreshScheduler.handleOnline());
+    };
+    const handleVisibilityChange = () => {
+      albumCatalogRefreshScheduler.handleVisibilityChange();
+    };
+    const handleFocus = () => {
+      albumCatalogRefreshScheduler.handleFocus();
     };
     window.addEventListener('online', handleOnline);
-
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     void (async () => {
       try {
         const nextUnsubscribe = await doSubscribeToTauriEvents(() => disposed);
@@ -265,12 +325,29 @@ export function createAppRuntime() {
     return () => {
       disposed = true;
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      albumCatalogRefreshScheduler.dispose();
       teardownAppRuntime(unsubscribe);
     };
   });
 
   $effect(() => {
+    albumCatalogRefreshScheduler.setActive(
+      shellStore.currentView === 'home' || shellStore.currentView === 'library'
+    );
+  });
+
+  $effect(() => {
     playerController.syncPlaybackLifecycle();
+  });
+
+  $effect(() => {
+    const repeat = playerController.repeatMode;
+    const shuffle = playerController.shuffleEnabled;
+    // 依赖 locale 以便菜单在语言切换重建后立即同步勾选态。
+    void settingsController.state.locale;
+    void syncPlaybackMenuState(repeat, shuffle).catch(() => {});
   });
 
   $effect(() => {
@@ -511,6 +588,7 @@ export function createAppRuntime() {
       return settingsController.state;
     },
     shellStore,
+    albumCatalogController,
     libraryController,
     playerController,
     downloadController,

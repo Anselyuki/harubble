@@ -8,6 +8,7 @@ import type {
   LocalInventoryScanProgressEvent,
   AppErrorEvent,
   LibraryIndexState,
+  AlbumCatalogRefreshedEvent,
 } from '$lib/types';
 
 /**
@@ -26,7 +27,9 @@ export interface AppEventMap {
   'local-inventory-state-changed': LocalInventorySnapshot;
   'local-inventory-scan-progress': LocalInventoryScanProgressEvent;
   'library-search-index-state-changed': LibraryIndexState;
+  'album-catalog-refreshed': AlbumCatalogRefreshedEvent;
   'homepage-belong-ready': void;
+  'app-menu-command': { id: string };
 }
 
 export type AppEventName = keyof AppEventMap;

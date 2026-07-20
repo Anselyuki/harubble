@@ -36,6 +36,8 @@
     LogViewerRecord,
     OutputFormat,
   } from '$lib/types';
+  import type { SettingsSection } from '$lib/components/app/shell/settingsSection';
+
   interface Props {
     open?: boolean;
     format?: OutputFormat;
@@ -50,6 +52,7 @@
     colorScheme?: ColorScheme;
     dynamicAlbumAccent?: boolean;
     logRefreshToken?: number;
+    initialSection?: SettingsSection | null;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
     onOutputDirChange: (outputDir: string) => boolean | Promise<boolean>;
@@ -68,10 +71,37 @@
     colorScheme = $bindable<ColorScheme>('auto'),
     dynamicAlbumAccent = $bindable<boolean>(true),
     logRefreshToken = 0,
+    initialSection = null,
     notifyInfo,
     notifyError,
     onOutputDirChange,
   }: Props = $props();
+
+  let sheetBodyEl = $state<HTMLDivElement | null>(null);
+
+  // 打开设置抽屉时若外部指定了 initialSection，等 Sheet 内容挂载后再滚动到锚点。
+  // Sheet 使用 GSAP 缓动进场（约 260ms），因此这里用两次 rAF 让它稳定后再滚。
+  $effect(() => {
+    if (!open || !initialSection) return;
+    const target = initialSection;
+    const body = sheetBodyEl;
+    if (!body) return;
+    let cancelled = false;
+    const scheduleId = requestAnimationFrame(() => {
+      if (cancelled) return;
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const anchor = body.querySelector<HTMLElement>(
+          `[data-settings-section="${target}"]`
+        );
+        anchor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(scheduleId);
+    };
+  });
   let logFileKind = $state<LogFileKind>('session');
   let logRecords = $state<LogViewerRecord[]>([]);
   let logFileStatus = $state<LogFileStatus | null>(null);
@@ -394,95 +424,105 @@
       <Sheet.Description>{labels.description}</Sheet.Description>
     </Sheet.Header>
     <Tooltip.Provider>
-      <div class="sheet-body">
-        <PreferencesSettingsSection
-          bind:locale
-          bind:format
-          bind:logLevel
-          {outputDir}
-          {localeOptions}
-          {formatOptions}
-          {logLevelOptions}
-          {currentLocaleLabel}
-          {currentFormatLabel}
-          {currentLogLevelLabel}
-          sectionTitle={labels.sectionPreferences}
-          languageLabel={labels.languageLabel}
-          outputFormatLabel={labels.outputFormat}
-          logLevelLabel={labels.logLevel}
-          outputDirLabel={labels.outputDir}
-          outputDirSelectLabel={labels.outputDirSelect}
-          onSelectDirectory={() => void handleSelectDirectory()}
-        />
-        <ThemeSettingsSection
-          bind:colorScheme
-          bind:dynamicAlbumAccent
-          {themePresetId}
-          {resolvedThemeColors}
-          {themePresetOptions}
-          {currentThemePresetLabel}
-          {getThemeDraft}
-          {getSlotLabel}
-          {isValidThemeHex}
-          sectionTitle={labels.sectionTheme}
-          themePresetLabel={labels.themePreset}
-          themeResetLabel={labels.themeReset}
-          themeResetTitle={labels.themeResetTitle}
-          themeHexInvalidLabel={labels.themeHexInvalid}
-          appearanceLabel={labels.appearanceLabel}
-          appearanceAutoLabel={labels.appearanceAuto}
-          appearanceLightLabel={labels.appearanceLight}
-          appearanceDarkLabel={labels.appearanceDark}
-          appearanceSegmentAria={labels.appearanceSegmentAria}
-          dynamicAlbumLabel={labels.dynamicAlbumLabel}
-          dynamicAlbumOnLabel={labels.dynamicAlbumOn}
-          dynamicAlbumOffLabel={labels.dynamicAlbumOff}
-          onThemePresetChange={handleThemePresetChange}
-          onThemeTextInput={handleThemeTextInput}
-          onThemeColorInput={handleThemeColorInput}
-          onResetThemeCustomColors={resetThemeCustomColors}
-        />
-        <NotificationsSettingsSection
-          bind:downloadLyrics
-          bind:notifyOnDownloadComplete
-          bind:notifyOnPlaybackChange
-          {isSendingTestNotification}
-          sectionTitle={labels.sectionNotifications}
-          notificationTestLabel={labels.notificationTest}
-          notificationTestSendingLabel={labels.notificationTestSending}
-          lyricsTitle={labels.lyricsTitle}
-          lyricsDescription={labels.lyricsDescription}
-          notifyDownloadTitle={labels.notifyDownloadTitle}
-          notifyDownloadDescription={labels.notifyDownloadDescription}
-          notifyPlaybackTitle={labels.notifyPlaybackTitle}
-          notifyPlaybackDescription={labels.notifyPlaybackDescription}
-          onSendTestNotification={() => void handleSendTestNotification()}
-        />
-        <CacheSettingsSection
-          {isClearingAudioCache}
-          sectionTitle={labels.sectionCache}
-          cacheDescription={labels.cacheDescription}
-          cacheClearLabel={labels.cacheClear}
-          cacheClearingLabel={labels.cacheClearing}
-          onClearAudioCache={() => void handleClearAudioCache()}
-        />
-        <LogsSettingsSection
-          {logFileKind}
-          {logRecords}
-          {logFileStatus}
-          {logViewerLoading}
-          {logViewerError}
-          sectionTitle={labels.sectionLogs}
-          logsDescription={labels.logsDescription}
-          logSegmentAria={labels.logSegmentAria}
-          logSessionLabel={labels.logSession}
-          logPersistentLabel={labels.logPersistent}
-          logStatusAvailableLabel={labels.logStatusAvailable}
-          logStatusNoneLabel={labels.logStatusNone}
-          logLoadingLabel={labels.logLoading}
-          logEmptyLabel={labels.logEmpty}
-          onRefreshLogs={(kind) => void refreshLogs(kind)}
-        />
+      <div class="sheet-body" bind:this={sheetBodyEl}>
+        <div data-settings-section="preferences">
+          <PreferencesSettingsSection
+            bind:locale
+            bind:format
+            bind:logLevel
+            {outputDir}
+            {localeOptions}
+            {formatOptions}
+            {logLevelOptions}
+            {currentLocaleLabel}
+            {currentFormatLabel}
+            {currentLogLevelLabel}
+            sectionTitle={labels.sectionPreferences}
+            languageLabel={labels.languageLabel}
+            outputFormatLabel={labels.outputFormat}
+            logLevelLabel={labels.logLevel}
+            outputDirLabel={labels.outputDir}
+            outputDirSelectLabel={labels.outputDirSelect}
+            onSelectDirectory={() => void handleSelectDirectory()}
+          />
+        </div>
+        <div data-settings-section="theme">
+          <ThemeSettingsSection
+            bind:colorScheme
+            bind:dynamicAlbumAccent
+            {themePresetId}
+            {resolvedThemeColors}
+            {themePresetOptions}
+            {currentThemePresetLabel}
+            {getThemeDraft}
+            {getSlotLabel}
+            {isValidThemeHex}
+            sectionTitle={labels.sectionTheme}
+            themePresetLabel={labels.themePreset}
+            themeResetLabel={labels.themeReset}
+            themeResetTitle={labels.themeResetTitle}
+            themeHexInvalidLabel={labels.themeHexInvalid}
+            appearanceLabel={labels.appearanceLabel}
+            appearanceAutoLabel={labels.appearanceAuto}
+            appearanceLightLabel={labels.appearanceLight}
+            appearanceDarkLabel={labels.appearanceDark}
+            appearanceSegmentAria={labels.appearanceSegmentAria}
+            dynamicAlbumLabel={labels.dynamicAlbumLabel}
+            dynamicAlbumOnLabel={labels.dynamicAlbumOn}
+            dynamicAlbumOffLabel={labels.dynamicAlbumOff}
+            onThemePresetChange={handleThemePresetChange}
+            onThemeTextInput={handleThemeTextInput}
+            onThemeColorInput={handleThemeColorInput}
+            onResetThemeCustomColors={resetThemeCustomColors}
+          />
+        </div>
+        <div data-settings-section="notifications">
+          <NotificationsSettingsSection
+            bind:downloadLyrics
+            bind:notifyOnDownloadComplete
+            bind:notifyOnPlaybackChange
+            {isSendingTestNotification}
+            sectionTitle={labels.sectionNotifications}
+            notificationTestLabel={labels.notificationTest}
+            notificationTestSendingLabel={labels.notificationTestSending}
+            lyricsTitle={labels.lyricsTitle}
+            lyricsDescription={labels.lyricsDescription}
+            notifyDownloadTitle={labels.notifyDownloadTitle}
+            notifyDownloadDescription={labels.notifyDownloadDescription}
+            notifyPlaybackTitle={labels.notifyPlaybackTitle}
+            notifyPlaybackDescription={labels.notifyPlaybackDescription}
+            onSendTestNotification={() => void handleSendTestNotification()}
+          />
+        </div>
+        <div data-settings-section="cache">
+          <CacheSettingsSection
+            {isClearingAudioCache}
+            sectionTitle={labels.sectionCache}
+            cacheDescription={labels.cacheDescription}
+            cacheClearLabel={labels.cacheClear}
+            cacheClearingLabel={labels.cacheClearing}
+            onClearAudioCache={() => void handleClearAudioCache()}
+          />
+        </div>
+        <div data-settings-section="logs">
+          <LogsSettingsSection
+            {logFileKind}
+            {logRecords}
+            {logFileStatus}
+            {logViewerLoading}
+            {logViewerError}
+            sectionTitle={labels.sectionLogs}
+            logsDescription={labels.logsDescription}
+            logSegmentAria={labels.logSegmentAria}
+            logSessionLabel={labels.logSession}
+            logPersistentLabel={labels.logPersistent}
+            logStatusAvailableLabel={labels.logStatusAvailable}
+            logStatusNoneLabel={labels.logStatusNone}
+            logLoadingLabel={labels.logLoading}
+            logEmptyLabel={labels.logEmpty}
+            onRefreshLogs={(kind) => void refreshLogs(kind)}
+          />
+        </div>
       </div>
     </Tooltip.Provider>
   </Sheet.Content>

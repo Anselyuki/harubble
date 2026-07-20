@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flushSync } from 'svelte';
   import { getImageSrc } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
@@ -12,18 +13,19 @@
     formatPlaybackEndpoint,
     normalizeSampleFormat,
   } from '$lib/features/player/formatUtils';
+  import { getNextRepeatMode } from '$lib/features/player/repeatMode';
   import LyricsBubble from '$lib/components/app/player/LyricsBubble.svelte';
+  import PlayToggleGlyph from '$lib/components/app/player/PlayToggleGlyph.svelte';
   import VolumeCapsule from '$lib/components/app/player/VolumeCapsule.svelte';
   import type { LyricLine } from '$lib/features/player/lyrics';
-  import type { PlaybackFormatState } from '$lib/types';
-  import { Repeat, Repeat1 } from '@lucide/svelte';
+  import type { PlaybackFormatState, RepeatMode } from '$lib/types';
+  import { Repeat, Repeat1, Shuffle } from '@lucide/svelte';
   import {
     gsap,
     getMotionDuration,
     killTweens,
     MOTION,
   } from '$lib/design/gsap';
-  type RepeatMode = 'all' | 'one';
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
   interface Song {
     cid: string;
@@ -81,7 +83,7 @@
     isPlayTogglePending = false,
     reducedMotion = false,
     isShuffled = false,
-    repeatMode = 'all',
+    repeatMode = 'off',
     lyricsActive = false,
     lyricsUnavailable = false,
     lyricsLoading = false,
@@ -115,9 +117,6 @@
   let coverRequestSeq = 0;
   function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
-  }
-  function nextRepeatMode(mode: RepeatMode): RepeatMode {
-    return mode === 'all' ? 'one' : 'all';
   }
   function readRangeValue(event: Event): number {
     return Number((event.currentTarget as HTMLInputElement).value);
@@ -180,6 +179,7 @@
       unknownArtist: m.player_unknown_artist(),
       statusLoading: m.player_status_loading(),
       statusPaused: m.player_status_paused(),
+      repeatOff: m.player_repeat_off(),
       repeatOne: m.player_repeat_one(),
       repeatAll: m.player_repeat_all(),
       lyricsClose: m.player_lyrics_close(),
@@ -210,9 +210,11 @@
         ? `${artistText} · ${labels.statusPaused}`
         : artistText
   );
-  const repeatLabel = $derived.by(() =>
-    repeatMode === 'one' ? labels.repeatOne : labels.repeatAll
-  );
+  const repeatLabel = $derived.by(() => {
+    if (repeatMode === 'one') return labels.repeatOne;
+    if (repeatMode === 'all') return labels.repeatAll;
+    return labels.repeatOff;
+  });
   const playerState = $derived.by(() =>
     isLoading || isPlayTogglePending
       ? 'loading'
@@ -347,7 +349,7 @@
   }
   async function handleRepeatToggle() {
     if (!canRepeat) return;
-    const next = nextRepeatMode(repeatMode);
+    const next = getNextRepeatMode(repeatMode);
     try {
       await onRepeatModeChange?.(next);
     } catch {
@@ -355,10 +357,16 @@
     }
   }
 
-  let playIconPlayRef = $state<SVGElement | null>(null);
-  let playIconPauseRef = $state<SVGElement | null>(null);
+  let playToggleTransitionKey = $state(0);
   let coverExpandHintRef = $state<HTMLElement | null>(null);
   let coverExpandTriggerRef = $state<HTMLElement | null>(null);
+
+  function handlePlayToggle() {
+    if (playButtonLoading || !onTogglePlay) return;
+    playToggleTransitionKey += 1;
+    flushSync();
+    onTogglePlay();
+  }
 
   function gsapStatefulIcon(node: SVGElement) {
     const badge = node.querySelector<SVGElement>('.toggle-badge');
@@ -400,57 +408,6 @@
       },
     };
   }
-
-  $effect(() => {
-    const playEl = playIconPlayRef;
-    const pauseEl = playIconPauseRef;
-    if (!playEl || !pauseEl) return;
-    killTweens(playEl);
-    killTweens(pauseEl);
-    if (playButtonLoading) {
-      gsap.to(playEl, {
-        x: 0.5,
-        scale: 0.82,
-        opacity: 0,
-        duration: getMotionDuration(MOTION.BASE),
-        ease: 'ios',
-      });
-      gsap.to(pauseEl, {
-        scale: 0.82,
-        opacity: 0,
-        duration: getMotionDuration(MOTION.BASE),
-        ease: 'ios',
-      });
-    } else if (isPlaying) {
-      gsap.to(playEl, {
-        x: 0.5,
-        scale: 0.82,
-        opacity: 0,
-        duration: getMotionDuration(MOTION.BASE),
-        ease: 'ios',
-      });
-      gsap.to(pauseEl, {
-        scale: 1,
-        opacity: 1,
-        duration: getMotionDuration(MOTION.BASE),
-        ease: 'ios',
-      });
-    } else {
-      gsap.to(playEl, {
-        x: 0.5,
-        scale: 1,
-        opacity: 1,
-        duration: getMotionDuration(MOTION.BASE),
-        ease: 'ios',
-      });
-      gsap.to(pauseEl, {
-        scale: 0.82,
-        opacity: 0,
-        duration: getMotionDuration(MOTION.BASE),
-        ease: 'ios',
-      });
-    }
-  });
 
   function gsapFormatReadout(node: HTMLElement) {
     const readout = node.querySelector<HTMLElement>('.format-readout');
@@ -710,12 +667,7 @@
         disabled={!canShuffle}
         onclick={handleShuffleToggle}
       >
-        <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 7h2.2c1.5 0 2.8.6 3.8 1.6L19 16.6"></path>
-          <path d="m16.2 16.6 2.8.1-.1-2.8"></path>
-          <path d="M5 17h2.2c1.5 0 2.8-.6 3.8-1.6l2-2"></path>
-          <path d="m16.2 7.4 2.8-.1-.1 2.8"></path>
-        </svg>
+        <Shuffle class="mode-icon" aria-hidden="true" />
       </button>
 
       <div class="transport-cluster">
@@ -731,7 +683,6 @@
             viewBox="0 0 24 24"
             aria-hidden="true"
           >
-            <rect x="4.75" y="6.15" width="1.95" height="11.7" rx="0.75"></rect>
             <path d="M18.6 6.9v10.2L11.75 12z"></path>
             <path d="M12.2 6.9v10.2L5.35 12z"></path>
           </svg>
@@ -749,41 +700,17 @@
                 ? labels.ariaResume
                 : labels.ariaPlay}
           disabled={playButtonLoading || !onTogglePlay}
-          onclick={() => onTogglePlay?.()}
+          aria-busy={playButtonLoading}
+          onclick={handlePlayToggle}
         >
-          <span class="play-glyph" aria-hidden="true">
-            {#if playButtonLoading}
-              <svg
-                class="control-icon play-icon play-icon-loading spin-icon"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  d="M12 5a7 7 0 1 1-6.3 4"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.2"
-                  stroke-linecap="round"
-                ></path>
-              </svg>
-            {/if}
-            <svg
-              class="control-icon play-icon play-icon-pause"
-              viewBox="0 0 24 24"
-              bind:this={playIconPauseRef}
-            >
-              <rect x="7.15" y="5.95" width="3.4" height="12.1" rx="1.25"
-              ></rect>
-              <rect x="13.45" y="5.95" width="3.4" height="12.1" rx="1.25"
-              ></rect>
-            </svg>
-            <svg
-              class="control-icon play-icon play-icon-play"
-              viewBox="0 0 24 24"
-              bind:this={playIconPlayRef}
-            >
-              <path d="M8.2 6.3v11.4L17.35 12z"></path>
-            </svg>
-          </span>
+          <PlayToggleGlyph
+            {isPlaying}
+            {isLoading}
+            isPending={isPlayTogglePending}
+            transitionKey={playToggleTransitionKey}
+            {reducedMotion}
+            size="calc(var(--play-icon-size) + 12px)"
+          />
         </button>
 
         <button
@@ -798,7 +725,6 @@
             viewBox="0 0 24 24"
             aria-hidden="true"
           >
-            <rect x="17.3" y="6.15" width="1.95" height="11.7" rx="0.75"></rect>
             <path d="M5.4 6.9v10.2L12.25 12z"></path>
             <path d="M11.8 6.9v10.2L18.65 12z"></path>
           </svg>
@@ -807,16 +733,16 @@
 
       <button
         type="button"
-        class="icon-button side-toggle"
+        class="icon-button side-toggle repeat-toggle"
         aria-label={m.player_aria_repeat_toggle({ mode: repeatLabel })}
-        aria-pressed={repeatMode === 'one'}
+        aria-pressed={repeatMode !== 'off'}
         disabled={!canRepeat}
         onclick={handleRepeatToggle}
       >
         {#if repeatMode === 'one'}
-          <Repeat1 class="repeat-mode-icon" aria-hidden="true" />
+          <Repeat1 class="mode-icon" aria-hidden="true" />
         {:else}
-          <Repeat class="repeat-mode-icon" aria-hidden="true" />
+          <Repeat class="mode-icon" aria-hidden="true" />
         {/if}
       </button>
     </div>
@@ -1545,10 +1471,29 @@
     stroke: none;
   }
 
-  .icon-button :global(svg.repeat-mode-icon) {
-    width: 15px;
-    height: 15px;
-    stroke-width: 2.35;
+  .transport-button .control-icon {
+    width: calc(var(--control-icon-size) + 5px);
+    height: calc(var(--control-icon-size) + 5px);
+  }
+
+  .side-toggle[aria-pressed='false'] {
+    color: color-mix(in srgb, var(--icon-default) 65%, transparent);
+  }
+
+  .side-toggle[aria-pressed='false']:hover:not(:disabled) {
+    color: var(--icon-default);
+    background: rgba(var(--album-accent-rgb), 0.06);
+    border-color: rgba(var(--album-accent-rgb), 0.08);
+  }
+
+  .side-toggle[aria-pressed='false']:hover:not(:disabled)::before {
+    opacity: 1;
+  }
+
+  .side-toggle :global(svg.mode-icon) {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2;
   }
 
   .stateful-icon .toggle-badge,
@@ -1569,7 +1514,9 @@
     stroke-width: 2.15;
   }
 
-  .icon-button:hover:not(:disabled),
+  .icon-button:hover:not(:disabled):not(.side-toggle):not(
+      .transport-button
+    ):not(.play-button),
   .icon-button[aria-pressed='true'] {
     background: rgba(var(--album-accent-rgb), 0.08);
     color: var(--icon-active);
@@ -1577,9 +1524,49 @@
     box-shadow: none;
   }
 
-  .icon-button:hover:not(:disabled)::before,
+  .icon-button:hover:not(:disabled):not(.side-toggle):not(
+      .transport-button
+    ):not(.play-button)::before,
   .icon-button[aria-pressed='true']::before {
     opacity: 1;
+  }
+
+  .icon-button.transport-button:hover:not(:disabled),
+  .icon-button.play-button:hover:not(:disabled) {
+    color: var(--icon-active);
+    background: rgba(var(--album-accent-rgb), 0.06);
+    border-color: rgba(var(--album-accent-rgb), 0.08);
+  }
+
+  .icon-button.transport-button:hover:not(:disabled)::before,
+  .icon-button.play-button:hover:not(:disabled)::before {
+    opacity: 1;
+  }
+
+  .icon-button.side-toggle[aria-pressed='true'],
+  .icon-button.side-toggle[aria-pressed='true']:hover:not(:disabled) {
+    color: var(--icon-active);
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .icon-button.side-toggle[aria-pressed='true']::before,
+  .icon-button.side-toggle[aria-pressed='true']:hover:not(:disabled)::before {
+    opacity: 0;
+  }
+
+  .icon-button.repeat-toggle[aria-pressed='false']:hover:not(:disabled) {
+    color: color-mix(in srgb, var(--icon-default) 65%, transparent);
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .icon-button.repeat-toggle[aria-pressed='false']:hover:not(
+      :disabled
+    )::before {
+    opacity: 0;
   }
 
   .panel-toggle.panel-active {
@@ -1714,8 +1701,6 @@
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 8px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid rgba(128, 128, 128, 0.1);
   }
 
   .format-popover-rows {
@@ -1825,39 +1810,6 @@
     color: var(--icon-active);
   }
 
-  .play-glyph {
-    position: relative;
-    width: var(--play-icon-size);
-    height: var(--play-icon-size);
-    display: grid;
-    place-items: center;
-  }
-
-  .play-icon {
-    position: absolute;
-    inset: 0;
-    width: var(--play-icon-size);
-    height: var(--play-icon-size);
-    fill: currentColor;
-    stroke: none;
-  }
-
-  .play-icon-play {
-    transform: translateX(0.5px) scale(1);
-    opacity: 1;
-  }
-
-  .play-icon-pause {
-    transform: scale(0.82);
-    opacity: 0;
-  }
-
-  .play-icon-loading {
-    fill: none;
-    stroke: currentColor;
-    opacity: 1;
-  }
-
   .icon-button:focus-visible,
   .seek-slider:focus-visible {
     outline: none;
@@ -1875,6 +1827,10 @@
   .icon-button:disabled {
     cursor: not-allowed;
     box-shadow: none;
+  }
+
+  .play-button[aria-busy='true']:disabled {
+    opacity: 1;
   }
 
   @media (max-width: 900px) {

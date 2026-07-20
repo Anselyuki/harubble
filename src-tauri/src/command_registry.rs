@@ -71,14 +71,19 @@ macro_rules! for_each_tauri_command {
             (commands::collection::export_collection, "export_collection", InteractiveUi, Interactive, Cooperative),
             (commands::collection::import_collection, "import_collection", InteractiveUi, Interactive, Cooperative),
 
-            // ── Library (7) ──────────────────────────────────────────────────
+            // ── Library (8) ──────────────────────────────────────────────────
             (commands::library::get_albums, "get_albums", InteractiveUi, Interactive, Cooperative),
             (commands::library::get_album_detail, "get_album_detail", InteractiveUi, Interactive, Cooperative),
+            (commands::library::refresh_album_detail, "refresh_album_detail", InteractiveUi, Interactive, Cooperative),
             (commands::library::get_song_detail, "get_song_detail", InteractiveUi, Interactive, Cooperative),
             (commands::library::get_song_lyrics, "get_song_lyrics", VisualAux, Visual, LatestWins),
             (commands::library::extract_image_theme, "extract_image_theme", VisualAux, Visual, LatestWins),
             (commands::library::get_cached_image_path, "get_cached_image_path", VisualAux, Visual, Cooperative),
             (commands::library::get_default_output_dir, "get_default_output_dir", InteractiveUi, Interactive, NeverCancel),
+
+            // ── AlbumCatalog (2) ─────────────────────────────────────────────
+            (commands::album_catalog::get_album_catalog, "get_album_catalog", InteractiveUi, Interactive, Cooperative),
+            (commands::album_catalog::refresh_album_catalog, "refresh_album_catalog", InteractiveUi, Interactive, Cooperative),
 
             // ── Search (1) ───────────────────────────────────────────────────
             (commands::search::search_library, "search_library", InteractiveUi, Interactive, Cooperative),
@@ -95,6 +100,9 @@ macro_rules! for_each_tauri_command {
 
             // ── Window (1) ───────────────────────────────────────────────────
             (commands::window::show_main_window, "show_main_window", InteractiveUi, Interactive, NeverCancel),
+
+            // ── Menu (1) ─────────────────────────────────────────────────────
+            (commands::menu::sync_playback_menu_state, "sync_playback_menu_state", VisualAux, Visual, LatestWins),
 
             // ── Preferences (6) ──────────────────────────────────────────────
             (commands::preferences::get_preferences, "get_preferences", InteractiveUi, Interactive, Cooperative),

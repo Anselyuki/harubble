@@ -321,8 +321,32 @@ impl LibrarySearchService {
 
                     let generation = service.start_rebuild(&inventory).await;
                     emit_library_search_index_state_changed(&app, LibraryIndexState::Building);
+                    let albums = match state.album_catalog().get().await {
+                        Ok(snapshot) => snapshot.albums,
+                        Err(error) => {
+                            state.record_log(
+                                LogPayload::new(
+                                    LogLevel::Warn,
+                                    "library-search",
+                                    "library_search.catalog_load_failed",
+                                    "Failed to load album catalog for search snapshot",
+                                )
+                                .details(error),
+                            );
+                            let next_state = service
+                                .fail_rebuild(
+                                    generation,
+                                    &inventory.root_output_dir,
+                                    &inventory.inventory_version,
+                                )
+                                .await;
+                            emit_library_search_index_state_changed(&app, next_state);
+                            return;
+                        }
+                    };
                     let snapshot_result = build_library_search_snapshot(
                         state.api_client().clone(),
+                        albums,
                         state.tag_registry().clone(),
                         inventory.root_output_dir.clone(),
                         inventory.inventory_version.clone(),

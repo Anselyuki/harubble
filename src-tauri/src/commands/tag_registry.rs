@@ -54,10 +54,11 @@ pub async fn get_albums_by_tag_dimension(
     }
 
     let albums = state
-        .api_client()
-        .get_albums()
+        .album_catalog()
+        .get()
         .await
-        .map_err(|e| TagRegistryError::Network(e.to_string()))?;
+        .map_err(TagRegistryError::Network)?
+        .albums;
     let enriched = state.attach_album_enrichment(albums).await;
 
     let album_map: std::collections::HashMap<&str, &Album> =

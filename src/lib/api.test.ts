@@ -173,4 +173,33 @@ describe('image resource API scheduling', () => {
     );
     expect(idbStore.has('unrelated-key')).toBe(true);
   });
+
+  it('refreshes one album detail and replaces its tagged frontend cache', async () => {
+    const oldDetail = { cid: 'album-a', name: 'Old detail' };
+    const freshDetail = { cid: 'album-a', name: 'Fresh detail' };
+    invokeMock
+      .mockResolvedValueOnce(oldDetail)
+      .mockResolvedValueOnce(freshDetail);
+    const { getAlbumDetail, refreshAlbumDetail } = await import('./api');
+
+    await expect(getAlbumDetail('album-a', 'inventory-v1')).resolves.toBe(
+      oldDetail
+    );
+    await expect(getAlbumDetail('album-a', 'inventory-v1')).resolves.toBe(
+      oldDetail
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    await expect(refreshAlbumDetail('album-a', 'inventory-v1')).resolves.toBe(
+      freshDetail
+    );
+    expect(invokeMock).toHaveBeenLastCalledWith('refresh_album_detail', {
+      albumCid: 'album-a',
+    });
+
+    await expect(getAlbumDetail('album-a', 'inventory-v1')).resolves.toBe(
+      freshDetail
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
 });

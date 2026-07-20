@@ -69,6 +69,7 @@ pub async fn set_preferences(
         .validate(locale)
         .map_err(PreferencesError::Internal)?;
     let previous_output_dir = state.preferences().output_dir.clone();
+    let previous_locale = state.preferences().locale;
     // 通过 update_preferences 让 "读取当前 volume + 应用新字段 + 落盘" 都发生在
     // preferences_write_lock 内，避免与 set_playback_volume 之间产生 TOCTOU。
     let persisted = state
@@ -81,11 +82,24 @@ pub async fn set_preferences(
         .map_err(PreferencesError::Io)?;
     if previous_output_dir != persisted.output_dir {
         spawn_inventory_scan(
-            app,
+            app.clone(),
             state.inner().clone(),
             persisted.output_dir.clone(),
             None,
         );
+    }
+    if previous_locale != persisted.locale {
+        if let Err(error) = crate::install_menu(&app) {
+            state.record_log(
+                crate::LogPayload::new(
+                    crate::LogLevel::Warn,
+                    "menu",
+                    "menu.install_failed",
+                    "Failed to rebuild app menu after locale change",
+                )
+                .details(error.to_string()),
+            );
+        }
     }
     Ok(persisted)
 }
@@ -143,11 +157,24 @@ pub async fn import_preferences(
         .map_err(PreferencesError::Io)?;
     if previous.output_dir != imported.output_dir {
         spawn_inventory_scan(
-            app,
+            app.clone(),
             state.inner().clone(),
             imported.output_dir.clone(),
             None,
         );
+    }
+    if previous.locale != imported.locale {
+        if let Err(error) = crate::install_menu(&app) {
+            state.record_log(
+                crate::LogPayload::new(
+                    crate::LogLevel::Warn,
+                    "menu",
+                    "menu.install_failed",
+                    "Failed to rebuild app menu after locale change",
+                )
+                .details(error.to_string()),
+            );
+        }
     }
     Ok(imported)
 }

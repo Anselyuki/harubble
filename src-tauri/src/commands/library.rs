@@ -46,6 +46,18 @@ fn map_image_cache_error(error: image_cache::ImageCacheError) -> LibraryError {
     }
 }
 
+async fn fetch_enriched_album_detail(
+    state: &AppState,
+    album_cid: &str,
+) -> Result<harubble_core::api::AlbumDetail, LibraryError> {
+    let album = state
+        .api_client()
+        .get_album_detail(album_cid)
+        .await
+        .map_err(|e| LibraryError::Network(e.to_string()))?;
+    Ok(state.attach_album_detail_enrichment(album).await)
+}
+
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 /// 获取专辑列表，并附带本地库存增强后的下载徽标与 tag 信息。
@@ -58,10 +70,11 @@ pub async fn get_albums(
     state: State<'_, AppState>,
 ) -> Result<Vec<harubble_core::api::Album>, LibraryError> {
     let albums = state
-        .api_client()
-        .get_albums()
+        .album_catalog()
+        .get()
         .await
-        .map_err(|e| LibraryError::Network(e.to_string()))?;
+        .map_err(LibraryError::Network)?
+        .albums;
     Ok(state.attach_album_enrichment(albums).await)
 }
 
@@ -76,12 +89,22 @@ pub async fn get_album_detail(
     state: State<'_, AppState>,
     album_cid: String,
 ) -> Result<harubble_core::api::AlbumDetail, LibraryError> {
-    let album = state
+    fetch_enriched_album_detail(state.inner(), &album_cid).await
+}
+
+/// 强制刷新指定专辑详情，并应用与普通详情读取相同的本地增强。
+///
+/// 仅失效当前 `album_cid` 对应的已完成详情缓存；其他专辑、全量目录和其他 API 域
+/// 均不受影响。若同一详情已有请求在执行，则复用该请求而不启动重复访问。
+#[tauri::command]
+pub async fn refresh_album_detail(
+    state: State<'_, AppState>,
+    album_cid: String,
+) -> Result<harubble_core::api::AlbumDetail, LibraryError> {
+    state
         .api_client()
-        .get_album_detail(&album_cid)
-        .await
-        .map_err(|e| LibraryError::Network(e.to_string()))?;
-    Ok(state.attach_album_detail_enrichment(album).await)
+        .invalidate_album_detail_response_cache(&album_cid);
+    fetch_enriched_album_detail(state.inner(), &album_cid).await
 }
 
 /// 根据歌曲 CID 获取单曲详情，并联动所属专辑补齐库存徽标。

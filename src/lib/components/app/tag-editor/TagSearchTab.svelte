@@ -10,6 +10,7 @@
     searchResults: TagEditorLocalizedValue[];
     values: TagEditorLocalizedValue[];
     tagLocales: TagLocale[];
+    editingTag: TagEditorLocalizedValue | null;
     onSelect: (val: TagEditorLocalizedValue) => void;
     onEditSave: (
       originalTag: TagEditorLocalizedValue,
@@ -23,12 +24,12 @@
     searchResults,
     values,
     tagLocales,
+    editingTag = $bindable(null),
     onSelect,
     onEditSave,
     onEditAndAdd,
   }: Props = $props();
 
-  let editingTag = $state<TagEditorLocalizedValue | null>(null);
   let editValues = $state<Record<string, string>>({});
 
   function isAlreadyAdded(val: TagEditorLocalizedValue): boolean {
@@ -44,13 +45,9 @@
     }
   }
 
-  export function cancelEdit() {
+  function cancelEdit() {
     editingTag = null;
     editValues = {};
-  }
-
-  export function hasEditingTag(): boolean {
-    return editingTag !== null;
   }
 
   async function handleSave() {

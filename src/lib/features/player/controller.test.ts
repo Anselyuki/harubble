@@ -55,8 +55,6 @@ describe('createPlayerController', () => {
     });
 
     it('clears playingCid once loading is false via subsequent state event', async () => {
-      // controller 不再在 playQueueEntry 结束时主动拉取 PlayerState，改由后端事件推动。
-      // 这里显式模拟事件到达以覆盖等价路径。
       const deps = makeDeps({
         playSong: vi.fn().mockResolvedValue(undefined),
       });
@@ -76,6 +74,148 @@ describe('createPlayerController', () => {
       );
 
       expect(ctrl.playingCid).toBeNull();
+    });
+
+    it('reads back the settled state when only the loading event arrived', async () => {
+      const settledState = makePlayerState({
+        sessionId: 2,
+        songCid: 'song-a',
+        songName: 'Song A',
+        isPlaying: true,
+        isLoading: false,
+      });
+      const getPlayerState = vi.fn().mockResolvedValue(settledState);
+      const playSong = vi.fn();
+      const deps = makeDeps({
+        getPlayerState,
+        playSong,
+      });
+      const ctrl = createPlayerController(deps);
+      playSong.mockImplementation(async () => {
+        ctrl.syncPlayerState(
+          makePlayerState({
+            sessionId: 2,
+            songCid: 'song-a',
+            songName: 'Song A',
+            isLoading: true,
+          })
+        );
+      });
+      const entries = [
+        { cid: 'song-a', name: 'Song A', artists: [], coverUrl: null },
+      ];
+
+      ctrl.applyPlaybackQueue(entries, 'song-a');
+      await ctrl.playQueueEntry(entries[0]);
+
+      expect(getPlayerState).toHaveBeenCalledOnce();
+      expect(ctrl.isLoading).toBe(false);
+      expect(ctrl.isPlaying).toBe(true);
+      expect(ctrl.playingCid).toBeNull();
+    });
+
+    it('keeps an event-settled state that arrives during the readback', async () => {
+      let resolveReadback: ((state: PlayerState) => void) | undefined;
+      const getPlayerState = vi.fn().mockImplementation(
+        () =>
+          new Promise<PlayerState>((resolve) => {
+            resolveReadback = resolve;
+          })
+      );
+      const playSong = vi.fn();
+      const deps = makeDeps({
+        getPlayerState,
+        playSong,
+      });
+      const ctrl = createPlayerController(deps);
+      playSong.mockImplementation(async () => {
+        ctrl.syncPlayerState(
+          makePlayerState({
+            sessionId: 2,
+            songCid: 'song-a',
+            songName: 'Song A',
+            isLoading: true,
+          })
+        );
+      });
+      const entries = [
+        { cid: 'song-a', name: 'Song A', artists: [], coverUrl: null },
+      ];
+
+      ctrl.applyPlaybackQueue(entries, 'song-a');
+      const playPromise = ctrl.playQueueEntry(entries[0]);
+      await vi.waitFor(() => expect(getPlayerState).toHaveBeenCalledOnce());
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 2,
+          songCid: 'song-a',
+          songName: 'Song A',
+          isPlaying: true,
+          isLoading: false,
+          progress: 12,
+        })
+      );
+      resolveReadback?.(
+        makePlayerState({
+          sessionId: 2,
+          songCid: 'song-a',
+          songName: 'Song A',
+          isLoading: true,
+        })
+      );
+      await playPromise;
+
+      expect(ctrl.isLoading).toBe(false);
+      expect(ctrl.isPlaying).toBe(true);
+      expect(ctrl.progress).toBe(12);
+    });
+  });
+
+  describe('playQueueEntry pending guard', () => {
+    it('clears a stale pause-pending target when switching to a new track', async () => {
+      const deps = makeDeps();
+      const ctrl = createPlayerController(deps);
+
+      const initialEntries = [
+        { cid: 'song-a', name: 'Song A', artists: [], coverUrl: null },
+      ];
+      ctrl.applyPlaybackQueue(initialEntries, 'song-a');
+      await ctrl.playQueueEntry(initialEntries[0]);
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 2,
+          songCid: 'song-a',
+          songName: 'Song A',
+          isPlaying: true,
+          isLoading: false,
+        })
+      );
+
+      // 用户按下暂停：pending 落到 'paused'，但暂停事件尚未回来。
+      const pausePromise = ctrl.pause();
+      expect(ctrl.isPlayTogglePending).toBe(true);
+      await pausePromise;
+
+      // 暂停命令仍在飞行中，用户又双击了另一首歌：新的 playQueueEntry 必须清掉
+      // 无法再被匹配的旧 pending，否则 loading 状态永远不会退出。
+      const nextEntries = [
+        { cid: 'song-b', name: 'Song B', artists: [], coverUrl: null },
+      ];
+      ctrl.applyPlaybackQueue(nextEntries, 'song-b');
+      await ctrl.playQueueEntry(nextEntries[0]);
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 3,
+          songCid: 'song-b',
+          songName: 'Song B',
+          isPlaying: true,
+          isLoading: false,
+        })
+      );
+
+      expect(ctrl.isPlayTogglePending).toBe(false);
+      expect(ctrl.isLoading).toBe(false);
+      expect(ctrl.isPlaying).toBe(true);
     });
   });
 
@@ -143,6 +283,71 @@ describe('createPlayerController', () => {
       ctrl.syncPlaybackEnded(event);
 
       expect(ctrl.progress).toBe(10);
+    });
+  });
+
+  describe('repeat mode playback end behavior', () => {
+    const entries = [
+      { cid: 'song-a', name: 'Song A', artists: [], coverUrl: null },
+      { cid: 'song-b', name: 'Song B', artists: [], coverUrl: null },
+    ];
+
+    it('defaults to repeat off and stops at the end of the queue', async () => {
+      const playSong = vi.fn().mockResolvedValue(undefined);
+      const ctrl = createPlayerController(makeDeps({ playSong }));
+      ctrl.applyPlaybackQueue(entries, 'song-b');
+
+      await ctrl.handlePlaybackEnded('song-b');
+
+      expect(ctrl.repeatMode).toBe('off');
+      expect(playSong).not.toHaveBeenCalled();
+    });
+
+    it('continues to the next entry before the queue end when repeat is off', async () => {
+      const playSong = vi.fn().mockResolvedValue(undefined);
+      const ctrl = createPlayerController(makeDeps({ playSong }));
+      ctrl.applyPlaybackQueue(entries, 'song-a');
+
+      await ctrl.handlePlaybackEnded('song-a');
+
+      expect(playSong).toHaveBeenCalledOnce();
+      expect(playSong).toHaveBeenCalledWith(
+        'song-b',
+        null,
+        expect.objectContaining({ currentIndex: 1 })
+      );
+    });
+
+    it('wraps to the first entry in repeat all mode', async () => {
+      const playSong = vi.fn().mockResolvedValue(undefined);
+      const ctrl = createPlayerController(makeDeps({ playSong }));
+      ctrl.applyPlaybackQueue(entries, 'song-b');
+      ctrl.toggleRepeat('all');
+
+      await ctrl.handlePlaybackEnded('song-b');
+
+      expect(playSong).toHaveBeenCalledOnce();
+      expect(playSong).toHaveBeenCalledWith(
+        'song-a',
+        null,
+        expect.objectContaining({ currentIndex: 0 })
+      );
+    });
+
+    it('restarts the current entry in repeat one mode', async () => {
+      const playSong = vi.fn().mockResolvedValue(undefined);
+      const ctrl = createPlayerController(makeDeps({ playSong }));
+      ctrl.applyPlaybackQueue(entries, 'song-b');
+      ctrl.toggleRepeat('one');
+
+      await ctrl.handlePlaybackEnded('song-b');
+
+      expect(playSong).toHaveBeenCalledOnce();
+      expect(playSong).toHaveBeenCalledWith(
+        'song-b',
+        null,
+        expect.objectContaining({ currentIndex: 1 })
+      );
     });
   });
 
@@ -216,6 +421,46 @@ describe('createPlayerController', () => {
 
       expect(resumePlayback).toHaveBeenCalledOnce();
       expect(seekCurrentPlayback).not.toHaveBeenCalled();
+    });
+
+    it('restarts the completed final track when repeat is off', async () => {
+      const seekCurrentPlayback = vi.fn().mockResolvedValue(undefined);
+      const resumePlayback = vi.fn().mockResolvedValue(undefined);
+      const ctrl = createPlayerController(
+        makeDeps({
+          seekCurrentPlayback,
+          resumePlayback,
+          getPlayerState: vi.fn().mockResolvedValue(
+            makePlayerState({
+              sessionId: 2,
+              songCid: 'song-b',
+              songName: 'Song B',
+              isPlaying: true,
+              duration: 180,
+            })
+          ),
+        })
+      );
+      const entries = [
+        { cid: 'song-a', name: 'Song A', artists: [], coverUrl: null },
+        { cid: 'song-b', name: 'Song B', artists: [], coverUrl: null },
+      ];
+      ctrl.applyPlaybackQueue(entries, 'song-b');
+      ctrl.syncPlayerState(
+        makePlayerState({
+          songCid: 'song-b',
+          songName: 'Song B',
+          progress: 180,
+          duration: 180,
+          hasNext: true,
+        })
+      );
+
+      await ctrl.resume();
+
+      expect(seekCurrentPlayback).toHaveBeenCalledOnce();
+      expect(seekCurrentPlayback).toHaveBeenCalledWith(0);
+      expect(resumePlayback).not.toHaveBeenCalled();
     });
   });
 

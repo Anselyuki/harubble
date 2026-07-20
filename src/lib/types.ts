@@ -70,6 +70,19 @@ export interface Album {
   tags: TagEntry[];
 }
 
+export interface AlbumCatalogSnapshot {
+  albums: Album[];
+  revision: number;
+  checkedAt: number;
+}
+
+export interface AlbumCatalogRefreshedEvent {
+  revision: number;
+  checkedAt: number;
+  changed: boolean;
+  albumCount: number;
+}
+
 export interface SongEntry {
   cid: string;
   name: string;
@@ -346,6 +359,8 @@ export interface PlaybackFormatState {
   resampling: boolean;
   channelRemix: boolean;
 }
+
+export type RepeatMode = 'off' | 'all' | 'one';
 
 export interface PlayerState {
   sessionId: number;
