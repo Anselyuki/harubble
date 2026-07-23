@@ -37,7 +37,11 @@
   }
 </script>
 
-<section class="recent-history" aria-label={labels.title}>
+<section
+  class="recent-history field-section"
+  data-field-index="04"
+  aria-label={labels.title}
+>
   <div class="section-header">
     <h2 class="section-title">{labels.title}</h2>
     {#if entries.length > 0}

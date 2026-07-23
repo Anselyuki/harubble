@@ -22,31 +22,31 @@ const LIGHT_TOKENS: Omit<
   | 'ring'
   | 'surfaceState'
 > = {
-  bgPrimary: '#ffffff',
-  bgSecondary: '#f5f5f7',
-  bgTertiary: '#e8e8ed',
-  bgElevated: 'rgba(255, 255, 255, 0.8)',
-  textPrimary: '#1d1d1f',
-  textSecondary: '#6e6e73',
-  textTertiary: '#86868b',
-  border: 'rgba(0, 0, 0, 0.08)',
-  surfaceBase: '#ffffff',
-  surfaceSidebar: '#f0f0f2',
-  surfaceOverlay: 'rgba(245, 245, 247, 0.76)',
+  bgPrimary: '#f2f2f0',
+  bgSecondary: '#e8e8e4',
+  bgTertiary: '#d8d8d2',
+  bgElevated: 'rgba(242, 242, 240, 0.92)',
+  textPrimary: '#191919',
+  textSecondary: '#52524e',
+  textTertiary: '#73736d',
+  border: 'rgba(25, 25, 25, 0.18)',
+  surfaceBase: '#f2f2f0',
+  surfaceSidebar: '#e6e6e1',
+  surfaceOverlay: 'rgba(242, 242, 240, 0.9)',
 };
 
 const DARK_TOKENS: typeof LIGHT_TOKENS = {
-  bgPrimary: '#000000',
-  bgSecondary: '#1c1c1e',
-  bgTertiary: '#2c2c2e',
-  bgElevated: 'rgba(28, 28, 30, 0.8)',
-  textPrimary: '#ffffff',
-  textSecondary: '#8e8e93',
-  textTertiary: '#636366',
-  border: 'rgba(255, 255, 255, 0.08)',
-  surfaceBase: '#000000',
-  surfaceSidebar: '#1c1c1e',
-  surfaceOverlay: 'rgba(28, 28, 30, 0.76)',
+  bgPrimary: '#191919',
+  bgSecondary: '#232322',
+  bgTertiary: '#30302e',
+  bgElevated: 'rgba(35, 35, 34, 0.94)',
+  textPrimary: '#f2f2f0',
+  textSecondary: '#b5b5ae',
+  textTertiary: '#888881',
+  border: 'rgba(242, 242, 240, 0.18)',
+  surfaceBase: '#191919',
+  surfaceSidebar: '#222220',
+  surfaceOverlay: 'rgba(25, 25, 25, 0.92)',
 };
 
 function getEffectiveScheme(): 'light' | 'dark' {

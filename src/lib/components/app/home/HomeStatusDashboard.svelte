@@ -44,7 +44,11 @@
   }
 </script>
 
-<section class="status-dashboard" aria-label={labels.overviewAria}>
+<section
+  class="status-dashboard field-section"
+  data-field-index="05"
+  aria-label={labels.overviewAria}
+>
   <h2 class="section-title">{labels.title}</h2>
 
   <div class="stat-grid">

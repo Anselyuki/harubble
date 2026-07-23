@@ -29,7 +29,11 @@
   });
 </script>
 
-<section class="series-groups" aria-label={labels.aria}>
+<section
+  class="series-groups field-section"
+  data-field-index="02"
+  aria-label={labels.aria}
+>
   <h2 class="section-title">{labels.title}</h2>
 
   {#if !belongReady}

@@ -35,10 +35,8 @@
   });
 </script>
 
-<div class="top-actions">
-  <div
-    class="flex items-center gap-1 rounded-full border border-white/50 bg-white/[0.62] p-1 shadow-[0_16px_36px_rgba(15,23,42,0.12)] backdrop-blur-xl"
-  >
+<header class="top-actions">
+  <div class="endfield-toolbar">
     <Button
       size="icon"
       variant="ghost"
@@ -79,13 +77,23 @@
       <Settings size={16} />
     </Button>
   </div>
-</div>
+</header>
 
 <style>
   .top-actions {
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+
+  .endfield-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--field-rule);
+    background: var(--field-toolbar-surface);
+    box-shadow: 6px 6px 0 var(--field-shadow);
   }
 
   .toolbar-badge {
@@ -95,9 +103,9 @@
     min-width: 14px;
     height: 14px;
     padding: 0 3px;
-    border-radius: 999px;
-    background: var(--accent, #5090ff);
-    color: #fff;
+    border-radius: 0;
+    background: var(--field-signal);
+    color: var(--field-ink);
     font-size: 9px;
     font-weight: 700;
     line-height: 14px;

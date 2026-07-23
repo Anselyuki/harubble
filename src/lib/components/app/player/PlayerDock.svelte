@@ -19,7 +19,17 @@
     width: 100%;
     border-radius: 0;
     border: 0;
-    background: var(--surface-dock);
+    background: var(--field-dock, var(--surface-dock));
+    color: var(--field-paper, #f2f2f0);
+    border-top: 1px solid var(--field-signal, var(--album-accent));
+    --player-title: #f2f2f0;
+    --player-subtitle: rgba(242, 242, 240, 0.64);
+    --player-control-color: rgba(242, 242, 240, 0.82);
+    --player-time: rgba(242, 242, 240, 0.56);
+    --player-shell-bg: #191919;
+    --player-shell-border: rgba(242, 242, 240, 0.16);
+    --player-shell-highlight: rgba(242, 242, 240, 0.08);
+    --player-track-bg: rgba(242, 242, 240, 0.14);
   }
 
   .player-dock-wrap :global(.am-player)::before {
@@ -29,8 +39,8 @@
     z-index: -1;
     border-radius: inherit;
     background: inherit;
-    backdrop-filter: blur(24px) saturate(1.2);
-    -webkit-backdrop-filter: blur(24px) saturate(1.2);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     pointer-events: none;
   }
 </style>

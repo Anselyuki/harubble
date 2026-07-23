@@ -16,8 +16,15 @@
     width: var(--slab-width, 46px);
     margin-top: calc(20px + var(--safe-area-top));
     margin-bottom: 12px;
-    border-radius: 0 8px 8px 0;
-    background: var(--accent);
+    border-radius: 0;
+    background: var(--field-signal, var(--accent));
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% calc(100% - 12px),
+      calc(100% - 12px) 100%,
+      0 100%
+    );
     pointer-events: none;
   }
 </style>

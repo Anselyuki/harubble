@@ -26,12 +26,12 @@ export const THEME_COLOR_SLOTS = [
 export const DEFAULT_THEME_PRESET_ID = 'harubble-classic';
 
 export const HARUBBLE_CLASSIC_COLORS: ThemeColorSlots = {
-  accent: '#FFE47A',
-  surface: '#D1D6DB',
-  textPrimary: '#4A5056',
-  textSecondary: '#596066',
-  tint: '#899CB0',
-  danger: '#C74F4F',
+  accent: '#FFFA00',
+  surface: '#F2F2F0',
+  textPrimary: '#191919',
+  textSecondary: '#52524E',
+  tint: '#A6A69F',
+  danger: '#C83F32',
 };
 
 export const THEME_PRESETS: ThemePreset[] = [

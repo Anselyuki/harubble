@@ -104,7 +104,11 @@
   }
 </script>
 
-<section class="latest-albums" aria-label={labels.title}>
+<section
+  class="latest-albums field-section"
+  data-field-index="01"
+  aria-label={labels.title}
+>
   <h2 class="section-title">{labels.title}</h2>
 
   {#if loading && albums.length === 0}

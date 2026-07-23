@@ -25,12 +25,12 @@ describe('theme presets', () => {
       customColors: {},
     });
 
-    expect(colors.accent).toBe('#FFE47A');
-    expect(colors.surface).toBe('#D1D6DB');
-    expect(colors.textPrimary).toBe('#4A5056');
-    expect(colors.textSecondary).toBe('#596066');
-    expect(colors.tint).toBe('#899CB0');
-    expect(colors.danger).toBe('#C74F4F');
+    expect(colors.accent).toBe('#FFFA00');
+    expect(colors.surface).toBe('#F2F2F0');
+    expect(colors.textPrimary).toBe('#191919');
+    expect(colors.textSecondary).toBe('#52524E');
+    expect(colors.tint).toBe('#A6A69F');
+    expect(colors.danger).toBe('#C83F32');
   });
 
   it('falls back to the default preset when the preset id is unknown', () => {
@@ -64,7 +64,7 @@ describe('theme presets', () => {
       ]);
     }
 
-    expect(presetsById.get('harubble-classic')?.colors.tint).toBe('#899CB0');
+    expect(presetsById.get('harubble-classic')?.colors.tint).toBe('#A6A69F');
   });
 
   it('provides the default preset name for both Chinese and English locales', async () => {
@@ -102,7 +102,7 @@ describe('theme presets', () => {
     ).toMatchObject({
       accent: '#123ABC',
       danger: '#AA3300',
-      surface: '#D1D6DB',
+      surface: '#F2F2F0',
     });
   });
 
@@ -117,8 +117,8 @@ describe('theme presets', () => {
         },
       })
     ).toMatchObject({
-      accent: '#FFE47A',
-      surface: '#D1D6DB',
+      accent: '#FFFA00',
+      surface: '#F2F2F0',
       tint: '#0F1A2B',
     });
   });
@@ -140,26 +140,26 @@ describe('theme CSS variables', () => {
   it('derives rgb, hover, readable foreground, and semantic slot variables', () => {
     const variables = deriveThemeCssVariables(HARUBBLE_CLASSIC_COLORS);
 
-    expect(variables['--accent']).toBe('#FFE47A');
-    expect(variables['--accent-rgb']).toBe('255, 228, 122');
+    expect(variables['--accent']).toBe('#FFFA00');
+    expect(variables['--accent-rgb']).toBe('255, 250, 0');
     expect(variables['--accent-hover']).toMatch(/^#[0-9A-F]{6}$/);
     expect(variables['--accent-readable-foreground']).toMatch(/^#[0-9A-F]{6}$/);
-    expect(variables['--theme-surface']).toBe('#D1D6DB');
-    expect(variables['--theme-surface-rgb']).toBe('209, 214, 219');
-    expect(variables['--theme-text-primary']).toBe('#4A5056');
-    expect(variables['--theme-text-secondary']).toBe('#596066');
-    expect(variables['--theme-tint']).toBe('#899CB0');
-    expect(variables['--theme-tint-rgb']).toBe('137, 156, 176');
-    expect(variables['--destructive']).toBe('#C74F4F');
+    expect(variables['--theme-surface']).toBe('#F2F2F0');
+    expect(variables['--theme-surface-rgb']).toBe('242, 242, 240');
+    expect(variables['--theme-text-primary']).toBe('#191919');
+    expect(variables['--theme-text-secondary']).toBe('#52524E');
+    expect(variables['--theme-tint']).toBe('#A6A69F');
+    expect(variables['--theme-tint-rgb']).toBe('166, 166, 159');
+    expect(variables['--destructive']).toBe('#C83F32');
   });
 
   it('applies app theme colors without setting album overlay colors', () => {
     applyThemeColors(HARUBBLE_CLASSIC_COLORS);
 
     const root = document.documentElement;
-    expect(root.style.getPropertyValue('--accent')).toBe('#FFE47A');
-    expect(root.style.getPropertyValue('--theme-surface')).toBe('#D1D6DB');
-    expect(root.style.getPropertyValue('--theme-tint')).toBe('#899CB0');
+    expect(root.style.getPropertyValue('--accent')).toBe('#FFFA00');
+    expect(root.style.getPropertyValue('--theme-surface')).toBe('#F2F2F0');
+    expect(root.style.getPropertyValue('--theme-tint')).toBe('#A6A69F');
     expect(root.style.getPropertyValue('--album-accent')).toBe('');
   });
 
@@ -185,8 +185,8 @@ describe('theme CSS variables', () => {
     );
 
     const root = document.documentElement;
-    expect(root.style.getPropertyValue('--accent')).toBe('#FFE47A');
-    expect(root.style.getPropertyValue('--theme-surface')).toBe('#D1D6DB');
+    expect(root.style.getPropertyValue('--accent')).toBe('#FFFA00');
+    expect(root.style.getPropertyValue('--theme-surface')).toBe('#F2F2F0');
     expect(root.style.getPropertyValue('--album-accent')).toBe('#112233');
     expect(root.style.getPropertyValue('--album-accent-rgb')).toBe(
       '17, 34, 51'
@@ -200,10 +200,10 @@ describe('theme CSS variables', () => {
     applyAlbumAccentPalette(null, HARUBBLE_CLASSIC_COLORS);
 
     const root = document.documentElement;
-    expect(root.style.getPropertyValue('--album-accent')).toBe('#FFE47A');
+    expect(root.style.getPropertyValue('--album-accent')).toBe('#FFFA00');
     expect(root.style.getPropertyValue('--album-accent-rgb')).toBe(
-      '255, 228, 122'
+      '255, 250, 0'
     );
-    expect(root.style.getPropertyValue('--wave-color-0')).toBe('255, 228, 122');
+    expect(root.style.getPropertyValue('--wave-color-0')).toBe('255, 250, 0');
   });
 });

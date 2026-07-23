@@ -261,7 +261,7 @@
       aria-hidden="true"
     ></div>
 
-    <section class="main-region">
+    <main class="main-region">
       {#if runtime.isMacOS}
         <div
           class="main-drag-region"
@@ -314,7 +314,7 @@
         notifyError={runtime.notifyError}
         onOutputDirChange={runtime.handleOutputDirChange}
       />
-    </section>
+    </main>
   </div>
 
   <CollectionFormDialog

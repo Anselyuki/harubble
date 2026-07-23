@@ -13,15 +13,15 @@ describe('resolveAppThemeTokenSet', () => {
   it('produces a complete ThemeTokenSet from preset colors (light)', () => {
     const tokens = resolveAppThemeTokenSet(HARUBBLE_CLASSIC_COLORS, 'light');
 
-    expect(tokens.accent).toBe('#FFE47A');
+    expect(tokens.accent).toBe('#FFFA00');
     expect(tokens.accentHover).toMatch(/^#[0-9A-F]{6}$/);
-    expect(tokens.accentRgb).toBe('255, 228, 122');
+    expect(tokens.accentRgb).toBe('255, 250, 0');
     expect(tokens.accentReadableForeground).toMatch(/^#[0-9A-F]{6}$/);
     expect(tokens.bgPrimary).toBe(LIGHT_TOKENS.bgPrimary);
     expect(tokens.textPrimary).toBe(LIGHT_TOKENS.textPrimary);
     expect(tokens.border).toBe(LIGHT_TOKENS.border);
-    expect(tokens.destructive).toBe('#C74F4F');
-    expect(tokens.surfaceState).toMatch(/^rgba\(255, 228, 122, 0\.08\)$/);
+    expect(tokens.destructive).toBe('#C83F32');
+    expect(tokens.surfaceState).toMatch(/^rgba\(255, 250, 0, 0\.08\)$/);
   });
 
   it('produces dark mode tokens when scheme is dark', () => {

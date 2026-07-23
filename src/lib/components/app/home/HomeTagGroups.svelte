@@ -31,7 +31,11 @@
 </script>
 
 {#if dimensions.length > 0}
-  <section class="tag-groups" aria-label={labels.aria}>
+  <section
+    class="tag-groups field-section"
+    data-field-index="03"
+    aria-label={labels.aria}
+  >
     <h2 class="section-title">{labels.title}</h2>
 
     <div class="dimension-chips" role="tablist">
