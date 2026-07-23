@@ -9,6 +9,7 @@
   import {
     getSettledPlayToggleGlyph,
     selectGlyphAfterCollapse,
+    selectPlayToggleGlyphTransition,
     type PlayToggleGlyph,
     type PlayToggleGlyphState,
   } from '$lib/features/player/playToggleGlyph';
@@ -46,6 +47,7 @@
   let initialized = false;
   let commandCollapsing = false;
   let animationGeneration = 0;
+  let inFlightGlyph: PlayToggleGlyph | null = null;
   let loadingDelay: gsap.core.Tween | null = null;
   let loadingMinimumDelay: gsap.core.Tween | null = null;
 
@@ -92,6 +94,7 @@
     const target = getLayer(glyph);
     if (target) gsap.set(target, { opacity: 1, scale: 1, y: 0 });
     visibleGlyph = glyph;
+    inFlightGlyph = null;
   }
 
   function reveal(glyph: PlayToggleGlyph, generation: number) {
@@ -99,6 +102,7 @@
     const target = getLayer(glyph);
     if (!target) return;
     visibleGlyph = glyph;
+    inFlightGlyph = null;
     killTweens(target);
     gsap.fromTo(
       target,
@@ -114,9 +118,35 @@
   }
 
   function swapTo(glyph: PlayToggleGlyph) {
-    if (glyph === visibleGlyph) return;
+    const transition = selectPlayToggleGlyphTransition(
+      visibleGlyph,
+      inFlightGlyph,
+      glyph
+    );
+    if (transition === 'keep') return;
+
     const outgoing = getLayer(visibleGlyph);
     const generation = ++animationGeneration;
+    if (transition === 'restore') {
+      inFlightGlyph = null;
+      for (const layer of getLayers()) {
+        killTweens(layer);
+        if (layer !== outgoing) {
+          gsap.set(layer, { opacity: 0, scale: 0, y: 2 });
+        }
+      }
+      if (!outgoing) return;
+      gsap.to(outgoing, {
+        opacity: 1,
+        scale: 1,
+        y: 0,
+        duration: motionDuration(MOTION.SLOW_OUT),
+        ease: 'ios-out',
+      });
+      return;
+    }
+
+    inFlightGlyph = glyph;
     if (!outgoing) {
       reveal(glyph, generation);
       return;
@@ -155,6 +185,7 @@
     cancelLoadingDelay();
     cancelLoadingMinimumDelay();
     commandCollapsing = true;
+    inFlightGlyph = null;
 
     const finishCollapse = () => {
       if (generation !== animationGeneration) return;
@@ -231,6 +262,7 @@
 
   onDestroy(() => {
     animationGeneration += 1;
+    inFlightGlyph = null;
     cancelLoadingDelay();
     cancelLoadingMinimumDelay();
     for (const layer of getLayers()) killTweens(layer);

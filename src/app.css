@@ -1520,54 +1520,42 @@ img[data-image-state='error'] {
 /* ── Lyrics bubble ── */
 
 .lyrics-bubble {
-  --flyout-surface: color-mix(in srgb, var(--player-shell-bg) 96%, transparent);
-  --flyout-border: color-mix(
+  --lyrics-glass-surface: color-mix(
     in srgb,
-    var(--player-shell-border) 100%,
+    var(--player-shell-bg) 72%,
     transparent
   );
-  --flyout-highlight: color-mix(
+  --lyrics-glass-border: color-mix(
     in srgb,
-    var(--player-shell-highlight) 92%,
+    var(--player-shell-border) 82%,
     transparent
   );
-  --flyout-inner-bg: color-mix(
+  --lyrics-glass-highlight: color-mix(
     in srgb,
-    var(--player-shell-bg) 82%,
-    transparent
-  );
-  --flyout-inner-border: color-mix(
-    in srgb,
-    var(--player-shell-border) 88%,
+    var(--player-shell-highlight) 94%,
     transparent
   );
   position: absolute;
   bottom: calc(100% + 14px);
   right: -8px;
-  width: 340px;
-  max-height: min(40vh, 360px);
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: min(44vh, 390px);
   isolation: isolate;
-  border-radius: 22px;
-  padding: 16px 16px 14px;
+  border-radius: 24px;
+  padding: 18px 20px;
   background:
-    linear-gradient(180deg, var(--flyout-highlight) 0%, transparent 34%),
-    radial-gradient(
-      circle at 86% 0%,
-      rgba(var(--album-accent-rgb), 0.14),
-      transparent 42%
-    ),
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--flyout-surface) 98%, rgba(255, 255, 255, 0.08)),
-      color-mix(in srgb, var(--flyout-surface) 90%, transparent)
-    );
-  border: 1px solid var(--flyout-border);
+    linear-gradient(145deg, var(--lyrics-glass-highlight), transparent 38%),
+    var(--lyrics-glass-surface);
+  border: 1px solid var(--lyrics-glass-border);
   box-shadow:
-    0 18px 40px rgba(15, 23, 42, 0.2),
-    0 10px 24px rgba(var(--album-accent-rgb), 0.1),
-    inset 0 1px 0 color-mix(in srgb, var(--flyout-highlight) 88%, transparent);
-  backdrop-filter: blur(22px) saturate(1.16);
-  -webkit-backdrop-filter: blur(22px) saturate(1.16);
+    0 22px 52px rgba(15, 23, 42, 0.2),
+    0 10px 28px rgba(var(--album-accent-rgb), 0.08),
+    inset 0 1px 0 var(--lyrics-glass-highlight),
+    inset 0 -1px 0
+      color-mix(in srgb, var(--player-shell-border) 52%, transparent);
+  backdrop-filter: blur(30px) saturate(1.3);
+  -webkit-backdrop-filter: blur(30px) saturate(1.3);
   z-index: 90;
   display: flex;
   flex-direction: column;
@@ -1580,122 +1568,73 @@ img[data-image-state='error'] {
   inset: 0;
   border-radius: inherit;
   background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.16),
-    transparent 24%
+    115deg,
+    rgba(255, 255, 255, 0.18),
+    transparent 32%,
+    rgba(var(--album-accent-rgb), 0.05) 78%,
+    transparent
   );
   pointer-events: none;
-  opacity: 0.8;
-}
-
-.lyrics-bubble-arrow {
-  position: absolute;
-  bottom: -7px;
-  right: 20px;
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  transform: rotate(45deg);
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--flyout-surface) 96%, rgba(255, 255, 255, 0.08)),
-    color-mix(in srgb, var(--flyout-surface) 88%, transparent)
-  );
-  border-right: 1px solid var(--flyout-border);
-  border-bottom: 1px solid var(--flyout-border);
-  box-shadow: 8px 8px 14px rgba(15, 23, 42, 0.08);
-  pointer-events: none;
-  z-index: -1;
-}
-
-.lyrics-bubble-header {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 12px;
-  padding-bottom: 10px;
-}
-
-.lyrics-bubble-header::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    rgba(var(--album-accent-rgb), 0.18),
-    rgba(var(--album-accent-rgb), 0.03)
-  );
-}
-
-.lyrics-bubble-eyebrow {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--player-time);
-}
-
-.lyrics-bubble-title {
-  margin-top: 3px;
-  font-size: 14px;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-  color: var(--player-title);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lyrics-bubble-count {
-  flex-shrink: 0;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(var(--album-accent-rgb), 0.12);
-  background: rgba(var(--album-accent-rgb), 0.08);
-  color: var(--album-accent);
-  font-size: 11px;
-  font-weight: 700;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  opacity: 0.72;
 }
 
 .lyrics-bubble-body {
   flex: 1;
   min-height: 0;
-  max-height: min(32vh, 260px);
+  max-height: min(38vh, 330px);
   overflow-y: auto;
-  padding: 6px;
-  border-radius: 16px;
-  background: var(--flyout-inner-bg);
-  border: 1px solid var(--flyout-inner-border);
-  box-shadow: inset 0 1px 0
-    color-mix(in srgb, var(--player-shell-highlight) 80%, transparent);
+  padding: 2px 4px;
+  scrollbar-width: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+
+.lyrics-bubble-body::-webkit-scrollbar {
+  display: none;
 }
 
 .lyrics-bubble-line {
-  padding: 8px 10px;
-  border-radius: 12px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--player-subtitle);
-  background: color-mix(in srgb, var(--player-shell-bg) 62%, transparent);
+  appearance: none;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  padding: 8px 4px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.65;
+  text-align: left;
+  color: color-mix(in srgb, var(--player-subtitle) 88%, transparent);
+  text-wrap: pretty;
+  transition:
+    color var(--motion-duration) ease,
+    opacity var(--motion-duration) ease,
+    transform var(--motion-duration) ease;
+}
+
+.lyrics-bubble-line.seekable {
+  cursor: pointer;
+}
+
+.lyrics-bubble-line.seekable:hover {
+  color: color-mix(in srgb, var(--album-accent) 76%, var(--player-title));
+  transform: translateX(2px);
+}
+
+.lyrics-bubble-line.seekable:focus-visible {
+  outline: none;
+  color: var(--album-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
 }
 
 .lyrics-bubble-line.active {
   color: var(--album-accent);
   font-weight: 700;
-  background: rgba(var(--album-accent-rgb), 0.12);
-  box-shadow:
-    inset 0 0 0 1px rgba(var(--album-accent-rgb), 0.12),
-    0 6px 14px rgba(var(--album-accent-rgb), 0.08);
-  transform: translateX(2px);
+  text-shadow: 0 2px 14px rgba(var(--album-accent-rgb), 0.16);
+  transform: translateX(3px);
 }
 
 .lyrics-bubble-empty {
@@ -1703,26 +1642,16 @@ img[data-image-state='error'] {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 14px;
-  border-radius: 16px;
+  padding: 18px 8px;
   text-align: center;
   color: var(--player-subtitle);
-  font-size: 13px;
-  background: var(--flyout-inner-bg);
-  border: 1px solid var(--flyout-inner-border);
-  box-shadow: inset 0 1px 0
-    color-mix(in srgb, var(--player-shell-highlight) 80%, transparent);
+  font-size: 14px;
 }
 
 @media (max-width: 640px) {
   .lyrics-bubble {
     width: calc(100vw - 32px);
-    right: 50%;
-    transform: translateX(50%);
-  }
-
-  .lyrics-bubble-arrow {
-    right: calc(50% - 7px);
+    right: 0;
   }
 }
 

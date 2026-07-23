@@ -1,5 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { selectGlyphAfterCollapse } from './playToggleGlyph';
+import {
+  selectGlyphAfterCollapse,
+  selectPlayToggleGlyphTransition,
+} from './playToggleGlyph';
+
+describe('play toggle glyph transitions', () => {
+  it('restores the visible settled glyph when an obsolete loading swap is in flight', () => {
+    expect(selectPlayToggleGlyphTransition('pause', 'loading', 'pause')).toBe(
+      'restore'
+    );
+  });
+
+  it('keeps an already requested in-flight glyph', () => {
+    expect(selectPlayToggleGlyphTransition('pause', 'loading', 'loading')).toBe(
+      'keep'
+    );
+  });
+
+  it('keeps a stable visible glyph without an active swap', () => {
+    expect(selectPlayToggleGlyphTransition('pause', null, 'pause')).toBe(
+      'keep'
+    );
+  });
+
+  it('starts a new swap when the requested glyph is different', () => {
+    expect(selectPlayToggleGlyphTransition('play', null, 'pause')).toBe('swap');
+  });
+});
 
 describe('play toggle glyph selection', () => {
   it('shows play directly when pause settles during collapse', () => {

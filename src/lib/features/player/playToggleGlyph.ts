@@ -8,6 +8,15 @@
 export type PlayToggleGlyph = 'play' | 'pause' | 'loading';
 
 /**
+ * 已有图标动画面对新状态时应采取的动作。
+ *
+ * - `keep`：当前显示或正在切换的目标已经正确，无需重复动画；
+ * - `restore`：正在切向其他图标，但最新状态又回到了当前可见图标，需要取消旧动画；
+ * - `swap`：切换到一个新的目标图标。
+ */
+export type PlayToggleGlyphTransition = 'keep' | 'restore' | 'swap';
+
+/**
  * 决定 {@link selectGlyphAfterCollapse} 输出所需的最小状态切片。
  *
  * - `isPlaying`：后端上报的最新播放态，是「已落定」图标的唯一真相来源；
@@ -33,6 +42,27 @@ export function getSettledPlayToggleGlyph(
   isPlaying: boolean
 ): Exclude<PlayToggleGlyph, 'loading'> {
   return isPlaying ? 'pause' : 'play';
+}
+
+/**
+ * 根据当前可见图标、动画中的目标和最新请求，决定如何更新图标。
+ *
+ * `visibleGlyph` 在出场动画完成前仍是旧图标。如果此时状态快速恢复到旧图标，
+ * 只比较 `requestedGlyph === visibleGlyph` 会错误地当成无变化，旧动画随后仍会展示
+ * 已经过期的 loading。`restore` 专门处理这个竞争窗口。
+ */
+export function selectPlayToggleGlyphTransition(
+  visibleGlyph: PlayToggleGlyph,
+  inFlightGlyph: PlayToggleGlyph | null,
+  requestedGlyph: PlayToggleGlyph
+): PlayToggleGlyphTransition {
+  if (requestedGlyph === visibleGlyph) {
+    return inFlightGlyph && inFlightGlyph !== requestedGlyph
+      ? 'restore'
+      : 'keep';
+  }
+  if (requestedGlyph === inFlightGlyph) return 'keep';
+  return 'swap';
 }
 
 /**

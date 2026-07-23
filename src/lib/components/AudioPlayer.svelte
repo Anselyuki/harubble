@@ -156,6 +156,15 @@
       playbackFormat.sourceBitrateKbps
     );
   });
+  const sourceFormatExtraLabel = $derived.by(() => {
+    if (!playbackFormat) return '';
+    return [
+      formatChannels(playbackFormat.sourceChannels),
+      formatBitrate(playbackFormat.sourceBitrateKbps),
+    ]
+      .filter(Boolean)
+      .join('/');
+  });
   const outputFormatLabel = $derived.by(() => {
     if (!playbackFormat) return '';
     return `${formatPlaybackEndpoint(
@@ -411,24 +420,58 @@
 
   function gsapFormatReadout(node: HTMLElement) {
     const readout = node.querySelector<HTMLElement>('.format-readout');
-    const compact = node.querySelector<HTMLElement>('.format-pill-compact');
     const details = node.querySelector<HTMLElement>('.format-details');
-    if (!readout || !compact || !details) return {};
+    const sourcePill = node.querySelector<HTMLElement>('.format-pill-source');
+    const sourceCore = node.querySelector<HTMLElement>(
+      '.format-pill-source-core'
+    );
+    const sourceExtraClip = node.querySelector<HTMLElement>(
+      '.format-source-extra-clip'
+    );
+    if (
+      !readout ||
+      !details ||
+      !sourcePill ||
+      !sourceCore ||
+      !sourceExtraClip
+    ) {
+      return {};
+    }
 
     const collapsedWidth = 88;
     const maxExpandedWidth = 286;
     let hoverOpen = false;
     let focusOpen = false;
     let expandedWidth = maxExpandedWidth;
+    let sourceCollapsedWidth = collapsedWidth;
+    let sourceExpandedWidth = collapsedWidth;
+    let sourceExtraWidth = 0;
+    let detailsWidth = 0;
     let frame = 0;
 
     const measureExpandedWidth = () => {
-      const prevShellWidth = node.style.width;
-      const prevCompact = compact.style.display;
-      const prevDetails = details.style.display;
-      node.style.width = 'auto';
-      compact.style.display = 'none';
-      details.style.display = '';
+      const previousDetailsWidth = details.style.width;
+      const previousSourceWidth = sourcePill.style.width;
+      const previousSourceExtraWidth = sourceExtraClip.style.width;
+      const previousReadoutWidth = readout.style.width;
+      sourcePill.style.width = 'max-content';
+      sourceExtraClip.style.width = 'max-content';
+      details.style.width = 'max-content';
+      readout.style.width = 'max-content';
+      const sourceStyle = getComputedStyle(sourcePill);
+      const sourceHorizontalChrome =
+        Number.parseFloat(sourceStyle.paddingLeft) +
+        Number.parseFloat(sourceStyle.paddingRight) +
+        Number.parseFloat(sourceStyle.borderLeftWidth) +
+        Number.parseFloat(sourceStyle.borderRightWidth);
+      sourceCollapsedWidth = Math.ceil(
+        sourceCore.getBoundingClientRect().width + sourceHorizontalChrome
+      );
+      sourceExpandedWidth = Math.ceil(sourcePill.getBoundingClientRect().width);
+      sourceExtraWidth = Math.ceil(
+        sourceExtraClip.getBoundingClientRect().width
+      );
+      detailsWidth = Math.ceil(details.getBoundingClientRect().width);
       const shellStyle = getComputedStyle(node);
       const shellBorder =
         Number.parseFloat(shellStyle.borderLeftWidth) +
@@ -438,76 +481,98 @@
         collapsedWidth,
         maxExpandedWidth
       );
-      node.style.width = prevShellWidth;
-      compact.style.display = prevCompact;
-      details.style.display = prevDetails;
+      node.parentElement?.style.setProperty(
+        '--format-readout-expanded-width',
+        `${expandedWidth}px`
+      );
+      sourcePill.style.width = previousSourceWidth;
+      sourceExtraClip.style.width = previousSourceExtraWidth;
+      details.style.width = previousDetailsWidth;
+      readout.style.width = previousReadoutWidth;
+      gsap.set(readout, { width: expandedWidth });
     };
 
     const applyState = (open: boolean, animate: boolean) => {
       measureExpandedWidth();
       killTweens(node);
-      killTweens(compact);
+      killTweens(readout);
       killTweens(details);
-      const duration = animate ? getMotionDuration(MOTION.BASE) : 0;
-
-      if (open) {
-        compact.style.display = 'none';
-        details.style.display = '';
-        gsap.fromTo(
-          details,
-          { opacity: 0 },
-          { opacity: 1, duration, ease: 'ios-out' }
-        );
-      } else {
-        details.style.display = 'none';
-        compact.style.display = '';
-        gsap.fromTo(
-          compact,
-          { opacity: 0 },
-          { opacity: 1, duration, ease: 'ios-out' }
-        );
-      }
-
+      killTweens(sourcePill);
+      killTweens(sourceExtraClip);
+      const duration = animate ? getMotionDuration(MOTION.BASE * 2) : 0;
+      const hiddenWidth = Math.max(expandedWidth - collapsedWidth, 0);
+      const ease = open ? 'ios-spring' : 'ios';
       gsap.to(node, {
         width: open ? expandedWidth : collapsedWidth,
         duration,
-        ease: open ? 'ios-spring' : 'ios',
+        ease,
       });
+      gsap.to(readout, {
+        x: open ? 0 : hiddenWidth,
+        force3D: true,
+        duration,
+        ease,
+      });
+      gsap.to(sourcePill, {
+        width: open ? sourceExpandedWidth : sourceCollapsedWidth,
+        duration,
+        ease,
+      });
+      gsap.to(sourceExtraClip, {
+        width: open ? sourceExtraWidth : 0,
+        duration,
+        ease,
+      });
+      gsap.to(details, { width: open ? detailsWidth : 0, duration, ease });
     };
 
     const updateState = (animate = true) => {
-      applyState(hoverOpen || focusOpen || formatPopoverOpen, animate);
+      applyState(hoverOpen || focusOpen, animate);
     };
     const handleEnter = () => {
       hoverOpen = true;
-      if (!formatPopoverOpen) updateState(true);
+      updateState(true);
     };
     const handleLeave = () => {
       hoverOpen = false;
-      if (!formatPopoverOpen) updateState(true);
+      focusOpen = readout.matches(':focus-visible');
+      if (formatPopoverOpen && !focusOpen) {
+        closeFormatPopover();
+        return;
+      }
+      updateState(true);
     };
     const handleFocusIn = () => {
-      focusOpen = true;
-      if (!formatPopoverOpen) updateState(true);
+      focusOpen = readout.matches(':focus-visible');
+      updateState(true);
     };
     const handleFocusOut = () => {
       focusOpen = false;
-      if (!formatPopoverOpen) updateState(true);
+      if (formatPopoverOpen) {
+        closeFormatPopover();
+        return;
+      }
+      updateState(true);
     };
-
-    const handlePopoverChange = () => {
+    const handlePopoverClosed = () => {
       updateState(true);
     };
 
     gsap.set(node, { width: collapsedWidth });
-    details.style.display = 'none';
+    gsap.set(details, { width: 0 });
+    gsap.set(sourcePill, { width: collapsedWidth });
+    gsap.set(sourceExtraClip, { width: 0 });
+    gsap.set(readout, {
+      width: maxExpandedWidth,
+      x: maxExpandedWidth - collapsedWidth,
+      force3D: true,
+    });
     frame = requestAnimationFrame(() => updateState(false));
-
     node.addEventListener('pointerenter', handleEnter);
     node.addEventListener('pointerleave', handleLeave);
     node.addEventListener('focusin', handleFocusIn);
     node.addEventListener('focusout', handleFocusOut);
-    node.addEventListener('format-popover-change', handlePopoverChange);
+    node.addEventListener('format-popover-closed', handlePopoverClosed);
 
     return {
       destroy() {
@@ -516,19 +581,15 @@
         node.removeEventListener('pointerleave', handleLeave);
         node.removeEventListener('focusin', handleFocusIn);
         node.removeEventListener('focusout', handleFocusOut);
-        node.removeEventListener('format-popover-change', handlePopoverChange);
+        node.removeEventListener('format-popover-closed', handlePopoverClosed);
         killTweens(node);
-        killTweens(compact);
+        killTweens(readout);
         killTweens(details);
+        killTweens(sourcePill);
+        killTweens(sourceExtraClip);
       },
     };
   }
-
-  $effect(() => {
-    void formatPopoverOpen;
-    if (!formatReadoutShellRef) return;
-    formatReadoutShellRef.dispatchEvent(new Event('format-popover-change'));
-  });
 
   function handleFormatReadoutClick() {
     if (formatPopoverClosing) return;
@@ -540,42 +601,123 @@
     }
   }
 
+  function finishFormatPopoverClose() {
+    formatPopoverOpen = false;
+    formatPopoverVisible = false;
+    formatPopoverClosing = false;
+    formatReadoutShellRef?.dispatchEvent(new Event('format-popover-closed'));
+  }
+
   function closeFormatPopover() {
-    if (!formatPopoverEl || formatPopoverClosing) {
-      formatPopoverOpen = false;
-      formatPopoverVisible = false;
+    if (formatPopoverClosing) return;
+    if (!formatPopoverEl) {
+      finishFormatPopoverClose();
       return;
     }
     formatPopoverClosing = true;
+    const body = formatPopoverEl.querySelector<HTMLElement>(
+      '.format-popover-body'
+    );
     killTweens(formatPopoverEl);
-    gsap.to(formatPopoverEl, {
-      opacity: 0,
-      y: 6,
-      scale: 0.96,
-      duration: getMotionDuration(MOTION.FAST),
-      ease: 'ios-in',
-      onComplete: () => {
-        formatPopoverOpen = false;
-        formatPopoverVisible = false;
-        formatPopoverClosing = false;
-      },
+    if (body) killTweens(body);
+    const timeline = gsap.timeline({
+      onComplete: finishFormatPopoverClose,
     });
+    if (body) {
+      timeline.to(
+        body,
+        {
+          opacity: 0,
+          y: 8,
+          duration: getMotionDuration(MOTION.MICRO),
+          ease: 'ios-in',
+        },
+        0
+      );
+    }
+    timeline
+      .to(
+        formatPopoverEl,
+        {
+          height: 36,
+          duration: getMotionDuration(MOTION.SLOW_OUT),
+          ease: 'ios',
+        },
+        0
+      )
+      .to(formatPopoverEl, {
+        opacity: 0,
+        scaleX: 0.68,
+        duration: getMotionDuration(MOTION.MICRO),
+        ease: 'ios-in',
+      });
   }
 
   $effect(() => {
     if (!formatPopoverEl) return;
-    killTweens(formatPopoverEl);
-    gsap.fromTo(
-      formatPopoverEl,
-      { opacity: 0, y: 6, scale: 0.96 },
-      {
+    const popover = formatPopoverEl;
+    const body = popover.querySelector<HTMLElement>('.format-popover-body');
+    const positionPopover = () => {
+      if (!formatReadoutShellRef) return;
+      const anchorRect = formatReadoutShellRef.getBoundingClientRect();
+      const viewportMargin = 12;
+      const popoverWidth = popover.offsetWidth;
+      const preferredRight = anchorRect.right + 8;
+      const left = clamp(
+        preferredRight - popoverWidth,
+        viewportMargin,
+        window.innerWidth - viewportMargin - popoverWidth
+      );
+      popover.style.right = `${anchorRect.right - left - popoverWidth}px`;
+    };
+    gsap.set(popover, { height: 'auto', x: 0, scaleX: 1 });
+    const expandedHeight = popover.scrollHeight;
+    positionPopover();
+    killTweens(popover);
+    if (body) killTweens(body);
+    gsap.set(popover, {
+      height: 36,
+      opacity: 0,
+      scaleX: 0.68,
+    });
+    if (body) gsap.set(body, { opacity: 0, y: 8 });
+    const timeline = gsap.timeline({ onUpdate: positionPopover });
+    timeline
+      .to(popover, {
         opacity: 1,
-        y: 0,
-        scale: 1,
-        duration: getMotionDuration(MOTION.BASE),
+        scaleX: 1,
+        duration: getMotionDuration(MOTION.FAST),
         ease: 'ios-out',
-      }
-    );
+      })
+      .to(popover, {
+        height: expandedHeight,
+        duration: getMotionDuration(MOTION.SLOW),
+        ease: 'ios-spring',
+        onComplete: () => {
+          gsap.set(popover, { height: 'auto' });
+          positionPopover();
+        },
+      });
+    if (body) {
+      timeline.to(
+        body,
+        {
+          opacity: 1,
+          y: 0,
+          duration: getMotionDuration(MOTION.BASE),
+          ease: 'ios-out',
+        },
+        `-=${getMotionDuration(MOTION.BASE)}`
+      );
+    }
+    const anchorObserver = new ResizeObserver(positionPopover);
+    if (formatReadoutShellRef) anchorObserver.observe(formatReadoutShellRef);
+    window.addEventListener('resize', positionPopover);
+    return () => {
+      anchorObserver.disconnect();
+      window.removeEventListener('resize', positionPopover);
+      timeline.kill();
+    };
   });
 
   $effect(() => {
@@ -812,7 +954,10 @@
       </div>
 
       {#if compactFormatLabel && sourceFormatLabel && outputFormatLabel}
-        <div class="format-readout-anchor">
+        <div
+          class="format-readout-anchor"
+          class:format-popover-open={formatPopoverVisible}
+        >
           <div
             class="format-readout-shell"
             use:gsapFormatReadout
@@ -824,17 +969,21 @@
               aria-label={playbackFormatTitle}
               title={playbackFormatTitle}
               aria-expanded={formatPopoverOpen}
+              aria-controls="player-format-details"
               onclick={handleFormatReadoutClick}
             >
-              <span class="format-pill format-pill-compact">
-                <span class="format-swatch" aria-hidden="true"></span>
-                <span class="format-text">{compactFormatLabel}</span>
+              <span class="format-pill format-pill-source">
+                <span class="format-pill-source-core">
+                  <span class="format-swatch" aria-hidden="true"></span>
+                  <span class="format-text">{compactFormatLabel}</span>
+                </span>
+                <span class="format-source-extra-clip">
+                  <span class="format-source-extra"
+                    >/{sourceFormatExtraLabel}</span
+                  >
+                </span>
               </span>
               <span class="format-details" aria-hidden="true">
-                <span class="format-pill">
-                  <span class="format-swatch" aria-hidden="true"></span>
-                  <span class="format-text">{sourceFormatLabel}</span>
-                </span>
                 <span class="format-arrow" aria-hidden="true">-&gt;</span>
                 <span class="format-pill format-pill-output">
                   <span
@@ -848,125 +997,156 @@
           </div>
           {#if formatPopoverVisible}
             <div
+              id="player-format-details"
               class="format-popover-content"
               bind:this={formatPopoverEl}
               role="dialog"
               aria-label={m.player_format_popover_title()}
             >
-              <div class="format-popover-header">
-                {m.player_format_popover_title()}
-              </div>
-              <div class="format-popover-section-divider">
-                <span class="format-popover-section-badge"
-                  >{m.player_format_section_source()}</span
-                >
-              </div>
-              <div class="format-popover-rows">
-                <div class="format-popover-row">
-                  <span class="format-popover-label"
-                    >{m.player_format_label_sample_rate()}</span
-                  >
-                  <span class="format-popover-value"
-                    >{formatSampleRate(playbackFormat!.sourceSampleRate)}</span
-                  >
+              <div class="format-popover-body">
+                <div class="format-popover-header">
+                  {m.player_format_popover_title()}
                 </div>
-                <div class="format-popover-row">
-                  <span class="format-popover-label"
-                    >{m.player_format_label_bit_depth()}</span
+                <div class="format-popover-columns">
+                  <section
+                    class="format-popover-column"
+                    aria-label={m.player_format_section_source()}
                   >
-                  <span class="format-popover-value"
-                    >{formatBitDepth(playbackFormat!.sourceBitsPerSample)}</span
+                    <div class="format-popover-section-heading">
+                      <span class="format-popover-section-badge"
+                        >{m.player_format_section_source()}</span
+                      >
+                    </div>
+                    <div class="format-popover-rows">
+                      <div class="format-popover-row">
+                        <span class="format-popover-label"
+                          >{m.player_format_label_sample_rate()}</span
+                        >
+                        <span class="format-popover-value"
+                          >{formatSampleRate(
+                            playbackFormat!.sourceSampleRate
+                          )}</span
+                        >
+                      </div>
+                      <div class="format-popover-row">
+                        <span class="format-popover-label"
+                          >{m.player_format_label_bit_depth()}</span
+                        >
+                        <span class="format-popover-value"
+                          >{formatBitDepth(
+                            playbackFormat!.sourceBitsPerSample
+                          )}</span
+                        >
+                      </div>
+                      <div class="format-popover-row">
+                        <span class="format-popover-label"
+                          >{m.player_format_label_channels()}</span
+                        >
+                        <span class="format-popover-value"
+                          >{formatChannels(
+                            playbackFormat!.sourceChannels
+                          )}</span
+                        >
+                      </div>
+                      {#if playbackFormat!.sourceBitrateKbps}
+                        <div class="format-popover-row">
+                          <span class="format-popover-label"
+                            >{m.player_format_label_bitrate()}</span
+                          >
+                          <span class="format-popover-value"
+                            >{formatBitrate(
+                              playbackFormat!.sourceBitrateKbps
+                            )}</span
+                          >
+                        </div>
+                      {/if}
+                    </div>
+                  </section>
+                  <section
+                    class="format-popover-column"
+                    aria-label={m.player_format_section_output()}
                   >
+                    <div class="format-popover-section-heading">
+                      <span class="format-popover-section-badge"
+                        >{m.player_format_section_output()}</span
+                      >
+                    </div>
+                    <div class="format-popover-rows">
+                      <div class="format-popover-row">
+                        <span class="format-popover-label"
+                          >{m.player_format_label_sample_rate()}</span
+                        >
+                        <span class="format-popover-value"
+                          >{formatSampleRate(
+                            playbackFormat!.outputSampleRate
+                          )}</span
+                        >
+                      </div>
+                      <div class="format-popover-row">
+                        <span class="format-popover-label"
+                          >{m.player_format_label_bit_depth()}</span
+                        >
+                        <span class="format-popover-value"
+                          >{formatBitDepth(
+                            playbackFormat!.outputBitsPerSample
+                          )}</span
+                        >
+                      </div>
+                      <div class="format-popover-row">
+                        <span class="format-popover-label"
+                          >{m.player_format_label_channels()}</span
+                        >
+                        <span class="format-popover-value"
+                          >{formatChannels(
+                            playbackFormat!.outputChannels
+                          )}</span
+                        >
+                      </div>
+                      <div class="format-popover-row">
+                        <span class="format-popover-label"
+                          >{m.player_format_label_sample_format()}</span
+                        >
+                        <span class="format-popover-value"
+                          >{normalizeSampleFormat(
+                            playbackFormat!.outputSampleFormat
+                          )}</span
+                        >
+                      </div>
+                    </div>
+                  </section>
                 </div>
-                <div class="format-popover-row">
-                  <span class="format-popover-label"
-                    >{m.player_format_label_channels()}</span
-                  >
-                  <span class="format-popover-value"
-                    >{formatChannels(playbackFormat!.sourceChannels)}</span
-                  >
-                </div>
-                {#if playbackFormat!.sourceBitrateKbps}
-                  <div class="format-popover-row">
-                    <span class="format-popover-label"
-                      >{m.player_format_label_bitrate()}</span
-                    >
-                    <span class="format-popover-value"
-                      >{formatBitrate(playbackFormat!.sourceBitrateKbps)}</span
-                    >
+                {#if playbackFormat!.resampling || playbackFormat!.channelRemix}
+                  <div class="format-popover-processing">
+                    <div class="format-popover-section-heading">
+                      <span class="format-popover-section-badge-accent"
+                        >{m.player_format_section_processing()}</span
+                      >
+                    </div>
+                    <div class="format-popover-processing-rows">
+                      {#if playbackFormat!.resampling}
+                        <div class="format-popover-row">
+                          <span class="format-popover-label"
+                            >{m.player_format_label_resampling()}</span
+                          >
+                          <span class="format-popover-value format-popover-flag"
+                            >{m.player_format_flag_yes()}</span
+                          >
+                        </div>
+                      {/if}
+                      {#if playbackFormat!.channelRemix}
+                        <div class="format-popover-row">
+                          <span class="format-popover-label"
+                            >{m.player_format_label_channel_remix()}</span
+                          >
+                          <span class="format-popover-value format-popover-flag"
+                            >{m.player_format_flag_yes()}</span
+                          >
+                        </div>
+                      {/if}
+                    </div>
                   </div>
                 {/if}
               </div>
-              <div class="format-popover-section-divider">
-                <span class="format-popover-section-badge"
-                  >{m.player_format_section_output()}</span
-                >
-              </div>
-              <div class="format-popover-rows">
-                <div class="format-popover-row">
-                  <span class="format-popover-label"
-                    >{m.player_format_label_sample_rate()}</span
-                  >
-                  <span class="format-popover-value"
-                    >{formatSampleRate(playbackFormat!.outputSampleRate)}</span
-                  >
-                </div>
-                <div class="format-popover-row">
-                  <span class="format-popover-label"
-                    >{m.player_format_label_bit_depth()}</span
-                  >
-                  <span class="format-popover-value"
-                    >{formatBitDepth(playbackFormat!.outputBitsPerSample)}</span
-                  >
-                </div>
-                <div class="format-popover-row">
-                  <span class="format-popover-label"
-                    >{m.player_format_label_channels()}</span
-                  >
-                  <span class="format-popover-value"
-                    >{formatChannels(playbackFormat!.outputChannels)}</span
-                  >
-                </div>
-                <div class="format-popover-row">
-                  <span class="format-popover-label"
-                    >{m.player_format_label_sample_format()}</span
-                  >
-                  <span class="format-popover-value"
-                    >{normalizeSampleFormat(
-                      playbackFormat!.outputSampleFormat
-                    )}</span
-                  >
-                </div>
-              </div>
-              {#if playbackFormat!.resampling || playbackFormat!.channelRemix}
-                <div class="format-popover-section-divider">
-                  <span class="format-popover-section-badge-accent"
-                    >{m.player_format_section_processing()}</span
-                  >
-                </div>
-                <div class="format-popover-rows">
-                  {#if playbackFormat!.resampling}
-                    <div class="format-popover-row">
-                      <span class="format-popover-label"
-                        >{m.player_format_label_resampling()}</span
-                      >
-                      <span class="format-popover-value format-popover-flag"
-                        >{m.player_format_flag_yes()}</span
-                      >
-                    </div>
-                  {/if}
-                  {#if playbackFormat!.channelRemix}
-                    <div class="format-popover-row">
-                      <span class="format-popover-label"
-                        >{m.player_format_label_channel_remix()}</span
-                      >
-                      <span class="format-popover-value format-popover-flag"
-                        >{m.player_format_flag_yes()}</span
-                      >
-                    </div>
-                  {/if}
-                </div>
-              {/if}
             </div>
           {/if}
         </div>
@@ -1003,19 +1183,21 @@
             {/if}
           </svg>
         </button>
-
-        {#if lyricsActive && song}
-          <LyricsBubble
-            loading={lyricsLoading}
-            error={lyricsError}
-            lines={lyricsLines}
-            {activeLyricIndex}
-            songName={song.name}
-            {reducedMotion}
-            onClose={() => onToggleLyrics?.()}
-          />
-        {/if}
       </div>
+
+      {#if lyricsActive && song}
+        <LyricsBubble
+          loading={lyricsLoading}
+          error={lyricsError}
+          lines={lyricsLines}
+          {activeLyricIndex}
+          {isPlaying}
+          {canSeek}
+          {reducedMotion}
+          onSeek={commitSeek}
+          onClose={() => onToggleLyrics?.()}
+        />
+      {/if}
 
       <button
         type="button"
@@ -1582,25 +1764,35 @@
     flex: 0 0 auto;
   }
 
+  .format-readout-anchor.format-popover-open {
+    z-index: var(--z-popover, 200);
+  }
+
   .format-readout-shell {
+    position: relative;
+    z-index: 2;
     width: 88px;
     height: 28px;
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     overflow: hidden;
+    contain: paint;
   }
 
   .format-readout {
+    position: absolute;
+    top: 0;
+    right: 0;
     appearance: none;
     min-width: 0;
     height: 28px;
-    width: max-content;
+    width: 286px;
     padding: 0 6px;
     display: inline-flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 5px;
     border: 0;
     color: var(--text-secondary);
@@ -1610,6 +1802,9 @@
     white-space: nowrap;
     background: transparent;
     cursor: default;
+    transform: translate3d(198px, 0, 0);
+    backface-visibility: hidden;
+    will-change: transform;
   }
 
   .format-readout:focus-visible {
@@ -1618,10 +1813,13 @@
   }
 
   .format-details {
+    width: 0;
     display: inline-flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 5px;
+    flex: 0 0 auto;
+    overflow: hidden;
     pointer-events: none;
   }
 
@@ -1640,8 +1838,28 @@
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
   }
 
-  .format-pill-compact {
-    opacity: 1;
+  .format-pill-source {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+  }
+
+  .format-pill-source-core {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+  }
+
+  .format-source-extra-clip {
+    width: 0;
+    display: inline-flex;
+    flex: 0 0 auto;
+    overflow: hidden;
+  }
+
+  .format-source-extra {
+    flex: 0 0 auto;
+    color: rgba(128, 128, 128, 0.72);
   }
 
   .format-pill-output {
@@ -1678,29 +1896,71 @@
 
   .format-popover-content {
     position: absolute;
-    bottom: calc(100% + 8px);
-    right: 0;
-    z-index: var(--z-popover, 200);
-    width: 280px;
-    max-width: calc(100vw - 32px);
+    bottom: -4px;
+    right: -8px;
+    z-index: 1;
+    width: max-content;
+    min-width: min(
+      calc(var(--format-readout-expanded-width, 286px) + 16px),
+      calc(100vw - 24px)
+    );
+    max-width: calc(100vw - 24px);
     max-height: 60vh;
+    overflow-x: hidden;
     overflow-y: auto;
-    padding: 12px 14px;
-    border-radius: 12px;
-    background: var(--bg-primary);
+    scrollbar-width: none;
+    padding: 0;
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
     border: 1px solid rgba(128, 128, 128, 0.14);
     box-shadow:
       0 8px 32px rgba(15, 23, 42, 0.12),
       0 2px 8px rgba(15, 23, 42, 0.06);
+    backdrop-filter: blur(24px) saturate(1.15);
+    -webkit-backdrop-filter: blur(24px) saturate(1.15);
     transform-origin: bottom right;
     opacity: 0;
   }
 
+  .format-popover-content::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .format-popover-body {
+    min-height: 0;
+    padding: 10px 12px 40px;
+  }
+
   .format-popover-header {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 650;
     color: var(--text-primary);
     margin-bottom: 8px;
+    padding: 0 1px;
+  }
+
+  .format-popover-columns {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    gap: 0;
+  }
+
+  .format-popover-column {
+    min-width: 0;
+    padding: 0 9px 1px 1px;
+  }
+
+  .format-popover-column + .format-popover-column {
+    padding: 0 1px 1px 10px;
+    border-left: 1px solid rgba(128, 128, 128, 0.12);
+  }
+
+  .format-popover-section-heading {
+    display: flex;
+    align-items: center;
+    min-height: 20px;
+    margin-bottom: 6px;
   }
 
   .format-popover-rows {
@@ -1709,26 +1969,12 @@
     gap: 5px;
   }
 
-  .format-popover-section-divider {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 8px 0 6px;
-  }
-
-  .format-popover-section-divider::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: rgba(128, 128, 128, 0.1);
-  }
-
   .format-popover-section-badge,
   .format-popover-section-badge-accent {
     font-size: 10px;
     font-weight: 600;
     line-height: 1;
-    padding: 3px 8px;
+    padding: 3px 7px;
     border-radius: 9999px;
     flex-shrink: 0;
   }
@@ -1743,25 +1989,45 @@
     color: var(--text-secondary);
   }
 
+  .format-popover-processing {
+    margin-top: 8px;
+    padding: 8px 1px 0;
+    border-top: 1px solid rgba(128, 128, 128, 0.1);
+  }
+
+  .format-popover-processing .format-popover-section-heading {
+    margin-bottom: 6px;
+  }
+
+  .format-popover-processing-rows {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    gap: 5px 16px;
+  }
+
   .format-popover-row {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     align-items: baseline;
+    justify-content: space-between;
+    min-width: 0;
   }
 
   .format-popover-label {
     flex-shrink: 0;
-    min-width: 56px;
     font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
   }
 
   .format-popover-value {
+    min-width: 0;
     font-size: 11px;
     color: var(--text-primary);
     font-family: var(--font-mono);
     line-height: 1.4;
+    text-align: right;
+    white-space: nowrap;
   }
 
   .format-popover-flag {

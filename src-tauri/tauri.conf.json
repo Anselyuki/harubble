@@ -22,6 +22,7 @@
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://monster-siren.hypergryph.com https://web.hycdn.cn https://static.hycdn.cn data:; connect-src 'self' ipc://localhost https://monster-siren.hypergryph.com; script-src 'self'; style-src 'self' 'unsafe-inline'",
+      "devCsp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://monster-siren.hypergryph.com https://web.hycdn.cn https://static.hycdn.cn data:; connect-src 'self' ipc://localhost https://monster-siren.hypergryph.com ws://localhost:1420; script-src 'self'; style-src 'self' 'unsafe-inline'",
       "assetProtocol": {
         "enable": true,
         "scope": [
