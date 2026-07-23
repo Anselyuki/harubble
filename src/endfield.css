@@ -347,6 +347,394 @@
   color: var(--accent-readable-foreground);
 }
 
+/* Fullscreen player: local complex screen inside the moderate app shell. */
+:root[data-ark-theme='endfield'] .fullscreen-player {
+  --fullscreen-stage-width: clamp(240px, 42vh, 360px);
+  grid-template-columns: minmax(420px, 46%) minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  color: var(--field-paper);
+  background: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-player::before {
+  inset: 0 auto 0 0;
+  width: 8px;
+  background: var(--field-signal);
+  z-index: 8;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-player::after {
+  inset: auto 0 0 46%;
+  height: 5px;
+  background: var(--field-signal);
+  z-index: 8;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-bg {
+  display: none;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-drag-region {
+  right: 84px;
+  height: 52px;
+  z-index: 12;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-close {
+  top: 18px;
+  right: 22px;
+  z-index: 30;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--field-signal);
+  border-radius: 0;
+  background: var(--field-signal);
+  color: var(--field-ink);
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.32);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  clip-path: polygon(
+    0 0,
+    100% 0,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    0 100%
+  );
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-close:hover {
+  border-color: var(--field-paper);
+  background: var(--field-paper);
+  color: var(--field-ink);
+  box-shadow: 3px 3px 0 var(--field-signal);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-close:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--field-signal);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-close:focus-visible {
+  outline-color: var(--field-paper);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-left {
+  --fullscreen-transport-width: var(--fullscreen-stage-width);
+  z-index: 6;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 18px;
+  min-height: 0;
+  padding: 62px 54px 42px 64px;
+  background: var(--field-paper);
+  color: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-cover-wrap {
+  position: relative;
+  width: var(--fullscreen-stage-width);
+  border: 1px solid var(--field-ink);
+  box-shadow: 10px 10px 0 var(--field-signal);
+  clip-path: polygon(
+    0 0,
+    100% 0,
+    100% calc(100% - 20px),
+    calc(100% - 20px) 100%,
+    0 100%
+  );
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-cover {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-cover-fallback {
+  border: 0;
+  background: var(--bg-secondary);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-cover-fallback svg {
+  fill: var(--text-tertiary);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-meta {
+  width: var(--fullscreen-stage-width);
+  gap: 12px;
+  padding-left: 14px;
+  border-left: 5px solid var(--field-signal);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-title {
+  color: var(--field-ink);
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-artist {
+  margin-top: 5px;
+  color: #52524e;
+}
+
+:root[data-ark-theme='endfield'] .fs-download {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--field-ink);
+  border-radius: 0;
+  background: var(--field-ink);
+  color: var(--field-paper);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-ark-theme='endfield'] .fs-download:hover:not(:disabled) {
+  border-color: var(--field-ink);
+  background: var(--field-signal);
+  color: var(--field-ink);
+  box-shadow: none;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-progress {
+  width: var(--fullscreen-stage-width);
+  padding: 13px 14px 10px;
+  border-left: 5px solid var(--field-signal);
+  background: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield']
+  .fullscreen-seek::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 0;
+  background: linear-gradient(
+    90deg,
+    var(--field-signal) 0,
+    var(--field-signal) var(--fs-progress),
+    rgba(242, 242, 240, 0.2) var(--fs-progress),
+    rgba(242, 242, 240, 0.2) 100%
+  );
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-seek::-moz-range-track {
+  height: 5px;
+  border-radius: 0;
+  background: rgba(242, 242, 240, 0.2);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-seek::-moz-range-progress {
+  height: 5px;
+  border-radius: 0;
+  background: var(--field-signal);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-seek::-webkit-slider-thumb {
+  width: 12px;
+  height: 16px;
+  margin-top: -5.5px;
+  border-radius: 0;
+  background: var(--field-paper);
+  box-shadow: none;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-seek::-moz-range-thumb {
+  width: 12px;
+  height: 16px;
+  border-radius: 0;
+  background: var(--field-paper);
+  box-shadow: none;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-times {
+  color: rgba(242, 242, 240, 0.6);
+  font-family: var(--font-mono);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-controls {
+  width: var(--fullscreen-stage-width);
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--field-ink);
+  background: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-controls .fs-btn {
+  flex: 1 1 0;
+  width: auto;
+  height: 56px;
+  border: 0;
+  border-radius: 0;
+  background: var(--field-ink);
+  color: var(--field-paper);
+}
+
+:root[data-ark-theme='endfield']
+  .fullscreen-controls
+  .fs-btn:hover:not(:disabled) {
+  background: #2d2d2b;
+  color: var(--field-signal);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-controls .fs-btn:focus-visible {
+  z-index: 1;
+  outline-offset: -3px;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-controls .fs-play {
+  flex-grow: 1.25;
+  width: auto;
+  height: 68px;
+  background: var(--field-signal);
+  color: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-controls .fs-play.playing,
+:root[data-ark-theme='endfield']
+  .fullscreen-controls
+  .fs-play:hover:not(:disabled) {
+  border: 0;
+  background: var(--field-signal);
+  color: var(--field-ink);
+  box-shadow: none;
+}
+
+:root[data-ark-theme='endfield']
+  .fullscreen-controls
+  .fs-mode-toggle[aria-pressed='true'],
+:root[data-ark-theme='endfield']
+  .fullscreen-controls
+  .fs-mode-toggle[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--field-paper);
+  color: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-right {
+  z-index: 6;
+  justify-content: stretch;
+  padding: 72px 52px 48px 56px;
+  border-left: 1px solid rgba(242, 242, 240, 0.18);
+  background: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-right::before {
+  content: '';
+  width: 96px;
+  height: 5px;
+  margin-bottom: 20px;
+  background: var(--field-signal);
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-lyrics {
+  padding: 28px 0 64px;
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 7%,
+    #000 90%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 7%,
+    #000 90%,
+    transparent 100%
+  );
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-lyric-line {
+  --lyric-size-base: 18px;
+  --lyric-size-active: 24px;
+  --lyric-shift-active: 0px;
+  margin: 1px 0;
+  padding: 12px 16px;
+  border-left: 5px solid transparent;
+  border-radius: 0;
+  color: rgba(242, 242, 240, 0.36);
+  line-height: 1.55;
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-lyric-line.active {
+  border-left-color: var(--field-signal);
+  background: var(--field-paper);
+  color: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-lyric-line.seekable:hover {
+  background: rgba(242, 242, 240, 0.08);
+  color: var(--field-paper);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-lyric-line.seekable.active:hover {
+  background: var(--field-paper);
+  color: var(--field-ink);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-lyric-line.seekable:focus-visible {
+  outline-color: var(--field-signal);
+}
+
+:root[data-ark-theme='endfield'] .fullscreen-lyrics-empty {
+  border: 1px solid rgba(242, 242, 240, 0.18);
+  color: rgba(242, 242, 240, 0.52);
+}
+
+@media (max-height: 700px) and (min-width: 901px) {
+  :root[data-ark-theme='endfield'] .fullscreen-player {
+    --fullscreen-stage-width: clamp(220px, 38vh, 300px);
+  }
+
+  :root[data-ark-theme='endfield'] .fullscreen-left {
+    gap: 12px;
+    padding-top: 48px;
+    padding-bottom: 26px;
+  }
+
+  :root[data-ark-theme='endfield'] .fullscreen-controls .fs-btn {
+    height: 48px;
+  }
+
+  :root[data-ark-theme='endfield'] .fullscreen-controls .fs-play {
+    height: 58px;
+  }
+}
+
+@media (max-width: 900px) {
+  :root[data-ark-theme='endfield'] .fullscreen-player {
+    --fullscreen-stage-width: min(280px, 34vh);
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0;
+    padding: 0;
+    overflow-y: auto;
+    background: var(--field-paper);
+  }
+
+  :root[data-ark-theme='endfield'] .fullscreen-player::after {
+    inset: auto 0 0;
+  }
+
+  :root[data-ark-theme='endfield'] .fullscreen-left {
+    align-items: center;
+    gap: 12px;
+    padding: 54px 24px 28px;
+  }
+
+  :root[data-ark-theme='endfield'] .fullscreen-right {
+    min-height: 320px;
+    padding: 34px 24px 28px;
+    border-top: 1px solid rgba(242, 242, 240, 0.18);
+    border-left: 0;
+  }
+
+  :root[data-ark-theme='endfield'] .fullscreen-title {
+    font-size: 22px;
+  }
+}
+
 @media (max-width: 900px) {
   :root[data-ark-theme='endfield'] .home-view {
     padding: 76px 18px 108px;

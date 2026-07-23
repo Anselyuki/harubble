@@ -62,6 +62,12 @@
     }
   }
 
+  function handleClose(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    player.toggleFullscreen();
+  }
+
   let dialogEl: HTMLDivElement | undefined = $state();
 
   $effect(() => {
@@ -290,12 +296,12 @@
 
 <div
   class="fullscreen-player"
+  data-ark-screen="fullscreen-player"
   role="dialog"
   aria-modal="true"
   aria-label={song.name}
   tabindex="-1"
   bind:this={dialogEl}
-  onkeydown={(e) => e.key === 'Escape' && player.toggleFullscreen()}
 >
   <div
     class="fullscreen-drag-region"
@@ -319,8 +325,10 @@
   <button
     type="button"
     class="fullscreen-close"
+    data-testid="fullscreen-close"
     aria-label={labels.close}
-    onclick={player.toggleFullscreen}
+    onpointerdown={(event) => event.stopPropagation()}
+    onclick={handleClose}
   >
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M18 6 6 18"></path>
