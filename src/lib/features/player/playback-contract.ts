@@ -1,10 +1,28 @@
 import { PlaybackCommandError } from '$lib/api';
-import type { PlaybackEndedEvent } from '$lib/types';
+import type { PlaybackEndedEvent, PlayerState } from '$lib/types';
+
+const PLAYBACK_COMPLETION_TOLERANCE_SECS = 0.05;
+
+type PlaybackCompletionState = Pick<
+  PlayerState,
+  'songCid' | 'isPlaying' | 'isPaused' | 'isLoading' | 'progress' | 'duration'
+>;
 
 export interface PlaybackSnapshot {
   cid: string | null;
   active: boolean;
   sessionId: number;
+}
+
+export function hasPlaybackCompleted(state: PlaybackCompletionState): boolean {
+  return (
+    state.songCid !== null &&
+    !state.isPlaying &&
+    !state.isPaused &&
+    !state.isLoading &&
+    state.duration > 0 &&
+    state.progress >= state.duration - PLAYBACK_COMPLETION_TOLERANCE_SECS
+  );
 }
 
 export function shouldIgnorePlaybackError(

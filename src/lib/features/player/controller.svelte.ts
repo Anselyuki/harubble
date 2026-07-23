@@ -9,6 +9,7 @@ import type {
 import { parseLyricText } from './lyrics';
 import { buildPlaybackContext } from './queue';
 import {
+  hasPlaybackCompleted,
   isPlaybackSupersededError,
   shouldApplyPlaybackEnded,
   shouldIgnorePlaybackError,
@@ -479,13 +480,16 @@ export function createPlayerController(deps: PlayerControllerDeps) {
 
   function shouldRestartCompletedTrack() {
     return (
-      currentSong !== null &&
-      !isPlaying &&
-      !isPaused &&
+      hasPlaybackCompleted({
+        songCid: currentSong?.cid ?? null,
+        isPlaying,
+        isPaused,
+        isLoading,
+        progress,
+        duration,
+      }) &&
       (!hasNext ||
-        (repeatMode === 'off' && playbackIndex === playbackOrder.length - 1)) &&
-      duration > 0 &&
-      progress >= duration - 0.05
+        (repeatMode === 'off' && playbackIndex === playbackOrder.length - 1))
     );
   }
 

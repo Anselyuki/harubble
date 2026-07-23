@@ -23,6 +23,8 @@ describe('mini player window entrypoint', () => {
     expect(miniPlayer).toContain('listenPlayerProgress');
     expect(miniPlayer).toContain('sessionId');
     expect(miniPlayer).toContain('showMainWindow');
+    expect(miniPlayer).toContain('hasPlaybackCompleted(playerState)');
+    expect(miniPlayer).toContain('seekCurrentPlayback(0)');
     expect(miniPlayer).not.toContain('createAppRuntime');
 
     // Bridge itself wraps the raw Tauri listen calls.

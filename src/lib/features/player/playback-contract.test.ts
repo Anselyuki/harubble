@@ -1,12 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { PlaybackCommandError } from '$lib/api';
 import {
+  hasPlaybackCompleted,
   isPlaybackSupersededError,
   shouldApplyPlaybackEnded,
   shouldIgnorePlaybackError,
 } from './playback-contract';
 
 describe('playback contract helpers', () => {
+  it('recognizes a naturally completed playback state', () => {
+    expect(
+      hasPlaybackCompleted({
+        songCid: 'song-a',
+        isPlaying: false,
+        isPaused: false,
+        isLoading: false,
+        progress: 179.96,
+        duration: 180,
+      })
+    ).toBe(true);
+  });
+
+  it('does not treat a paused track near its end as completed', () => {
+    expect(
+      hasPlaybackCompleted({
+        songCid: 'song-a',
+        isPlaying: false,
+        isPaused: true,
+        isLoading: false,
+        progress: 180,
+        duration: 180,
+      })
+    ).toBe(false);
+  });
+
   it('suppresses superseded playback command errors', () => {
     const error = new PlaybackCommandError({
       code: 'superseded',

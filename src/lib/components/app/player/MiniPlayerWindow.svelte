@@ -14,6 +14,7 @@
   } from '$lib/features/player/miniPlayerBridge';
   import type { PlayerState } from '$lib/types';
   import { formatTime } from '$lib/features/player/formatUtils';
+  import { hasPlaybackCompleted } from '$lib/features/player/playback-contract';
   import PlayToggleGlyph from '$lib/components/app/player/PlayToggleGlyph.svelte';
   import { ExternalLink, Music2, SkipBack, SkipForward } from '@lucide/svelte';
   import * as m from '$lib/paraglide/messages.js';
@@ -141,9 +142,12 @@
     flushSync();
     pendingPlayTarget = playerState.isPlaying ? 'paused' : 'playing';
     void runAction('play', () =>
-      (playerState.isPlaying ? pausePlayback() : resumePlayback()).then(
-        refreshPlayerStateAfterPlaybackCommand
-      )
+      (playerState.isPlaying
+        ? pausePlayback()
+        : hasPlaybackCompleted(playerState)
+          ? seekCurrentPlayback(0)
+          : resumePlayback()
+      ).then(refreshPlayerStateAfterPlaybackCommand)
     );
   }
 
