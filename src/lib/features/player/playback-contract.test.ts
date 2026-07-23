@@ -4,6 +4,7 @@ import {
   hasPlaybackCompleted,
   isPlaybackSupersededError,
   shouldApplyPlaybackEnded,
+  shouldApplyPlaybackProgress,
   shouldIgnorePlaybackError,
 } from './playback-contract';
 
@@ -31,6 +32,31 @@ describe('playback contract helpers', () => {
         progress: 180,
         duration: 180,
       })
+    ).toBe(false);
+  });
+
+  it('accepts progress only for the same actively playing session', () => {
+    const incoming = {
+      sessionId: 8,
+      songCid: 'song-a',
+      isPlaying: true,
+    };
+
+    expect(shouldApplyPlaybackProgress(incoming, incoming)).toBe(true);
+    expect(
+      shouldApplyPlaybackProgress(incoming, {
+        ...incoming,
+        isPlaying: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldApplyPlaybackProgress(incoming, {
+        ...incoming,
+        sessionId: 9,
+      })
+    ).toBe(false);
+    expect(
+      shouldApplyPlaybackProgress({ ...incoming, songCid: 'song-b' }, incoming)
     ).toBe(false);
   });
 
@@ -71,12 +97,13 @@ describe('playback contract helpers', () => {
     expect(isPlaybackSupersededError(new Error('boom'))).toBe(false);
   });
 
-  it('accepts matching playback-ended events for a newer session', () => {
+  it('accepts an unhandled ended event for the current session', () => {
     expect(
       shouldApplyPlaybackEnded(
         { sessionId: 8, songCid: 'song-a', progress: 10, duration: 10 },
         'song-a',
-        { cid: 'song-a', active: true, sessionId: 7 }
+        8,
+        7
       )
     ).toBe(true);
   });
@@ -86,7 +113,8 @@ describe('playback contract helpers', () => {
       shouldApplyPlaybackEnded(
         { sessionId: 6, songCid: 'song-a', progress: 10, duration: 10 },
         'song-a',
-        { cid: 'song-a', active: true, sessionId: 7 }
+        7,
+        5
       )
     ).toBe(false);
   });
@@ -96,7 +124,8 @@ describe('playback contract helpers', () => {
       shouldApplyPlaybackEnded(
         { sessionId: 8, songCid: 'song-a', progress: 10, duration: 10 },
         'song-a',
-        { cid: 'song-a', active: true, sessionId: 8 }
+        8,
+        8
       )
     ).toBe(false);
   });
@@ -106,7 +135,8 @@ describe('playback contract helpers', () => {
       shouldApplyPlaybackEnded(
         { sessionId: 8, songCid: 'song-b', progress: 10, duration: 10 },
         'song-a',
-        { cid: 'song-a', active: true, sessionId: 8 }
+        8,
+        7
       )
     ).toBe(false);
   });

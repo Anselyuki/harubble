@@ -14,7 +14,10 @@
   } from '$lib/features/player/miniPlayerBridge';
   import type { PlayerState } from '$lib/types';
   import { formatTime } from '$lib/features/player/formatUtils';
-  import { hasPlaybackCompleted } from '$lib/features/player/playback-contract';
+  import {
+    hasPlaybackCompleted,
+    shouldApplyPlaybackProgress,
+  } from '$lib/features/player/playback-contract';
   import PlayToggleGlyph from '$lib/components/app/player/PlayToggleGlyph.svelte';
   import { ExternalLink, Music2, SkipBack, SkipForward } from '@lucide/svelte';
   import * as m from '$lib/paraglide/messages.js';
@@ -199,7 +202,7 @@
           clearPlayPendingIfSettled(state);
         });
         const progressUnlisten = await listenPlayerProgress((state) => {
-          if (state.sessionId < playerState.sessionId) return;
+          if (!shouldApplyPlaybackProgress(state, playerState)) return;
           playerState = {
             ...playerState,
             sessionId: state.sessionId,

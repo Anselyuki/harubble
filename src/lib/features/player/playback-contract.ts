@@ -8,6 +8,11 @@ type PlaybackCompletionState = Pick<
   'songCid' | 'isPlaying' | 'isPaused' | 'isLoading' | 'progress' | 'duration'
 >;
 
+type PlaybackProgressState = Pick<
+  PlayerState,
+  'sessionId' | 'songCid' | 'isPlaying'
+>;
+
 export interface PlaybackSnapshot {
   cid: string | null;
   active: boolean;
@@ -25,6 +30,18 @@ export function hasPlaybackCompleted(state: PlaybackCompletionState): boolean {
   );
 }
 
+export function shouldApplyPlaybackProgress(
+  incoming: PlaybackProgressState,
+  current: PlaybackProgressState
+): boolean {
+  return (
+    current.isPlaying &&
+    incoming.isPlaying &&
+    incoming.sessionId === current.sessionId &&
+    incoming.songCid === current.songCid
+  );
+}
+
 export function shouldIgnorePlaybackError(
   error: unknown,
   requestSeq: number,
@@ -37,12 +54,15 @@ export function isPlaybackSupersededError(error: unknown): boolean {
   return error instanceof PlaybackCommandError && error.code === 'superseded';
 }
 
-// 严格大于：同一 sessionId 的重复 ended 事件应当被 guard 拒掉，避免在后端出现重复
-// emit 时把队列一次性推进两首。
 export function shouldApplyPlaybackEnded(
   event: PlaybackEndedEvent,
   currentCid: string | null,
-  snapshot: PlaybackSnapshot
+  currentSessionId: number,
+  lastHandledSessionId: number
 ): boolean {
-  return currentCid === event.songCid && event.sessionId > snapshot.sessionId;
+  return (
+    currentCid === event.songCid &&
+    event.sessionId === currentSessionId &&
+    event.sessionId > lastHandledSessionId
+  );
 }

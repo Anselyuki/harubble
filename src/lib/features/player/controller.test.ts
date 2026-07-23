@@ -43,6 +43,15 @@ function makeDeps(
 
 describe('createPlayerController', () => {
   describe('syncPlayerState', () => {
+    it('accepts the initial idle session snapshot', () => {
+      const ctrl = createPlayerController(makeDeps());
+
+      ctrl.syncPlayerState(makePlayerState({ sessionId: 0, volume: 0.4 }));
+
+      expect(ctrl.volume).toBe(0.4);
+      expect(ctrl.lastPlaybackSnapshot.sessionId).toBe(0);
+    });
+
     it('projects isPlaying and progress from PlayerState', () => {
       const ctrl = createPlayerController(makeDeps());
       ctrl.syncPlayerState(
@@ -237,14 +246,14 @@ describe('createPlayerController', () => {
       expect(ctrl.progress).toBe(0);
     });
 
-    it('applies ended event for a newer session', () => {
+    it('applies ended event for the current session', () => {
       const ctrl = createPlayerController(makeDeps());
       ctrl.syncPlayerState(
         makePlayerState({
           isPlaying: true,
           isPaused: false,
           songCid: 'song-a',
-          sessionId: 3,
+          sessionId: 4,
           progress: 0,
           duration: 200,
         })
@@ -259,6 +268,7 @@ describe('createPlayerController', () => {
       ctrl.syncPlaybackEnded(event);
 
       expect(ctrl.progress).toBe(200);
+      expect(ctrl.isPlaying).toBe(false);
     });
 
     it('rejects a duplicate ended event with the same session id', () => {
@@ -281,8 +291,90 @@ describe('createPlayerController', () => {
         duration: 200,
       };
       ctrl.syncPlaybackEnded(event);
+      ctrl.syncPlaybackEnded({ ...event, progress: 150 });
 
-      expect(ctrl.progress).toBe(10);
+      expect(ctrl.progress).toBe(200);
+    });
+
+    it('handles the completed state snapshot and following ended event once', async () => {
+      const playSong = vi.fn().mockResolvedValue(undefined);
+      const ctrl = createPlayerController(makeDeps({ playSong }));
+      const entries = [
+        { cid: 'song-a', name: 'Song A', artists: [], coverUrl: null },
+        { cid: 'song-b', name: 'Song B', artists: [], coverUrl: null },
+      ];
+      ctrl.applyPlaybackQueue(entries, 'song-b');
+      ctrl.toggleRepeat('all');
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 4,
+          songCid: 'song-b',
+          songName: 'Song B',
+          isPlaying: true,
+          progress: 190,
+          duration: 200,
+        })
+      );
+
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 4,
+          songCid: 'song-b',
+          songName: 'Song B',
+          progress: 200,
+          duration: 200,
+        })
+      );
+      ctrl.syncPlaybackEnded({
+        sessionId: 4,
+        songCid: 'song-b',
+        progress: 200,
+        duration: 200,
+      });
+
+      await vi.waitFor(() => expect(playSong).toHaveBeenCalledOnce());
+      expect(playSong).toHaveBeenCalledWith(
+        'song-a',
+        null,
+        expect.objectContaining({ currentIndex: 0 })
+      );
+    });
+
+    it('does not let late progress roll back a completed session', () => {
+      const ctrl = createPlayerController(makeDeps());
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 6,
+          songCid: 'song-a',
+          songName: 'Song A',
+          isPlaying: true,
+          progress: 190,
+          duration: 200,
+        })
+      );
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 6,
+          songCid: 'song-a',
+          songName: 'Song A',
+          progress: 200,
+          duration: 200,
+        })
+      );
+
+      ctrl.syncPlayerProgress(
+        makePlayerState({
+          sessionId: 6,
+          songCid: 'song-a',
+          songName: 'Song A',
+          isPlaying: true,
+          progress: 199.5,
+          duration: 200,
+        })
+      );
+
+      expect(ctrl.progress).toBe(200);
+      expect(ctrl.isPlaying).toBe(false);
     });
   });
 
@@ -303,19 +395,14 @@ describe('createPlayerController', () => {
       expect(playSong).not.toHaveBeenCalled();
     });
 
-    it('continues to the next entry before the queue end when repeat is off', async () => {
+    it('stops after the selected entry when repeat is off', async () => {
       const playSong = vi.fn().mockResolvedValue(undefined);
       const ctrl = createPlayerController(makeDeps({ playSong }));
       ctrl.applyPlaybackQueue(entries, 'song-a');
 
       await ctrl.handlePlaybackEnded('song-a');
 
-      expect(playSong).toHaveBeenCalledOnce();
-      expect(playSong).toHaveBeenCalledWith(
-        'song-b',
-        null,
-        expect.objectContaining({ currentIndex: 1 })
-      );
+      expect(playSong).not.toHaveBeenCalled();
     });
 
     it('wraps to the first entry in repeat all mode', async () => {
@@ -386,6 +473,63 @@ describe('createPlayerController', () => {
       expect(seekCurrentPlayback).toHaveBeenCalledWith(0);
       expect(resumePlayback).not.toHaveBeenCalled();
       expect(ctrl.isPlaying).toBe(true);
+      expect(ctrl.progress).toBe(0);
+    });
+
+    it('transitions a completed track through loading to playing', async () => {
+      let resolveSeek: (() => void) | undefined;
+      const seekCurrentPlayback = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSeek = resolve;
+          })
+      );
+      const getPlayerState = vi.fn().mockResolvedValue(
+        makePlayerState({
+          sessionId: 4,
+          songCid: 'song-a',
+          songName: 'Song A',
+          isPlaying: true,
+          progress: 0,
+          duration: 180,
+        })
+      );
+      const ctrl = createPlayerController(
+        makeDeps({ seekCurrentPlayback, getPlayerState })
+      );
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 1,
+          songCid: 'song-a',
+          songName: 'Song A',
+          progress: 180,
+          duration: 180,
+        })
+      );
+
+      const resumePromise = ctrl.resume();
+      expect(ctrl.isPlayTogglePending).toBe(true);
+      expect(seekCurrentPlayback).toHaveBeenCalledWith(0);
+
+      ctrl.syncPlayerState(
+        makePlayerState({
+          sessionId: 4,
+          songCid: 'song-a',
+          songName: 'Song A',
+          isLoading: true,
+          progress: 0,
+          duration: 180,
+        })
+      );
+      expect(ctrl.isLoading).toBe(true);
+      expect(ctrl.isPlayTogglePending).toBe(true);
+
+      resolveSeek?.();
+      await resumePromise;
+
+      expect(ctrl.isLoading).toBe(false);
+      expect(ctrl.isPlaying).toBe(true);
+      expect(ctrl.isPlayTogglePending).toBe(false);
       expect(ctrl.progress).toBe(0);
     });
 
@@ -498,6 +642,13 @@ describe('createPlayerController', () => {
       const recordSongHeat = vi.fn();
       const ctrl = createPlayerController(makeDeps({ recordSongHeat }));
 
+      ctrl.syncPlayerState(
+        makePlayerState({
+          isPlaying: true,
+          songCid: 'song-a',
+          sessionId: 1,
+        })
+      );
       ctrl.syncPlayerProgress(
         makePlayerState({
           isPlaying: true,
@@ -505,6 +656,13 @@ describe('createPlayerController', () => {
           sessionId: 1,
           progress: 60,
           duration: 100,
+        })
+      );
+      ctrl.syncPlayerState(
+        makePlayerState({
+          isPlaying: true,
+          songCid: 'song-b',
+          sessionId: 2,
         })
       );
       ctrl.syncPlayerProgress(

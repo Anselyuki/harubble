@@ -12,6 +12,7 @@ import {
   hasPlaybackCompleted,
   isPlaybackSupersededError,
   shouldApplyPlaybackEnded,
+  shouldApplyPlaybackProgress,
   shouldIgnorePlaybackError,
   type PlaybackSnapshot,
 } from './playback-contract';
@@ -94,6 +95,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     active: false,
     sessionId: 0,
   };
+  let lastHandledPlaybackEndedSessionId = 0;
   let lyricRequestSeq = 0;
 
   function init() {
@@ -288,6 +290,14 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   function syncPlayerState(state: PlayerState) {
+    if (
+      state.sessionId < lastPlaybackSnapshot.sessionId ||
+      (lastHandledPlaybackEndedSessionId !== 0 &&
+        state.sessionId === lastHandledPlaybackEndedSessionId)
+    ) {
+      return;
+    }
+
     const nextSong = normalizePlayerSong(state);
     if (!arePlayerSongsEqual(currentSong, nextSong)) {
       currentSong = nextSong;
@@ -300,9 +310,28 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     }
 
     syncPlaybackQueueWithSong(currentSong);
+
+    if (hasPlaybackCompleted(state) && state.songCid) {
+      syncPlaybackEnded({
+        sessionId: state.sessionId,
+        songCid: state.songCid,
+        progress: state.progress,
+        duration: state.duration,
+      });
+    }
   }
 
   function syncPlayerProgress(state: PlayerState) {
+    if (
+      !shouldApplyPlaybackProgress(state, {
+        sessionId: lastPlaybackSnapshot.sessionId,
+        songCid: currentSong?.cid ?? null,
+        isPlaying,
+      })
+    ) {
+      return;
+    }
+
     if (progress !== state.progress) progress = state.progress;
     if (duration !== state.duration) duration = state.duration;
 
@@ -333,7 +362,11 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       lyricsOpen = false;
       playlistOpen = false;
       if (previousSnapshot.cid !== null || previousSnapshot.active) {
-        lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
+        lastPlaybackSnapshot = {
+          cid: null,
+          active: false,
+          sessionId: previousSnapshot.sessionId,
+        };
       }
       return;
     }
@@ -423,15 +456,21 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       !shouldApplyPlaybackEnded(
         event,
         currentSong?.cid ?? null,
-        lastPlaybackSnapshot
+        lastPlaybackSnapshot.sessionId,
+        lastHandledPlaybackEndedSessionId
       )
     )
       return;
+    lastHandledPlaybackEndedSessionId = event.sessionId;
     lastPlaybackSnapshot = {
       cid: event.songCid,
       active: false,
       sessionId: event.sessionId,
     };
+    isPlaying = false;
+    isPaused = false;
+    isLoading = false;
+    pendingPlayToggleTarget = null;
     progress = event.progress;
     duration = event.duration;
     void handlePlaybackEnded(event.songCid);
@@ -479,22 +518,22 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   function shouldRestartCompletedTrack() {
-    return (
-      hasPlaybackCompleted({
-        songCid: currentSong?.cid ?? null,
-        isPlaying,
-        isPaused,
-        isLoading,
-        progress,
-        duration,
-      }) &&
-      (!hasNext ||
-        (repeatMode === 'off' && playbackIndex === playbackOrder.length - 1))
-    );
+    return hasPlaybackCompleted({
+      songCid: currentSong?.cid ?? null,
+      isPlaying,
+      isPaused,
+      isLoading,
+      progress,
+      duration,
+    });
   }
 
   async function handlePlaybackEnded(songCid: string) {
     const requestSeq = ++playbackEndRequestSeq;
+
+    // 关闭循环时，用户点播的歌曲在自然结束后停留在当前曲目；队列导航仍由
+    // “下一首”按钮或系统媒体控制显式触发。只有“全部循环”才自动推进队列。
+    if (repeatMode === 'off') return;
 
     if (repeatMode === 'one') {
       const entry = playbackOrder.find((e) => e.cid === songCid);
@@ -514,7 +553,6 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     if (currentIndex < 0) return;
 
     const reachedQueueEnd = currentIndex === playbackOrder.length - 1;
-    if (repeatMode === 'off' && reachedQueueEnd) return;
 
     const nextIndex = reachedQueueEnd ? 0 : currentIndex + 1;
     if (requestSeq !== playbackEndRequestSeq) return;
@@ -546,7 +584,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   async function resume() {
-    if (pendingPlayToggleTarget || isLoading) return;
+    if (pendingPlayToggleTarget || isLoading || playingCid !== null) return;
     pendingPlayToggleTarget = 'playing';
     try {
       if (shouldRestartCompletedTrack()) {
@@ -678,6 +716,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     playbackFormat = null;
     volumeBeforeMute = 1.0;
     lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
+    lastHandledPlaybackEndedSessionId = 0;
     lyricRequestSeq += 1;
     playbackEndRequestSeq += 1;
   }
