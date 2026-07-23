@@ -19,13 +19,13 @@ const MINI_PLAYER_HEIGHT: f64 = 168.0;
 #[cfg(target_os = "windows")]
 const MINI_PLAYER_MARGIN: f64 = 12.0;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 const TRAY_ID: &str = "harubble-background";
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 const MENU_SHOW: &str = "show";
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 const MENU_TOGGLE_PLAYBACK: &str = "toggle-playback";
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 const MENU_QUIT: &str = "quit";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,7 +51,7 @@ impl DesktopLifecycleState {
 }
 
 pub fn should_install_background_entrypoint(os: &str) -> bool {
-    matches!(os, "windows")
+    matches!(os, "windows" | "macos")
 }
 
 pub fn should_close_to_background(window_label: &str, os: &str) -> bool {
@@ -226,7 +226,7 @@ pub fn request_real_quit<R: Runtime>(app: &AppHandle<R>) {
     app.exit(0);
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn toggle_playback_from_lifecycle<R: Runtime>(app: &AppHandle<R>) {
     if let Some(state) = app.try_state::<AppState>() {
         if let Err(error) = state.toggle_playback_from_lifecycle() {
@@ -288,11 +288,14 @@ pub fn handle_main_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &W
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn install_background_entrypoint<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::tray::TrayIconBuilder;
+    #[cfg(target_os = "windows")]
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 
+    #[cfg(target_os = "windows")]
     install_mini_player_window(app)?;
 
     let show = MenuItem::with_id(app, MENU_SHOW, "Show Harubble", true, None::<&str>)?;
@@ -300,25 +303,44 @@ pub fn install_background_entrypoint<R: Runtime>(app: &AppHandle<R>) -> tauri::R
     let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Harubble", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &toggle, &quit])?;
 
-    TrayIconBuilder::with_id(TRAY_ID)
-        .icon(tauri::include_image!("icons/32x32.png"))
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Harubble")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                rect,
-                position,
-                ..
-            } = event
-            {
-                let anchor = Some(rect).filter(|rect| has_non_zero_rect(rect));
-                let anchor = anchor.or_else(|| fallback_anchor_from_position(position));
-                let _ = toggle_mini_player_window(tray.app_handle(), anchor);
-            }
-        })
+        .menu(&menu);
+
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.icon(tauri::include_image!("icons/32x32.png"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder
+            .show_menu_on_left_click(false)
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    rect,
+                    position,
+                    ..
+                } = event
+                {
+                    let anchor = Some(rect).filter(|rect| has_non_zero_rect(rect));
+                    let anchor = anchor.or_else(|| fallback_anchor_from_position(position));
+                    let _ = toggle_mini_player_window(tray.app_handle(), anchor);
+                }
+            });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .icon(tauri::include_image!("icons/tray-32x32.png"))
+            .icon_as_template(true)
+            .show_menu_on_left_click(true);
+    }
+
+    builder
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_SHOW => {
                 let _ = restore_main_window(app);
@@ -332,7 +354,7 @@ pub fn install_background_entrypoint<R: Runtime>(app: &AppHandle<R>) -> tauri::R
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn install_background_entrypoint<R: Runtime>(_app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }

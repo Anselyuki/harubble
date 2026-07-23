@@ -16,11 +16,13 @@ src-tauri/icons/
 ├── icon.ico
 ├── 128x128.png
 ├── 128x128@2x.png
-└── 32x32.png
+├── 32x32.png
+└── tray-32x32.png
 ```
 
 - `AppIcon.icon` 是 macOS Liquid Glass 源工程。当前只有 `02-bow.svg` 一个视觉图层；背景由 Icon Composer 的 `fill: automatic` 处理，不存在独立的 `01-background.svg`。
 - `app-icon.svg` 是传统制品的扁平源稿，包含青绿色背景与完整蝴蝶结。
+- `tray-32x32.png` 是 macOS 菜单栏使用的透明蝴蝶结图层；它必须保持透明背景，才能配合 template 图标正确显示。
 - `previews/` 保存 Icon Composer 的 Default、Dark、Tinted 和 Clear 模式预览，不参与打包。
 - Tauri 实际打包输入以 `tauri.conf.json` 的 `bundle.icon` 数组为准。
 
