@@ -183,10 +183,10 @@ describe('主题包 demo · 契约测试', () => {
     expect(pkg.visualContract?.depth).toBe('deep');
   });
 
-  it('retro-terminal 声明 visualContract: terminal / flat（未来支持）', () => {
+  it('retro-terminal 声明 visualContract: terminal / flat（Phase 3.3 支持）', () => {
     const pkg = retroTerminalPkg as unknown as ThemePackageDocument;
     expect(pkg.visualContract?.family).toBe('terminal');
     expect(pkg.visualContract?.depth).toBe('flat');
-    // 当前 SUPPORTED_THEME_FAMILIES 里未含 terminal，运行时会 fallback 到 glass
+    // Phase 3.3 起 SUPPORTED_THEME_FAMILIES 已包含 terminal，运行时直通不 fallback
   });
 });

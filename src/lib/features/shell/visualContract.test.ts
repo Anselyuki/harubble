@@ -26,13 +26,22 @@ describe('resolveVisualContract 支持集与 fallback', () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it('未支持的 family fallback 到 glass 并 warn', () => {
+  it('已加入支持集的 terminal family 直通不 warn（Phase 3.3）', () => {
     const result = resolveVisualContract({
       family: 'terminal',
+      depth: 'flat',
+    });
+    expect(result.family).toBe('terminal');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('未支持的 family fallback 到 glass 并 warn', () => {
+    const result = resolveVisualContract({
+      family: 'brutalist',
       depth: 'balanced',
     });
     expect(result.family).toBe('glass');
-    expect(result.warnings.some((w) => w.includes('family=terminal'))).toBe(
+    expect(result.warnings.some((w) => w.includes('family=brutalist'))).toBe(
       true
     );
   });

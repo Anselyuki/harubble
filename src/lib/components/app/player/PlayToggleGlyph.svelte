@@ -2,9 +2,13 @@
   /**
    * Play toggle glyph · Router 薄壳（Phase 3 Step 3.2）。
    *
-   * 依据 `getVisualContract().family` 分发到 glass / material view，
+   * 依据 `getVisualContract().family` 分发：
+   * - `glass` → GlassPlayToggleView（iOS spring）
+   * - `material` / `terminal` → MaterialPlayToggleView（terminal 通过 CSS
+   *   `:root[data-theme-family='terminal']` 覆盖为直角 monochrome）
+   *
    * 业务逻辑（LOADING_GRACE_MS / MIN_VISIBLE / 世代号）由 controller 收敛，
-   * 两个 view 共享同一份 controller 实现。
+   * 三个 family 共享同一份 controller 实现。
    *
    * # 为什么保留旧文件路径
    *
@@ -39,7 +43,7 @@
   const contract = getVisualContract();
 </script>
 
-{#if contract.family === 'material'}
+{#if contract.family === 'material' || contract.family === 'terminal'}
   <MaterialPlayToggleView
     {isPlaying}
     {isLoading}

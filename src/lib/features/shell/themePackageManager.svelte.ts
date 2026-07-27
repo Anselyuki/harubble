@@ -287,13 +287,21 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    * 覆盖 pending-persist 分支（P1-2）：无论此前是否有 pending-persist 的
    * setActive 请求，preview 都会将 previewingId 设为新值，并递增 intentSeq
    * 使 pending 请求返回时被丢弃。
+   *
+   * # visualContract 一致性
+   *
+   * preview 与 setActive 都走 `applyPackageOverrides`，内部调用 `applyVisualContract`
+   * 写入 `data-theme-family` / `data-theme-depth` 到 `<html>`。因此 Router 组件
+   * （PlayToggleGlyph / VolumeCapsule）在预览与激活两种状态下读到的 `contract.family`
+   * 一致，视觉表现严格对齐，不会出现"预览 terminal 但看到 glass"的错乱。
    */
   async function preview(id: string): Promise<ThemePackageDocument> {
     const localIntent = ++intentSeq;
     const doc = await previewThemePackage(id);
     if (localIntent === intentSeq) {
       previewingId = id;
-      // 预览态同步 motion / shape / density 三组覆盖，让 GSAP + CSS 立即反映主题包节奏
+      // 预览态同步全部 5 组 override（motion/shape/density/elevation/blur）+ visualContract，
+      // 让 GSAP + CSS + Router 立即反映主题包节奏与家族切换
       applyPackageOverrides(doc);
     }
     return doc;

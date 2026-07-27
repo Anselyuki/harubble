@@ -139,6 +139,34 @@
   --radius: 0.5rem;
 }
 
+/* Phase 3.3 · Terminal family 全局 baseline：将 shape/elevation/blur token 全部归零。
+   PlayToggleGlyph / VolumeCapsule 走 Material view 时读的是这些 CSS 变量，
+   所以只需覆盖变量即可获得 terminal "monochrome + 直角 + 无光晕" 效果，
+   不需要改动 view 组件。主题包若显式声明 shape/elevation/blur 字段，
+   applyShapeOverride 等会以 inline style 写入 documentElement，优先级更高。 */
+:root[data-theme-family='terminal'] {
+  --shape-xs: 0;
+  --shape-sm: 0;
+  --shape-md: 0;
+  --shape-lg: 0;
+  --shape-xl: 0;
+  --shape-2xl: 0;
+  --shape-pill: 0;
+  --shape-circle: 0;
+
+  --elevation-none: none;
+  --elevation-xs: none;
+  --elevation-sm: none;
+  --elevation-md: none;
+  --elevation-lg: none;
+  --elevation-xl: none;
+
+  --blur-sm: 0;
+  --blur-md: 0;
+  --blur-lg: 0;
+  --blur-xl: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-hover: none;
@@ -1709,6 +1737,28 @@ img[data-image-state='error'] {
   text-shadow: none;
 }
 
+/* Phase 3.3 · Terminal family 覆盖 lyrics bubble：monochrome + 直角 + monospace。
+   DOM 与业务保持不变。 */
+:root[data-theme-family='terminal'] .lyrics-bubble {
+  background: var(--bg-primary);
+  border: 1px solid var(--text-primary);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 0;
+  font-family: var(--font-mono);
+}
+
+:root[data-theme-family='terminal'] .lyrics-bubble::before {
+  display: none;
+}
+
+:root[data-theme-family='terminal'] .lyrics-bubble-line.active {
+  text-shadow: none;
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
 /* ── end lyrics bubble ── */
 
 /* ── Fullscreen player ── */
@@ -2411,6 +2461,28 @@ img[data-image-state='error'] {
 :root[data-theme-family='material'] .fullscreen-cover {
   box-shadow: var(--elevation-xl);
   border-radius: var(--shape-lg);
+}
+
+/* Phase 3.3 · Terminal family 覆盖 fullscreen player：monochrome 深色 + 直角 + 无光晕 + 无 backdrop。 */
+:root[data-theme-family='terminal'] .fullscreen-player {
+  background: #000;
+  color: var(--text-primary);
+}
+
+:root[data-theme-family='terminal'] .fullscreen-player::before,
+:root[data-theme-family='terminal'] .fullscreen-player::after {
+  display: none;
+}
+
+:root[data-theme-family='terminal'] .fullscreen-bg-base,
+:root[data-theme-family='terminal'] .fullscreen-bg-detail {
+  display: none;
+}
+
+:root[data-theme-family='terminal'] .fullscreen-cover {
+  box-shadow: none;
+  border-radius: 0;
+  border: 1px solid var(--text-primary);
 }
 
 /* ── end fullscreen player ── */

@@ -37,7 +37,7 @@
   const contract = getVisualContract();
 </script>
 
-{#if contract.family === 'material'}
+{#if contract.family === 'material' || contract.family === 'terminal'}
   <MaterialVolumeCapsuleView
     {volume}
     {muted}

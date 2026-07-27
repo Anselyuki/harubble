@@ -33,11 +33,12 @@ export type ThemeDepth = 'flat' | 'balanced' | 'deep';
  * 当前 app 版本已实现的 family 支持集。
  *
  * Phase 3.1：`glass`（视觉零变化的默认族）+ `material`（POC 阶段）
- * Phase 3.2：追加 `terminal`
+ * Phase 3.3：追加 `terminal`（monochrome + 直角 + 无动画）
  */
 export const SUPPORTED_THEME_FAMILIES: readonly ThemeFamily[] = [
   'glass',
   'material',
+  'terminal',
 ];
 
 /**
