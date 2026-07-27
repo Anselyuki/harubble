@@ -18,6 +18,7 @@ const typeAwareParserOptions = {
       'prettier.config.js',
       'playwright.config.ts',
       'tests/e2e/*.ts',
+      'tests/e2e/visual/*.ts',
     ],
   },
   tsconfigRootDir: import.meta.dirname,

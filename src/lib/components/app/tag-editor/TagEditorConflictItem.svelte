@@ -69,7 +69,7 @@
   .conflict-item {
     padding: 0.75rem;
     border: 1px solid var(--color-border, #e5e7eb);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     display: flex;
     flex-direction: column;
     gap: 0.5rem;

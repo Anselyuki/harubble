@@ -491,7 +491,7 @@
   .download-task-list {
     overflow: hidden;
     border: 1px solid var(--sheet-border);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--sheet-row-bg);
   }
   .download-task-row {
@@ -561,7 +561,7 @@
     align-content: center;
     min-height: 260px;
     border: 1px solid var(--sheet-border);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--sheet-section-bg);
     padding: 28px 18px;
     text-align: center;

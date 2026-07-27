@@ -110,7 +110,7 @@
     height: 36px;
     padding: 0 0.75rem;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: none;
     color: var(--text-secondary, rgba(255, 255, 255, 0.6));
     font-family: var(--font-body);

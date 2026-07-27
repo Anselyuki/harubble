@@ -571,7 +571,7 @@
     grid-auto-columns: minmax(0, 1fr);
     overflow: hidden;
     border: 1px solid var(--sheet-border);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--sheet-row-bg);
     padding: 2px;
     flex-shrink: 0;
@@ -580,7 +580,7 @@
     height: 26px;
     padding-inline: 10px;
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: transparent;
     color: var(--text-secondary);
     font: inherit;

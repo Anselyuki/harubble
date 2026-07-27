@@ -192,7 +192,7 @@
   .chip-wrapper {
     display: inline-flex;
     align-items: center;
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     cursor: grab;
   }
 
@@ -237,7 +237,7 @@
     font-size: 0.75rem;
     background: var(--color-chip-bg, #f3f4f6);
     border: none;
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     color: var(--text-primary);
     font-family: var(--font-body);
     pointer-events: none;

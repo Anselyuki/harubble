@@ -85,7 +85,7 @@
     align-items: center;
     gap: 10px;
     padding: 10px 16px;
-    border-radius: 16px;
+    border-radius: var(--shape-xl);
     background: var(--toolbar-surface);
     border: 1px solid var(--toolbar-highlight);
     backdrop-filter: blur(18px) saturate(1.3);
@@ -131,7 +131,7 @@
     height: 28px;
     padding: 0 8px;
     border: 1px solid color-mix(in srgb, var(--scope-bg) 72%, white 28%);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--scope-bg);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.22),

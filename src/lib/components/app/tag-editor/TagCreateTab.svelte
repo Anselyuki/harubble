@@ -122,7 +122,7 @@
     padding: 0.375rem 0.5rem;
     font-size: 0.75rem;
     border: 1px solid var(--color-border, #d1d5db);
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: var(--bg-input, transparent);
     color: var(--text-primary);
     outline: none;
@@ -148,7 +148,7 @@
   .create-main-input {
     flex: 1;
     padding: 8px 36px 8px 10px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
   }
 
   .create-main-input:disabled {
@@ -164,7 +164,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     border: none;
     background: none;
     cursor: pointer;
@@ -220,7 +220,7 @@
     display: flex;
     align-items: center;
     border: 1px solid var(--color-border, #e5e7eb);
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     padding: 4px;
   }
 
@@ -235,7 +235,7 @@
     font-weight: 600;
     color: white;
     background: var(--color-primary, #6366f1);
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     font-family: var(--font-body);
   }
 

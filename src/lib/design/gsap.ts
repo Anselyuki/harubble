@@ -17,8 +17,231 @@ export const reducedMotionQuery =
     ? window.matchMedia('(prefers-reduced-motion: reduce)')
     : null;
 
+/**
+ * 当前是否处于 reduced-motion 模式。
+ *
+ * 模块加载后监听 `matchMedia('change')`；用户在系统偏好中切换动效开关时
+ * 该值实时更新，飞行中的 tween 不会被强制截断（GSAP 已经在运行），
+ * 但下一次调用 `getMotionDuration` / `shouldSkipMotion` 会立即反映新态。
+ */
+let reducedMotionActive = reducedMotionQuery?.matches ?? false;
+
+if (
+  reducedMotionQuery &&
+  typeof reducedMotionQuery.addEventListener === 'function'
+) {
+  reducedMotionQuery.addEventListener('change', (event) => {
+    reducedMotionActive = event.matches;
+  });
+}
+
+/**
+ * 主题包可选择覆盖 MOTION 档位。null 表示未覆盖，落回默认档位。
+ *
+ * Phase 2 Step 2.c：主题包激活时应用 `motion.durations` 到此对象，
+ * 卸载 / 切回默认时置回 null。
+ */
+export type MotionOverride = Partial<Record<keyof typeof MOTION, number>>;
+let motionOverride: MotionOverride | null = null;
+
+/**
+ * 是否应完全跳过动画（reduced-motion 开启）。
+ *
+ * 调用点应据此在 tween 之前直接同步落到终态，而不是让 tween 以 0 秒运行——
+ * `duration: 0` 的 tween 仍会调度到下一帧，可能引入闪烁。
+ */
+export function shouldSkipMotion(): boolean {
+  return reducedMotionActive;
+}
+
+/**
+ * 根据档位毫秒数返回 GSAP 使用的秒数。
+ *
+ * reduced-motion 时返回 0；主题包 override 命中时按覆盖值换算。
+ * 老调用点无需修改（0 秒 tween 等价于瞬时跳到终态）；
+ * 新代码若需要区分"跳过 tween"与"0 秒 tween"，请配合 `shouldSkipMotion` 使用。
+ */
 export function getMotionDuration(baseMs: number): number {
-  return reducedMotionQuery?.matches ? 0 : baseMs / 1000;
+  if (reducedMotionActive) return 0;
+  const override = motionOverride;
+  if (override) {
+    for (const [key, value] of Object.entries(override) as Array<
+      [keyof typeof MOTION, number]
+    >) {
+      if (MOTION[key] === baseMs) {
+        return value / 1000;
+      }
+    }
+  }
+  return baseMs / 1000;
+}
+
+/**
+ * 应用主题包声明的 motion 覆盖到 MOTION 与 CSS 变量。
+ *
+ * 入参 `overrides` 是从主题包读取的档位映射（毫秒），例如
+ * `{ FAST: 120, BASE: 200 }`。调用后：
+ * 1. `getMotionDuration` 立即反映新档位
+ * 2. `document.documentElement` 上写入对应的 `--motion-fast` 等 CSS 变量
+ *
+ * 传 `null` 恢复默认。该函数是 Phase 2 Step 2.c 的运行时同步入口，
+ * 让 GSAP / CSS transitions / 主题包三方保持一致。
+ */
+export function applyMotionOverride(overrides: MotionOverride | null): void {
+  motionOverride = overrides;
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  const cssMap: Record<keyof typeof MOTION, string | null> = {
+    MICRO: null, // 未映射到 CSS 变量
+    FAST: '--motion-fast',
+    BASE: '--motion-base',
+    SLOW: '--motion-slow',
+    PAGE: '--motion-page',
+    BASE_OUT: null,
+    SLOW_OUT: null,
+    PAGE_OUT: null,
+    OVERLAY_IN: null,
+  };
+  for (const [key, cssVar] of Object.entries(cssMap) as Array<
+    [keyof typeof MOTION, string | null]
+  >) {
+    if (!cssVar) continue;
+    const value = overrides?.[key];
+    if (value !== undefined) {
+      root.style.setProperty(cssVar, `${value}ms`);
+    } else {
+      root.style.removeProperty(cssVar);
+    }
+  }
+}
+
+/**
+ * 主题包 shape 档位覆盖（Phase 2 Step 2.d）。
+ *
+ * 与 `--shape-xs/sm/md/lg/xl/2xl/pill` CSS 变量一一对应。传 null 恢复默认。
+ * 传入未声明的字段会被跳过（稀疏语义）。
+ */
+export type ShapeOverride = Partial<
+  Record<'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'pill', number>
+>;
+
+export function applyShapeOverride(overrides: ShapeOverride | null): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  const map: Record<keyof ShapeOverride, string> = {
+    xs: '--shape-xs',
+    sm: '--shape-sm',
+    md: '--shape-md',
+    lg: '--shape-lg',
+    xl: '--shape-xl',
+    '2xl': '--shape-2xl',
+    pill: '--shape-pill',
+  };
+  for (const [key, cssVar] of Object.entries(map) as Array<
+    [keyof ShapeOverride, string]
+  >) {
+    const value = overrides?.[key];
+    if (value !== undefined) {
+      root.style.setProperty(cssVar, `${value}px`);
+    } else {
+      root.style.removeProperty(cssVar);
+    }
+  }
+}
+
+/**
+ * 主题包 density 档位覆盖（Phase 2 Step 2.d）。
+ *
+ * 与 `--density-xs/sm/md/lg/xl` CSS 变量一一对应。传 null 恢复默认。
+ */
+export type DensityOverride = Partial<
+  Record<'xs' | 'sm' | 'md' | 'lg' | 'xl', number>
+>;
+
+export function applyDensityOverride(overrides: DensityOverride | null): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  const map: Record<keyof DensityOverride, string> = {
+    xs: '--density-xs',
+    sm: '--density-sm',
+    md: '--density-md',
+    lg: '--density-lg',
+    xl: '--density-xl',
+  };
+  for (const [key, cssVar] of Object.entries(map) as Array<
+    [keyof DensityOverride, string]
+  >) {
+    const value = overrides?.[key];
+    if (value !== undefined) {
+      root.style.setProperty(cssVar, `${value}px`);
+    } else {
+      root.style.removeProperty(cssVar);
+    }
+  }
+}
+
+/**
+ * 主题包 elevation 档位覆盖（Phase 2 Step 2.b）。
+ *
+ * 每档为完整的 box-shadow 字符串。传 null 恢复默认。
+ * 假设后端 sanitizer 已经拒绝含 url/expression 等的值；前端不再二次校验。
+ */
+export type ElevationOverride = Partial<
+  Record<'none' | 'xs' | 'sm' | 'md' | 'lg' | 'xl', string>
+>;
+
+export function applyElevationOverride(
+  overrides: ElevationOverride | null
+): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  const map: Record<keyof ElevationOverride, string> = {
+    none: '--elevation-none',
+    xs: '--elevation-xs',
+    sm: '--elevation-sm',
+    md: '--elevation-md',
+    lg: '--elevation-lg',
+    xl: '--elevation-xl',
+  };
+  for (const [key, cssVar] of Object.entries(map) as Array<
+    [keyof ElevationOverride, string]
+  >) {
+    const value = overrides?.[key];
+    if (value !== undefined) {
+      root.style.setProperty(cssVar, value);
+    } else {
+      root.style.removeProperty(cssVar);
+    }
+  }
+}
+
+/**
+ * 主题包 blur 档位覆盖（Phase 2 Step 2.b）。
+ *
+ * 与 `--blur-sm/md/lg/xl` CSS 变量一一对应，单位像素。传 null 恢复默认。
+ * 用于玻璃拟态 backdrop-filter 半径；传 0 可关闭模糊（Material 风格）。
+ */
+export type BlurOverride = Partial<Record<'sm' | 'md' | 'lg' | 'xl', number>>;
+
+export function applyBlurOverride(overrides: BlurOverride | null): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  const map: Record<keyof BlurOverride, string> = {
+    sm: '--blur-sm',
+    md: '--blur-md',
+    lg: '--blur-lg',
+    xl: '--blur-xl',
+  };
+  for (const [key, cssVar] of Object.entries(map) as Array<
+    [keyof BlurOverride, string]
+  >) {
+    const value = overrides?.[key];
+    if (value !== undefined) {
+      root.style.setProperty(cssVar, `${value}px`);
+    } else {
+      root.style.removeProperty(cssVar);
+    }
+  }
 }
 
 /**
@@ -80,6 +303,11 @@ export function animateIn(
   ease?: string
 ): gsap.core.Tween {
   killTweens(target);
+  // reduced-motion：直接同步落到终态，不排 tween，避免 0 秒 tween 引入的额外一帧
+  if (shouldSkipMotion()) {
+    gsap.set(target, toVars);
+    return gsap.to(target, { duration: 0 });
+  }
   return gsap.fromTo(target, fromVars, {
     ...toVars,
     duration: getMotionDuration(durationMs),
@@ -94,6 +322,11 @@ export function animateOut(
   opts?: { ease?: string; onComplete?: () => void }
 ): gsap.core.Tween {
   killTweens(target);
+  if (shouldSkipMotion()) {
+    gsap.set(target, toVars);
+    opts?.onComplete?.();
+    return gsap.to(target, { duration: 0 });
+  }
   return gsap.to(target, {
     ...toVars,
     duration: getMotionDuration(durationMs),
@@ -161,6 +394,10 @@ export function gsapScrollIntoView(
     }
   }
 
+  if (shouldSkipMotion()) {
+    container.scrollTop = scrollTarget;
+    return;
+  }
   gsap.to(container, {
     scrollTo: { y: scrollTarget },
     duration: getMotionDuration(MOTION.PAGE),

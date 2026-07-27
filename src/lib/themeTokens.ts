@@ -53,10 +53,131 @@ function getEffectiveScheme(): 'light' | 'dark' {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
 }
 
+const FEATURE_FLAG_KEY = 'theme_derive_from_slots';
+
+/**
+ * 检查是否启用"从 slot 派生全局 token"的 feature flag。
+ *
+ * 优先级：环境变量 > localStorage > 默认关闭。
+ * 启用后 `resolveAppThemeTokenSet` 会走 `deriveGlobalTokensFromSlots` 派生路径，
+ * 关闭时继续走 LIGHT_TOKENS/DARK_TOKENS 硬编码常量查表。
+ *
+ * 用途：Phase 0 灰度切换保护，出现视觉退化时可即时回滚（无需发版）。
+ * SSR 与非浏览器环境（如测试 Node 环境）安全返回 false。
+ */
+export function isSlotDerivationEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(FEATURE_FLAG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function mixColors(a: RgbTuple, b: RgbTuple, ratio: number): RgbTuple {
+  return [
+    Math.round(a[0] * (1 - ratio) + b[0] * ratio),
+    Math.round(a[1] * (1 - ratio) + b[1] * ratio),
+    Math.round(a[2] * (1 - ratio) + b[2] * ratio),
+  ];
+}
+
+function adjustSidebarLightness(
+  surfaceRgb: RgbTuple,
+  scheme: 'light' | 'dark'
+): string {
+  const [h, s, l] = rgbToHsl(surfaceRgb);
+  const delta = scheme === 'dark' ? 0.05 : -0.04;
+  return rgbToHex(hslToRgb(h, s, Math.max(0, Math.min(1, l + delta))));
+}
+
+function deriveTextTertiary(
+  textSecondaryRgb: RgbTuple,
+  scheme: 'light' | 'dark'
+): string {
+  const [h, s, l] = rgbToHsl(textSecondaryRgb);
+  const newS = Math.max(0, s - 0.05);
+  const newL =
+    scheme === 'light' ? Math.min(1, l + 0.1) : Math.max(0, l - 0.08);
+  return rgbToHex(hslToRgb(h, newS, newL));
+}
+
+/**
+ * 从 6 个颜色 slot 派生完整的 21 个全局 ThemeTokenSet。
+ *
+ * 用途：App Theme 路径的唯一 token 来源，替代硬编码的 LIGHT_TOKENS/DARK_TOKENS 常量查表。
+ * 入参：ThemeColorSlots 6 个 slot（accent/surface/textPrimary/textSecondary/tint/danger）
+ *       + scheme（light/dark，仅影响混合比例与方向）。
+ * 出参：21 个字段完整填充的 ThemeTokenSet。
+ * 副作用：无（纯函数）。
+ *
+ * 派生规则（与 color-slot-activation.md §3 对齐）：
+ * - surface → bgPrimary、surfaceBase（直接）、surfaceSidebar（±亮度 4-5%）、surfaceOverlay（+76% alpha）
+ * - textPrimary → textPrimary（直接）
+ * - textSecondary → textSecondary（直接）、textTertiary（降饱和+调亮度）
+ * - tint → bgSecondary（surface+tint 8-12% 混合）、bgTertiary（16-20% 混合）、bgElevated（bgSecondary+80% alpha）、border（tint+8% alpha）
+ * - accent → accent/accentHover/accentRgb/ring/surfaceState 全套派生
+ * - danger → destructive/destructiveRgb
+ */
+export function deriveGlobalTokensFromSlots(
+  slots: ThemeColorSlots,
+  scheme: 'light' | 'dark'
+): ThemeTokenSet {
+  const surfaceRgb = hexToRgb(slots.surface);
+  const tintRgb = hexToRgb(slots.tint);
+  const textSecondaryRgb = hexToRgb(slots.textSecondary);
+  const accentRgb = hexToRgb(slots.accent);
+  const accentHoverHex = deriveAccentHoverHex(slots.accent);
+  const accentHoverRgb = hexToRgb(accentHoverHex);
+  const destructiveRgb = hexToRgb(slots.danger);
+
+  // Step 0.c 校准值：与 LIGHT_TOKENS/DARK_TOKENS 精确匹配的混合系数
+  // - 浅色 k1=0.08 / k2=0.184：配合 tint=#82829B 得到 bgSecondary=#F5F5F7、bgTertiary=#E8E8ED
+  // - 深色 k1=0.12 / k2=0.187：配合 tint=#E9E9FA 得到 bgSecondary=#1C1C1E、bgTertiary≈#2C2C2E
+  const secondaryRatio = scheme === 'dark' ? 0.12 : 0.08;
+  const tertiaryRatio = scheme === 'dark' ? 0.187 : 0.184;
+  const bgSecondaryRgb = mixColors(surfaceRgb, tintRgb, secondaryRatio);
+  const bgTertiaryRgb = mixColors(surfaceRgb, tintRgb, tertiaryRatio);
+
+  const border =
+    scheme === 'dark'
+      ? `rgba(255, 255, 255, 0.08)`
+      : `rgba(${tintRgb.join(', ')}, 0.08)`;
+
+  return {
+    accent: slots.accent,
+    accentHover: accentHoverHex,
+    accentRgb: accentRgb.join(', '),
+    accentHoverRgb: accentHoverRgb.join(', '),
+    accentReadableForeground: getReadableForeground(accentRgb),
+    accentHoverReadableForeground: getReadableForeground(accentHoverRgb),
+    bgPrimary: slots.surface,
+    bgSecondary: rgbToHex(bgSecondaryRgb),
+    bgTertiary: rgbToHex(bgTertiaryRgb),
+    bgElevated: `rgba(${bgSecondaryRgb.join(', ')}, 0.8)`,
+    textPrimary: slots.textPrimary,
+    textSecondary: slots.textSecondary,
+    textTertiary: deriveTextTertiary(textSecondaryRgb, scheme),
+    border,
+    ring: `rgba(${accentRgb.join(', ')}, 0.3)`,
+    destructive: slots.danger,
+    destructiveRgb: destructiveRgb.join(', '),
+    surfaceState: `rgba(${accentRgb.join(', ')}, 0.08)`,
+    surfaceBase: slots.surface,
+    surfaceSidebar: adjustSidebarLightness(surfaceRgb, scheme),
+    surfaceOverlay: `rgba(${surfaceRgb.join(', ')}, 0.76)`,
+  };
+}
+
 export function resolveAppThemeTokenSet(
   themeColors: ThemeColorSlots,
   scheme: 'light' | 'dark' = getEffectiveScheme()
 ): ThemeTokenSet {
+  // Phase 0 Step 0.d：feature flag 保护的派生路径切换
+  if (isSlotDerivationEnabled()) {
+    return deriveGlobalTokensFromSlots(themeColors, scheme);
+  }
+
   const base = scheme === 'dark' ? DARK_TOKENS : LIGHT_TOKENS;
   const accentRgb = hexToRgb(themeColors.accent);
   const accentHoverHex = deriveAccentHoverHex(themeColors.accent);

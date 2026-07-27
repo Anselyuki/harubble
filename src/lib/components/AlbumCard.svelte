@@ -167,7 +167,7 @@
     appearance: none;
     background: transparent;
     border: none;
-    border-radius: 12px;
+    border-radius: var(--shape-lg);
     padding: 12px;
     margin-bottom: 4px;
     cursor: pointer;
@@ -214,7 +214,7 @@
   .album-cover-wrapper {
     width: 48px;
     height: 48px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: linear-gradient(
       135deg,
       var(--bg-tertiary) 0%,
@@ -252,7 +252,7 @@
     height: 100%;
     object-fit: cover;
     object-position: center;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     opacity: 0;
     transform: scale(1.04);
   }
@@ -263,7 +263,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: rgba(0, 0, 0, 0.35);
     backdrop-filter: blur(2px);
   }
@@ -302,7 +302,7 @@
     align-items: center;
     margin-top: 6px;
     padding: 4px 8px;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     font-size: 11px;
     line-height: 1;
     color: var(--accent);
@@ -324,7 +324,7 @@
     width: 100%;
     height: 0;
     padding-bottom: 100%;
-    border-radius: 12px;
+    border-radius: var(--shape-lg);
   }
 
   :global(.album-card.album-card--grid) .album-cover-placeholder {

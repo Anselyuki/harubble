@@ -148,7 +148,7 @@
     width: 100%;
     height: 36px;
     padding: 0 0.75rem;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     cursor: pointer;
   }
 

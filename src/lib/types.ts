@@ -207,6 +207,10 @@ export interface ThemePreferences {
   customColors: Partial<ThemeColorSlots>;
   colorScheme?: ColorScheme;
   dynamicAlbumAccent?: boolean;
+  /** v2：当前激活的主题包 id；null / 缺失表示走 preset 派生路径 */
+  activePackageId?: string | null;
+  /** v2：主题偏好 CAS 版本号，每次成功写入递增 1；缺失时视为 0 */
+  revision?: number;
 }
 
 export interface ThemeTokenSet {
@@ -231,6 +235,127 @@ export interface ThemeTokenSet {
   surfaceBase: string;
   surfaceSidebar: string;
   surfaceOverlay: string;
+}
+
+// ---------------------------------------------------------------------------
+// Theme package types (mirrors src-tauri/src/theme_packages/types.rs)
+// ---------------------------------------------------------------------------
+
+export type ThemePackageStatus = 'staging' | 'committed' | 'pendingDelete';
+
+export interface ThemePackageManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  license?: string;
+  minAppVersion?: string;
+}
+
+export interface ThemePackageVariants {
+  light?: Partial<ThemeColorSlots>;
+  dark?: Partial<ThemeColorSlots>;
+}
+
+/**
+ * 主题包声明的 motion 档位覆盖（毫秒）。
+ *
+ * 与后端 ThemePackageMotion 形状一致；每个字段对应 gsap.ts 中 MOTION 常量的一档。
+ * 主题包激活时前端 applyMotionOverride 会同步到 GSAP + CSS 变量。
+ */
+export interface ThemePackageMotion {
+  micro?: number;
+  fast?: number;
+  base?: number;
+  slow?: number;
+  page?: number;
+  baseOut?: number;
+  slowOut?: number;
+  pageOut?: number;
+  overlayIn?: number;
+}
+
+/**
+ * 主题包 shape 档位覆盖（像素）。与 --shape-* CSS 变量一一对应。
+ */
+export interface ThemePackageShape {
+  xs?: number;
+  sm?: number;
+  md?: number;
+  lg?: number;
+  xl?: number;
+  '2xl'?: number;
+  pill?: number;
+}
+
+/**
+ * 主题包 density 档位覆盖（像素）。与 --density-* CSS 变量一一对应。
+ */
+export interface ThemePackageDensity {
+  xs?: number;
+  sm?: number;
+  md?: number;
+  lg?: number;
+  xl?: number;
+}
+
+/**
+ * 主题包 elevation 档位覆盖（完整 box-shadow 字符串）。
+ * 与 --elevation-* CSS 变量一一对应。sanitizer 会拒绝含 url/expression 等的值。
+ */
+export interface ThemePackageElevation {
+  none?: string;
+  xs?: string;
+  sm?: string;
+  md?: string;
+  lg?: string;
+  xl?: string;
+}
+
+/**
+ * 主题包 blur 档位覆盖（backdrop-filter 半径，像素）。
+ */
+export interface ThemePackageBlur {
+  sm?: number;
+  md?: number;
+  lg?: number;
+  xl?: number;
+}
+
+/**
+ * 主题包 visualContract 声明（Phase 3）。
+ *
+ * `family`：视觉语言族。当前 app 版本支持集在 SUPPORTED_THEME_FAMILIES 常量里；
+ * 不在支持集内的值会 fallback 到 `glass`。
+ * `depth`：视觉深度。同上，fallback 到 `balanced`。
+ */
+export interface ThemePackageVisualContract {
+  family?: string;
+  depth?: string;
+}
+
+export interface ThemePackageDocument {
+  schemaVersion: number;
+  manifest: ThemePackageManifest;
+  slots: Partial<ThemeColorSlots>;
+  variants?: ThemePackageVariants;
+  motion?: ThemePackageMotion;
+  shape?: ThemePackageShape;
+  density?: ThemePackageDensity;
+  elevation?: ThemePackageElevation;
+  blur?: ThemePackageBlur;
+  visualContract?: ThemePackageVisualContract;
+  warnings?: string[];
+}
+
+export interface ThemePackageSummary {
+  id: string;
+  name: string;
+  version: string;
+  status: ThemePackageStatus;
+  builtin?: boolean;
+  sha256?: string | null;
 }
 
 export type OutputFormat = 'flac' | 'wav' | 'mp3';

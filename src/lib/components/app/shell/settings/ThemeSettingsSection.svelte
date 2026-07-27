@@ -242,7 +242,7 @@
     grid-template-columns: repeat(6, 10px);
     overflow: hidden;
     border: 1px solid var(--sheet-border);
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
   }
   .settings-theme-swatch-strip span,
   .settings-theme-color-swatch {
@@ -267,7 +267,7 @@
     width: 18px;
     height: 18px;
     border: 1px solid var(--sheet-border);
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     box-shadow: inset 0 1px 0 color-mix(in srgb, white 36%, transparent);
   }
   .settings-theme-color-label {

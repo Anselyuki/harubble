@@ -250,7 +250,7 @@
     color: var(--text-tertiary);
     cursor: pointer;
     padding: 4px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     display: flex;
     align-items: center;
     justify-content: center;

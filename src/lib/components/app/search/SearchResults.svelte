@@ -288,7 +288,7 @@
     width: 54px;
     height: 54px;
     flex: 0 0 54px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--surface-state);
   }
 
@@ -301,7 +301,7 @@
 
   .skeleton-copy :global(.skeleton-line) {
     height: 10px;
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     background: var(--surface-state);
   }
 
@@ -445,7 +445,7 @@
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--surface-state);
     color: var(--text-tertiary);
   }
@@ -484,7 +484,7 @@
   .result-kind {
     flex: 0 0 auto;
     padding: 2px 5px;
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     color: var(--accent);
     background: rgba(var(--accent-rgb), 0.09);
     font-family: var(--font-wide);
@@ -540,7 +540,7 @@
     flex: 0 0 auto;
     padding: 2px 5px;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     color: var(--text-tertiary);
     font-size: 9px;
     line-height: 1.2;

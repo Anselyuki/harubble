@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "system-dark",
+    "name": "System Dark",
+    "version": "1.0.0",
+    "description": "Baseline for legacy DARK_TOKENS.",
+    "author": "harubble",
+    "license": "MIT"
+  },
+  "slots": {
+    "accent": "#7c3aed",
+    "surface": "#000000",
+    "textPrimary": "#ffffff",
+    "textSecondary": "#8e8e93",
+    "tint": "#e9e9fa",
+    "danger": "#ef4444"
+  }
+}

@@ -133,6 +133,13 @@ src/lib/paraglide/
 .superpowers/
 
 # =============================================
+# Playwright
+# =============================================
+test-results/
+playwright-report/
+playwright/.cache/
+
+# =============================================
 # Local plans (not committed)
 # =============================================
 docs/plans/

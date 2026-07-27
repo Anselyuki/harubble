@@ -28,6 +28,7 @@ use crate::search::LibrarySearchService;
 use crate::startup_recovery::prepare_local_database;
 use crate::tag_editor::TagEditorService;
 use crate::tag_registry::TagRegistryService;
+use crate::theme_packages::ThemePackageService;
 use harubble_core::{DownloadManagerSnapshot, DownloadService};
 use serde_json::json;
 use std::future::Future;
@@ -79,6 +80,7 @@ pub struct AppState {
     tag_registry: TagRegistryService,
     tag_editor: TagEditorService,
     collection: CollectionService,
+    theme_packages: ThemePackageService,
 }
 
 struct PreparedPlaybackInput {
@@ -171,6 +173,8 @@ impl AppState {
         let official_collections_bytes = include_bytes!("../../../data/official_collections.json");
         let collection = CollectionService::new(&db_path, official_collections_bytes)
             .map_err(|e| format!("初始化合集服务失败: {e}"))?;
+        let theme_packages = ThemePackageService::new(app_data_dir.clone())
+            .map_err(|e| format!("初始化主题包服务失败: {e}"))?;
         let state = Self {
             player: Arc::new(player),
             api_clients: ApiClients {
@@ -204,6 +208,7 @@ impl AppState {
             tag_registry,
             tag_editor,
             collection,
+            theme_packages,
         };
         state.player.set_volume_silent(state.preferences().volume);
         start_playback_actor(Arc::clone(&state.playback_runtime), playback_actor_inbox);
@@ -266,6 +271,14 @@ impl AppState {
     /// 返回共享专辑目录服务。
     pub(crate) fn album_catalog(&self) -> &AlbumCatalogService {
         &self.album_catalog
+    }
+
+    /// 返回主题包服务（列表 / 安装 / 卸载 / 检查）。
+    ///
+    /// 适用于 Phase 1 `*_theme_package` 系列命令的入口访问；
+    /// 命令层通过该 accessor 使用，而非直接持有服务字段（配合私有字段守卫）。
+    pub(crate) fn theme_packages(&self) -> &ThemePackageService {
+        &self.theme_packages
     }
 
     /// 返回本地库存服务。

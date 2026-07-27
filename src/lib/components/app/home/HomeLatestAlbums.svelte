@@ -196,7 +196,7 @@
     cursor: pointer;
     text-align: left;
     color: inherit;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     transition: var(--motion-hover);
   }
 
@@ -208,7 +208,7 @@
     position: relative;
     width: 140px;
     height: 140px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     overflow: hidden;
     flex-shrink: 0;
   }
@@ -218,7 +218,7 @@
     width: 140px;
     height: 140px;
     object-fit: cover;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--surface-secondary, rgba(255, 255, 255, 0.06));
   }
 
@@ -268,7 +268,7 @@
     flex-shrink: 0;
     width: 140px;
     height: 188px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--surface-secondary, rgba(255, 255, 255, 0.06));
   }
 

@@ -312,6 +312,61 @@ pub(crate) const COMMAND_SPECS: &[CommandSpec] = &[
         CommandPriority::Interactive,
         CancelPolicy::Cooperative,
     ),
+    // ── ThemePackages (Phase 1 MVP · 4 条) ─────────────────────────────
+    spec(
+        "list_theme_packages",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Interactive,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "inspect_theme_package",
+        CommandDomain::VisualAux,
+        CommandPriority::Visual,
+        CancelPolicy::LatestWins,
+    ),
+    spec(
+        "install_theme_package_from_file",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "install_theme_package_from_url",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "uninstall_theme_package",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
+    spec(
+        "set_active_theme_package",
+        CommandDomain::InteractiveUi,
+        CommandPriority::Interactive,
+        CancelPolicy::LatestWins,
+    ),
+    spec(
+        "preview_theme_package",
+        CommandDomain::VisualAux,
+        CommandPriority::Visual,
+        CancelPolicy::LatestWins,
+    ),
+    spec(
+        "dismiss_theme_preview",
+        CommandDomain::InteractiveUi,
+        CommandPriority::Interactive,
+        CancelPolicy::LatestWins,
+    ),
+    spec(
+        "export_theme_package",
+        CommandDomain::BackgroundIo,
+        CommandPriority::Background,
+        CancelPolicy::Cooperative,
+    ),
     spec(
         "get_preferences",
         CommandDomain::InteractiveUi,

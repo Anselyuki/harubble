@@ -78,7 +78,7 @@
     display: grid;
     overflow: hidden;
     border: 1px solid var(--sheet-border);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
   }
   .settings-toggle {
     display: flex;

@@ -163,7 +163,7 @@
     padding: 0.375rem 0.5rem;
     font-size: 0.75rem;
     border: 1px solid var(--color-border, #d1d5db);
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: var(--bg-input, transparent);
     color: var(--text-primary);
     outline: none;
@@ -195,7 +195,7 @@
     padding: 0.25rem 0.375rem 0.25rem 0.5rem;
     font-size: 0.75rem;
     border: 1px solid var(--color-border, #d1d5db);
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     background: transparent;
     color: var(--text-primary);
     cursor: pointer;
@@ -256,7 +256,7 @@
     gap: 0.25rem;
     padding: 0.375rem;
     border: 1px solid var(--color-primary, #6366f1);
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: var(--color-chip-bg, #f3f4f6);
   }
 

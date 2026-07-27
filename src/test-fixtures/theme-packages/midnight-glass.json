@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "midnight-glass",
+    "name": "Midnight Glass",
+    "version": "1.2.0",
+    "description": "iOS-inspired glass style with muted purples.",
+    "author": "harubble",
+    "license": "MIT",
+    "minAppVersion": "2.3.0"
+  },
+  "slots": {
+    "accent": "#7c3aed",
+    "surface": "#0f0f14",
+    "textPrimary": "#f5f5fa",
+    "textSecondary": "#a1a1b3",
+    "tint": "#3b3b52",
+    "danger": "#ef4444"
+  },
+  "variants": {
+    "dark": {
+      "surface": "#000000",
+      "textPrimary": "#ffffff"
+    }
+  },
+  "elevation": {
+    "md": "0 8px 24px rgba(31, 20, 60, 0.28)",
+    "lg": "0 16px 48px rgba(31, 20, 60, 0.36), 0 2px 4px rgba(0, 0, 0, 0.24)"
+  },
+  "blur": {
+    "sm": 12,
+    "md": 20,
+    "lg": 32,
+    "xl": 48
+  },
+  "visualContract": {
+    "family": "glass",
+    "depth": "deep"
+  }
+}

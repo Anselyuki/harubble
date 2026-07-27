@@ -135,7 +135,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 8px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     font-size: 13px;
   }
 
@@ -165,7 +165,7 @@
     color: var(--text-secondary);
     font-size: 16px;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     font-family: inherit;
   }
 

@@ -166,7 +166,7 @@
   .np-cover {
     width: 48px;
     height: 48px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     object-fit: cover;
     flex-shrink: 0;
   }
@@ -174,7 +174,7 @@
   .np-cover-placeholder {
     width: 48px;
     height: 48px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: var(--surface-tertiary, rgba(255, 255, 255, 0.08));
     flex-shrink: 0;
   }

@@ -95,7 +95,7 @@
     min-width: 14px;
     height: 14px;
     padding: 0 3px;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     background: var(--accent, #5090ff);
     color: #fff;
     font-size: 9px;

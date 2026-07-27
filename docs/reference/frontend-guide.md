@@ -358,7 +358,32 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 - 空状态说当前没有什么 + 引导动作
 - Loading 优先骨架
 
-## 9. 相关文档
+## 9. Visual Contract · family × depth 视觉族
+
+### 9.1 支持集与 fallback
+
+`SUPPORTED_THEME_FAMILIES = ['glass', 'material']`，`SUPPORTED_THEME_DEPTHS = ['flat', 'balanced', 'deep']`。主题包声明超出支持集的值 fallback 到 `glass` / `balanced` 并生成 `sanitizeWarnings`；不 reject 保证前向兼容。
+
+### 9.2 家族切换契约（重要）
+
+**家族运行时切换会重置组件的瞬时视觉状态**，具体表现：
+
+- `PlayToggleGlyph`、`VolumeCapsule` 使用 `{#if}{:else}` 分发到 `glass/` / `material/` 子 view。切换 family 时旧 view 被 unmount，触发 `controller.destroy()` / `animator.destroy()`，新 view 从初始态（Closed / play）mount。
+- 用户在音量胶囊 open 状态下切主题包，胶囊会瞬间收起（不是 bug）。
+- `LyricsBubble`、`FullscreenPlayer` 家族切换用 CSS 域覆盖（`:root[data-theme-family='material']` 选择器），DOM 保留，不重置瞬时状态。
+
+**为什么不做状态迁移**：跨家族转移 open/pending/dragging 等瞬时态需要 Router 持有额外状态镜像，增加复杂度且家族切换本身是低频操作。可接受的取舍。
+
+### 9.3 添加新 primitive 的判断
+
+判断某个 primitive 需要"DOM 拆分"（router + glass/material view）还是"CSS 域覆盖"：
+
+- **DOM 拆分**：有 family 特有的 tween 曲线 / 显隐层数 / 关键交互（如 WaveGlassPanel、iOS spring 与 Material fade 的动画本质不同）
+- **CSS 域覆盖**：DOM 结构和交互 family-无关，只有 chrome（背景、shadow、blur）差异
+
+不确定时优先 CSS 域覆盖，成本更低、不引入运行时状态重置。
+
+## 10. 相关文档
 
 - Rust rustdoc（`cargo doc`）：后端类型、命令、事件的接口文档
 - [internationalization.md](./internationalization.md)：国际化架构参考

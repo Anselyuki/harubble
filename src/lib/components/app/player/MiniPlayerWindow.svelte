@@ -3,6 +3,7 @@
   import { flushSync, onDestroy, onMount } from 'svelte';
   import {
     getPlayerState,
+    getPreferences,
     pausePlayback,
     playNext,
     playPrevious,
@@ -11,8 +12,14 @@
     showMainWindow,
     listenPlayerStateChanged,
     listenPlayerProgress,
+    listenPreferencesSnapshot,
   } from '$lib/features/player/miniPlayerBridge';
-  import type { PlayerState } from '$lib/types';
+  import type { AppPreferences, ColorScheme, PlayerState } from '$lib/types';
+  import {
+    applyAppThemeTokenSet,
+    resolveAppThemeTokenSet,
+  } from '$lib/themeTokens';
+  import { resolveThemeColors } from '$lib/themePresets';
   import { formatTime } from '$lib/features/player/formatUtils';
   import {
     hasPlaybackCompleted,
@@ -51,6 +58,8 @@
   let prefersReducedMotion = $state(false);
   let mediaQuery: MediaQueryList | null = null;
   let reducedMotionQuery: MediaQueryList | null = null;
+  // 本窗口自持的 theme.revision，供 preferences_snapshot 事件 reducer 单调筛选
+  let miniThemeRevision = -1;
 
   const hasSong = $derived(Boolean(playerState.songCid));
   const title = $derived(playerState.songName || 'Harubble');
@@ -81,6 +90,41 @@
     const dark = mediaQuery?.matches ?? false;
     document.documentElement.classList.toggle('dark', dark);
     document.documentElement.classList.toggle('light', !dark);
+  }
+
+  /**
+   * 单调 reducer：接收来自主窗口的 preferences_snapshot 广播并同步 Mini Player DOM 令牌。
+   *
+   * 严格按 `theme.revision` 单调递增接受快照：老事件直接丢弃。
+   * 解析 scheme（跟随系统时依赖 mediaQuery）后调用 `resolveAppThemeTokenSet` 派生
+   * 21 个全局 token，并写入本窗口 documentElement 的 CSS 变量（不带过渡动画）。
+   */
+  function applyThemePreferences(snapshot: AppPreferences): void {
+    const theme = snapshot.theme;
+    if (!theme) return;
+    const incomingRevision = theme.revision ?? 0;
+    if (incomingRevision < miniThemeRevision) return;
+    miniThemeRevision = incomingRevision;
+
+    const themeColors = resolveThemeColors({
+      presetId: theme.presetId,
+      customColors: theme.customColors,
+    });
+    const scheme = resolveScheme(theme.colorScheme);
+    document.documentElement.classList.toggle('dark', scheme === 'dark');
+    document.documentElement.classList.toggle('light', scheme !== 'dark');
+    document.documentElement.style.colorScheme =
+      scheme === 'dark' ? 'dark' : 'light';
+    const tokens = resolveAppThemeTokenSet(themeColors, scheme);
+    applyAppThemeTokenSet(tokens, { animate: false });
+  }
+
+  function resolveScheme(
+    preference: ColorScheme | undefined
+  ): 'light' | 'dark' {
+    if (preference === 'dark') return 'dark';
+    if (preference === 'light') return 'light';
+    return mediaQuery?.matches ? 'dark' : 'light';
   }
 
   function applyReducedMotion() {
@@ -196,6 +240,13 @@
         })
         .catch((_error: unknown) => {});
 
+      // 初始拉取偏好并应用主题令牌（首次进入 Mini Player 时同步 CSS 变量）
+      void getPreferences()
+        .then((prefs) => {
+          if (!lifecycle.disposed) applyThemePreferences(prefs);
+        })
+        .catch((_error: unknown) => {});
+
       void (async () => {
         const stateUnlisten = await listenPlayerStateChanged((state) => {
           playerState = state;
@@ -210,14 +261,20 @@
             duration: state.duration,
           };
         });
+        // 订阅主窗口的 preferences_snapshot 广播，跨窗口同步主题令牌
+        const prefsUnlisten = await listenPreferencesSnapshot((snapshot) => {
+          if (lifecycle.disposed) return;
+          applyThemePreferences(snapshot);
+        });
 
         if (lifecycle.disposed) {
           stateUnlisten();
           progressUnlisten();
+          prefsUnlisten();
           return;
         }
 
-        unlisteners.push(stateUnlisten, progressUnlisten);
+        unlisteners.push(stateUnlisten, progressUnlisten, prefsUnlisten);
       })().catch((_error: unknown) => {});
     }
 
@@ -399,7 +456,7 @@
     display: grid;
     place-items: center;
     overflow: hidden;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background:
       linear-gradient(135deg, rgba(var(--accent-rgb), 0.18), transparent),
       var(--bg-tertiary);
@@ -472,7 +529,7 @@
 
   .progress-slider::-webkit-slider-runnable-track {
     height: 4px;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     background: linear-gradient(
       90deg,
       var(--album-accent) var(--progress-ratio, 0%),
@@ -505,7 +562,7 @@
     display: grid;
     place-items: center;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--mini-control-bg);
     color: var(--player-control-color);
     transition: var(--motion-hover);

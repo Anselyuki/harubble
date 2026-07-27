@@ -114,7 +114,7 @@
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(0, 0, 0, 0.2);
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     outline: none;
   }
 
@@ -140,7 +140,7 @@
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     cursor: pointer;
     transition: var(--motion-hover);
   }
@@ -180,7 +180,7 @@
     width: 100%;
     padding: 8px 10px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: transparent;
     text-align: left;
     cursor: pointer;

@@ -1,7 +1,17 @@
 <script lang="ts">
+  /**
+   * WaveGlassPanel · Glass family 专属视觉 primitive（Phase 3 Step 3.2）。
+   *
+   * Siri 波纹 + dot grid + 半透明玻璃层，仅在 glass family 下被
+   * `GlassVolumeCapsuleView` 引用。Material family 的 VolumeCapsule 完全
+   * 省略此组件（Material 3 惯例不使用波纹动画）。
+   *
+   * 无业务逻辑，无 controller / animator 拆分需求。Terminal / 其它 family
+   * 若未来要引入自己的等价 primitive，应该放到各自 `family/` 目录下。
+   */
   import { onDestroy } from 'svelte';
-  import { createWaveLoop, WAVE_LAYERS } from './volume-capsule-wave';
-  import type { WaveController } from './volume-capsule-wave';
+  import { createWaveLoop, WAVE_LAYERS } from '../volume-capsule-wave';
+  import type { WaveController } from '../volume-capsule-wave';
   import {
     gsap,
     killTweens,
@@ -111,7 +121,7 @@
     pointer-events: none;
     visibility: hidden;
     overflow: hidden;
-    border-radius: 16px 16px 0 0;
+    border-radius: var(--shape-xl) var(--shape-xl) 0 0;
     z-index: 10;
     border: 1px solid var(--volume-shell-border, var(--player-shell-border));
     border-bottom: none;
@@ -134,8 +144,8 @@
         var(--volume-shell-surface, var(--player-shell-bg)) 96%,
         transparent
       );
-    backdrop-filter: blur(22px) saturate(1.75);
-    -webkit-backdrop-filter: blur(22px) saturate(1.75);
+    backdrop-filter: blur(var(--blur-lg, 22px)) saturate(1.75);
+    -webkit-backdrop-filter: blur(var(--blur-lg, 22px)) saturate(1.75);
   }
 
   .wave-glass-blur::before {

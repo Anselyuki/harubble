@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "minimal",
+    "name": "Minimal",
+    "version": "1.0.0",
+    "description": "Minimal contract fixture: 6 slots only.",
+    "author": "harubble",
+    "license": "MIT"
+  },
+  "slots": {
+    "accent": "#3b82f6",
+    "surface": "#ffffff",
+    "textPrimary": "#0f172a",
+    "textSecondary": "#64748b",
+    "tint": "#e2e8f0",
+    "danger": "#ef4444"
+  }
+}

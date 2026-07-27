@@ -68,7 +68,7 @@
     font-size: 0.8125rem;
     padding: 0.25rem 0.5rem;
     border: 1px solid var(--color-border, #d1d5db);
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;

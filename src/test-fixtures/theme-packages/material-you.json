@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "material-you",
+    "name": "Material You",
+    "version": "1.0.0",
+    "description": "Material 3 balanced palette.",
+    "author": "harubble",
+    "license": "MIT"
+  },
+  "visualContract": {
+    "family": "material",
+    "depth": "balanced"
+  },
+  "slots": {
+    "accent": "#6750a4",
+    "surface": "#fef7ff",
+    "textPrimary": "#1c1b1f",
+    "textSecondary": "#49454f",
+    "tint": "#d0bcff",
+    "danger": "#b3261e"
+  }
+}

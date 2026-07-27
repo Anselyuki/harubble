@@ -111,7 +111,7 @@
     border: none;
     cursor: pointer;
     padding: 0.25rem 0.5rem;
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
   }
 
   .clear-btn:hover {
@@ -129,7 +129,7 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.5rem;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: none;
     border: none;
     cursor: pointer;
@@ -144,7 +144,7 @@
   .history-cover {
     width: 40px;
     height: 40px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     object-fit: cover;
     flex-shrink: 0;
   }
@@ -152,7 +152,7 @@
   .history-cover-placeholder {
     width: 40px;
     height: 40px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: var(--surface-secondary, rgba(255, 255, 255, 0.06));
     flex-shrink: 0;
   }

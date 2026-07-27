@@ -159,6 +159,17 @@ macro_rules! for_each_tauri_command {
             (commands::tag_editor::resolve_tag_editor_conflict, "resolve_tag_editor_conflict", InteractiveUi, Interactive, Cooperative),
             (commands::tag_editor::export_tag_editor_registry, "export_tag_editor_registry", InteractiveUi, Interactive, Cooperative),
             (commands::tag_editor::import_tag_editor_registry, "import_tag_editor_registry", InteractiveUi, Interactive, Cooperative),
+
+            // ── ThemePackages (9 · Phase 1 MVP) ──────────────────────────────
+            (commands::theme_packages::list_theme_packages, "list_theme_packages", BackgroundIo, Interactive, Cooperative),
+            (commands::theme_packages::inspect_theme_package, "inspect_theme_package", VisualAux, Visual, LatestWins),
+            (commands::theme_packages::install_theme_package_from_file, "install_theme_package_from_file", BackgroundIo, Background, Cooperative),
+            (commands::theme_packages::install_theme_package_from_url, "install_theme_package_from_url", BackgroundIo, Background, Cooperative),
+            (commands::theme_packages::uninstall_theme_package, "uninstall_theme_package", BackgroundIo, Background, Cooperative),
+            (commands::theme_packages::set_active_theme_package, "set_active_theme_package", InteractiveUi, Interactive, LatestWins),
+            (commands::theme_packages::preview_theme_package, "preview_theme_package", VisualAux, Visual, LatestWins),
+            (commands::theme_packages::dismiss_theme_preview, "dismiss_theme_preview", InteractiveUi, Interactive, LatestWins),
+            (commands::theme_packages::export_theme_package, "export_theme_package", BackgroundIo, Background, Cooperative),
         )
     };
 }

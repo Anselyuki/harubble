@@ -89,7 +89,7 @@
     color: var(--text-tertiary);
     cursor: pointer;
     padding: 4px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -125,7 +125,7 @@
     width: 100%;
     padding: 6px 10px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: none;
     color: var(--text-secondary);
     font-family: var(--font-body);

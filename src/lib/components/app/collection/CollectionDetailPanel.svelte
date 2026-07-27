@@ -370,7 +370,7 @@
     color: var(--accent-readable-foreground);
     background: var(--accent);
     padding: 1px 8px 0;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     letter-spacing: 0.04em;
     width: fit-content;
   }
@@ -418,7 +418,7 @@
     font-size: 13px;
     font-weight: 500;
     padding: 6px 14px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     cursor: pointer;
   }
 
@@ -504,7 +504,7 @@
     color: var(--text-tertiary);
     cursor: pointer;
     padding: 4px 6px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     font-size: 12px;
     opacity: 0;
     flex-shrink: 0;

@@ -8,6 +8,7 @@
     "test": "bunx vitest run",
     "test:watch": "bunx vitest",
     "dev": "vite",
+    "dev:web": "vite --mode e2e --port 1421",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -25,7 +26,8 @@
     "check:build": "vite build",
     "check:cargo": "cargo check --workspace",
     "sort:tags": "bun scripts/sort-tag-registry.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:visual": "playwright test --project=visual"
   },
   "keywords": [],
   "author": "",

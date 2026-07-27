@@ -16,4 +16,5 @@ pub mod preferences;
 pub mod search;
 pub mod tag_editor;
 pub mod tag_registry;
+pub mod theme_packages;
 pub mod window;

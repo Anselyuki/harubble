@@ -67,6 +67,7 @@ mod tag_editor;
 mod tag_registry;
 mod tag_registry_index;
 mod theme;
+mod theme_packages;
 
 /// 桌面应用菜单栏挂载入口。
 ///

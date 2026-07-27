@@ -53,7 +53,21 @@ import {
   listLogRecords,
   getLogFileStatus,
   showMainWindow,
+  listThemePackages,
+  inspectThemePackage,
+  installThemePackageFromFile,
+  installThemePackageFromUrl,
+  uninstallThemePackage,
+  setActiveThemePackage,
+  previewThemePackage,
+  dismissThemePreview,
+  exportThemePackage,
 } from '$lib/api';
+import type {
+  AppPreferences,
+  ThemePackageDocument,
+  ThemePackageSummary,
+} from '$lib/types';
 
 // Compile-time shape contracts (these never run; tsc rejects mismatches).
 declare const _col: Collection;
@@ -69,6 +83,25 @@ assertType<() => Promise<AlbumCatalogSnapshot>>(refreshAlbumCatalog);
 assertType<
   (albumCid: string, inventoryVersion?: string | null) => Promise<AlbumDetail>
 >(refreshAlbumDetail);
+assertType<() => Promise<ThemePackageSummary[]>>(listThemePackages);
+assertType<(id: string) => Promise<ThemePackageDocument | null>>(
+  inspectThemePackage
+);
+assertType<(path: string) => Promise<ThemePackageSummary>>(
+  installThemePackageFromFile
+);
+assertType<(url: string) => Promise<ThemePackageSummary>>(
+  installThemePackageFromUrl
+);
+assertType<(id: string) => Promise<void>>(uninstallThemePackage);
+assertType<
+  (id: string | null, expectedRevision: number) => Promise<AppPreferences>
+>(setActiveThemePackage);
+assertType<(id: string) => Promise<ThemePackageDocument>>(previewThemePackage);
+assertType<() => Promise<void>>(dismissThemePreview);
+assertType<(id: string, outputPath: string) => Promise<void>>(
+  exportThemePackage
+);
 
 // ─── Collection ───────────────────────────────────────────────────────────────
 
@@ -244,5 +277,37 @@ describe('IPC contract — Logging domain', () => {
 describe('IPC contract — Window domain', () => {
   it('showMainWindow is a callable function', () => {
     expect(typeof showMainWindow).toBe('function');
+  });
+});
+
+// ─── Theme Packages ───────────────────────────────────────────────────────────
+
+describe('IPC contract — Theme Packages domain', () => {
+  it('listThemePackages is a callable function', () => {
+    expect(typeof listThemePackages).toBe('function');
+  });
+  it('inspectThemePackage is a callable function', () => {
+    expect(typeof inspectThemePackage).toBe('function');
+  });
+  it('installThemePackageFromFile is a callable function', () => {
+    expect(typeof installThemePackageFromFile).toBe('function');
+  });
+  it('installThemePackageFromUrl is a callable function', () => {
+    expect(typeof installThemePackageFromUrl).toBe('function');
+  });
+  it('uninstallThemePackage is a callable function', () => {
+    expect(typeof uninstallThemePackage).toBe('function');
+  });
+  it('setActiveThemePackage is a callable function', () => {
+    expect(typeof setActiveThemePackage).toBe('function');
+  });
+  it('previewThemePackage is a callable function', () => {
+    expect(typeof previewThemePackage).toBe('function');
+  });
+  it('dismissThemePreview is a callable function', () => {
+    expect(typeof dismissThemePreview).toBe('function');
+  });
+  it('exportThemePackage is a callable function', () => {
+    expect(typeof exportThemePackage).toBe('function');
   });
 });

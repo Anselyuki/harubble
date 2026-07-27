@@ -1832,7 +1832,7 @@
     justify-content: center;
     gap: 5px;
     border: 1px solid rgba(128, 128, 128, 0.15);
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     background: rgba(128, 128, 128, 0.08);
     overflow: hidden;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
@@ -1870,7 +1870,7 @@
     width: 7px;
     height: 7px;
     flex: 0 0 auto;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     background: rgba(128, 128, 128, 0.7);
     box-shadow:
       0 0 0 1px rgba(255, 255, 255, 0.38),
@@ -1975,7 +1975,7 @@
     font-weight: 600;
     line-height: 1;
     padding: 3px 7px;
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     flex-shrink: 0;
   }
 
@@ -2082,7 +2082,7 @@
     box-shadow:
       0 0 0 2px color-mix(in srgb, var(--surface-highlight) 86%, white 14%),
       0 0 0 4px rgba(var(--album-accent-rgb), 0.28);
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
   }
 
   .icon-button:disabled,

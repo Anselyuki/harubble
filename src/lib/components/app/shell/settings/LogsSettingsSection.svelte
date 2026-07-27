@@ -108,7 +108,7 @@
     max-height: 240px;
     overflow-y: auto;
     border: 1px solid var(--sheet-border);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--sheet-row-bg);
     padding: 8px;
   }
@@ -154,7 +154,7 @@
   .settings-empty-state,
   .settings-error-state {
     border: 1px solid var(--sheet-border);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--sheet-row-bg);
     padding: 14px 12px;
     color: var(--text-secondary);

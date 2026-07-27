@@ -38,6 +38,8 @@ import type {
   ConflictResolution,
   AudioFileMetadata,
   RepeatMode,
+  ThemePackageDocument,
+  ThemePackageSummary,
 } from './types';
 
 const CACHE_KEY_ALBUM_DETAIL = 'album_detail:';
@@ -592,4 +594,121 @@ export async function importPreferences(
   inputPath: string
 ): Promise<AppPreferences> {
   return invoke<AppPreferences>('import_preferences', { inputPath });
+}
+
+// ---------------------------------------------------------------------------
+// Theme package commands (Phase 1 MVP)
+// ---------------------------------------------------------------------------
+
+/**
+ * 列出所有已安装的主题包摘要。
+ *
+ * 后端按 id 字典序返回；返回值仅包含 manifest 精简字段。
+ * 完整 slots/variants 需通过 `inspectThemePackage(id)` 按需读取。
+ */
+export async function listThemePackages(): Promise<ThemePackageSummary[]> {
+  return invoke<ThemePackageSummary[]>('list_theme_packages');
+}
+
+/**
+ * 读取指定主题包的完整文档（含 slots/variants/warnings）。
+ *
+ * 返回 `null` 表示 id 不存在于 committed 目录。
+ */
+export async function inspectThemePackage(
+  id: string
+): Promise<ThemePackageDocument | null> {
+  return invoke<ThemePackageDocument | null>('inspect_theme_package', { id });
+}
+
+/**
+ * 从本地文件路径安装主题包。
+ *
+ * 入参 `path` 必须是绝对路径，指向可读的 `.json` 文件（≤ 512 KiB）。
+ * 后端会走 sanitize + hash + atomic commit 流程。
+ * 若同 id 已存在则覆盖，返回值为新安装的摘要。
+ */
+export async function installThemePackageFromFile(
+  path: string
+): Promise<ThemePackageSummary> {
+  return invoke<ThemePackageSummary>('install_theme_package_from_file', {
+    path,
+  });
+}
+
+/**
+ * 从远程 https URL 下载并安装主题包。
+ *
+ * 后端做全套 SSRF 防护：仅接受 https（端口 443）、拒绝私有 / loopback / CGNAT / multicast /
+ * 保留段 IP、禁用重定向、总耗时 ≤ 15s、大小 ≤ 512 KiB、Content-Type 必须为 JSON。
+ * 下载成功后走与 `installThemePackageFromFile` 相同的 sanitize 流水线。
+ */
+export async function installThemePackageFromUrl(
+  url: string
+): Promise<ThemePackageSummary> {
+  return invoke<ThemePackageSummary>('install_theme_package_from_url', {
+    url,
+  });
+}
+
+/**
+ * 卸载指定主题包（原子搬到 pending-delete，启动扫描时清理）。
+ *
+ * 对不存在的 id 幂等成功。若被卸载的 id 恰好是当前 active_package_id，
+ * 后端会同步清空激活状态并广播 `preferences_snapshot` 事件。
+ */
+export async function uninstallThemePackage(id: string): Promise<void> {
+  return invoke<void>('uninstall_theme_package', { id });
+}
+
+/**
+ * 通过 CAS 激活指定主题包（或传 null 清空激活状态）。
+ *
+ * `expectedRevision` 为客户端上次读取到的 `theme.revision`，后端在写锁内比对：
+ * 匹配 → 更新 activePackageId 并 revision+1，返回新快照；
+ * 不匹配 → 抛出 `RevisionMismatch`，前端应重新 getPreferences 后再决定。
+ *
+ * 成功路径会通过 `preferences_snapshot` 事件广播到所有窗口（含 Mini Player）。
+ */
+export async function setActiveThemePackage(
+  id: string | null,
+  expectedRevision: number
+): Promise<AppPreferences> {
+  return invoke<AppPreferences>('set_active_theme_package', {
+    id,
+    expectedRevision,
+  });
+}
+
+/**
+ * 进入指定主题包的预览态（内存中，不持久化）。
+ *
+ * 返回主题包完整文档；前端应基于其派生 token 应用到 DOM，
+ * 但不写 preferences。调用 `dismissThemePreview` 恢复到 committed 态。
+ */
+export async function previewThemePackage(
+  id: string
+): Promise<ThemePackageDocument> {
+  return invoke<ThemePackageDocument>('preview_theme_package', { id });
+}
+
+/**
+ * 关闭主题包预览态，恢复到 committed / preferences 派生。
+ *
+ * 对未处于预览态的调用幂等成功。
+ */
+export async function dismissThemePreview(): Promise<void> {
+  return invoke<void>('dismiss_theme_preview');
+}
+
+/**
+ * 将指定主题包的原始 JSON 导出到本地路径。
+ *
+ * `outputPath` 必须为绝对路径；父目录必须存在。目标已存在时被覆盖。
+ */
+export async function exportThemePackage(
+  id: string,
+  outputPath: string
+): Promise<void> {
+  return invoke<void>('export_theme_package', { id, outputPath });
 }

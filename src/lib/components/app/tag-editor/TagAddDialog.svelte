@@ -394,7 +394,7 @@
     align-items: center;
     justify-content: center;
     border: 1px dashed var(--color-border, #d1d5db);
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     background: transparent;
     cursor: pointer;
     padding: 0.125rem 0.5rem;
@@ -462,7 +462,7 @@
   .tab-toggle {
     position: relative;
     display: flex;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: var(--color-primary, #6366f1);
     padding: 2px;
     gap: 0;
@@ -474,7 +474,7 @@
     left: 2px;
     width: calc(50% - 2px);
     height: calc(100% - 4px);
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     background: var(--bg-popover, white);
     pointer-events: none;
   }
@@ -488,7 +488,7 @@
     color: white;
     background: none;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     cursor: pointer;
     font-family: var(--font-body);
     line-height: 1.4;
@@ -519,7 +519,7 @@
     font-size: 0.75rem;
     background: transparent;
     border: 1px solid var(--color-primary, #6366f1);
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     color: var(--color-primary, #6366f1);
     font-family: var(--font-body);
   }

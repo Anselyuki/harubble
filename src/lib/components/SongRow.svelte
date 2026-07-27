@@ -358,7 +358,7 @@
   .song-cover-thumb {
     width: 36px;
     height: 36px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     object-fit: cover;
     flex-shrink: 0;
   }
@@ -395,7 +395,7 @@
     font-size: 11px;
     font-weight: 500;
     padding: 1px 6px;
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     background: rgba(var(--accent-rgb), 0.08);
     color: var(--text-secondary);
     white-space: nowrap;
@@ -458,7 +458,7 @@
     display: inline-flex;
     align-items: center;
     padding: 3px 8px;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     font-size: 11px;
     line-height: 1;
     color: var(--accent);

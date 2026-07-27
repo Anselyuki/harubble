@@ -116,7 +116,7 @@
 
   .dimension-chip {
     padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     border: 1px solid var(--text-tertiary, rgba(255, 255, 255, 0.2));
     background: none;
     color: var(--text-secondary, rgba(255, 255, 255, 0.6));
