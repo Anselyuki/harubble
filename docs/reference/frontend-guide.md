@@ -409,6 +409,25 @@ Phase 3.2→3.3 opt-in→opt-out 切换的 legacy 用户可能在关闭 UI 期�
 2. **全局回滚路径**：本 flag 是**客户端本地开关**，无远端 kill switch。回滚必须发版：把 `featureFlagEnabled` 的默认值从 `!== '0'` 改回 `=== '1'`（回到 opt-in），或临时把 `<section>` 整段注释掉。
 3. **结束灰度的判据**：连续 2 个 minor 版本内主题包相关支持工单 ≤ 1；主题包 preview→apply 转化率 ≥ 30%；`RevisionMismatch` 错误率 ≤ 0.1%。三项同时满足才移除 flag。
 
+### 9.5 Phase 4 · CSS 覆盖层（未启动 · 触发式）
+
+主方案 Phase 4 引入用户自定义 CSS 覆盖层（`.hbtheme` 打包含 CSS + assets）。**当前未启动**，因为它是**触发式**而非里程碑式，需要以下条件同时满足才应开工：
+
+**触发条件**
+
+- 用户社区提出"完全改 layout / 换字体 / 加自定义装饰"的呼声 ≥ 5 个 GitHub issue 或社区讨论线索
+- Phase 3.3 灰度稳定至少 2 个 minor 版本
+
+**必需前置（在动工前完成）**
+
+- 完整 CSP 策略：`sandbox` iframe 隔离 CSS 执行环境 + 禁用 `unsafe-eval` 阻止 `expression()` / `@import url()` 攻击面
+- ZIP 威胁模型：zipbomb 大小限制、路径穿越（`..` / 符号链接）、文件数量上限、magic bytes 校验
+- Assets 白名单：仅允许字体（woff2 / ttf）与图片（png / webp / svg 需 sanitize），禁 JS / HTML / iframe
+
+**默认立场**：不主动实现。触发条件与前置项其中一项未达标，就"沿用可选定位"（迁移方案原文）。当前 Phase 0-3 的 6 slot + 5 组 token + family × depth 已覆盖 95% 场景，尚未收到社区呼声。
+
+**首次评估节点**：Phase 3.3 opt-out flag 稳定 3 个 minor 版本后。
+
 ## 10. 相关文档
 
 - Rust rustdoc（`cargo doc`）：后端类型、命令、事件的接口文档
