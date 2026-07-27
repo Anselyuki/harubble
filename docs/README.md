@@ -73,7 +73,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 #### [frontend-guide.md](./reference/frontend-guide.md)
 
-前端架构、组件约定、域边界、运行时架构、UI 系统（设计 token、字体方案、动效规则）、国际化、交互模式与内容规范。
+前端架构、组件约定、域边界、运行时架构、UI 系统（设计 token、字体方案、动效规则）、Visual Contract（family × depth 视觉族 · §9）、`theme_packages_v1` 灰度状态与运维清单（§9.4）、Phase 4 CSS 覆盖层触发条件（§9.5）、国际化、交互模式与内容规范。
 
 #### [resource-update.md](./reference/resource-update.md)
 

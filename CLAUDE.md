@@ -54,6 +54,16 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
   - `collection/`：合集（CollectionDetailPanel、CollectionFormDialog、AddToCollectionMenu 等）
   - `tag-editor/`：标签编辑器（TagEditorView、TagEditorPanel、TagEditorConflict\* 等）
   - `shell/`：应用壳层（TopToolbar、AppSideSheets、SettingsSheet、DownloadTasksSheet）
+- **主题包系统**（Phase 0-3 已落地）：
+  - `src-tauri/src/theme_packages/`：service / store / sanitizer / downloader / types，主题包三态磁盘管理（committed / stage / pending-delete）+ SSRF 白名单 + CSS 黑名单 + 真实 SHA-256 sidecar
+  - `src-tauri/src/commands/theme_packages.rs`：9 条 IPC command（list / inspect / install-file / install-url / uninstall / set-active / preview / dismiss / export）
+  - `src-tauri/src/preferences.rs`：v1 → v2 schema migration（追加 `active_package_id` + `revision` CAS 字段）
+  - `src/lib/themeTokens.ts` / `src/lib/themePresets.ts`：`deriveGlobalTokensFromSlots` 派生函数 + SYSTEM_LIGHT/DARK_SLOTS
+  - `src/lib/design/gsap.ts`：`applyMotionOverride` / `applyShapeOverride` / `applyDensityOverride` / `applyElevationOverride` / `applyBlurOverride` 五组运行时 token 覆盖入口
+  - `src/lib/features/shell/themePackageManager.svelte.ts`：主题包状态机 + preferences_snapshot 订阅 + CAS 循环 + 悬挂 activePackageId 自愈
+  - `src/lib/features/shell/visualContract.svelte.ts`：family × depth 状态 + resolve + `data-theme-family` / `data-theme-depth` HTML 属性写入
+  - `src/lib/features/player/controllers/`：`playToggleController` / `volumeCapsuleController` 承担业务逻辑，view 层选择 family-specific animator
+  - `src/lib/components/app/player/glass/` / `material/`：primitive 视觉族拆分（PlayToggleGlyph、VolumeCapsule 走 Router 分发；WaveGlassPanel 仅 glass 使用）
 
 ## 真相来源
 
@@ -76,7 +86,19 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
   - `ios-in`：ease-in（`0.42, 0, 1, 1`）
   - `ios-out`：ease-out（`0, 0, 0.58, 1`）
   - `ios-spring`：弹性出场（`0.22, 0.61, 0.36, 1`），用于主要的位移和布局动画
-  - 不要使用 GSAP 内置的 `power2.out` / `power3.out` 等曲线，统一使用上述 iOS 曲线
+  - 不要使用 GSAP 内置的 `power2.out` / `power3.out` 等曲线，统一使用上述 iOS 曲线（Material family view 也遵循此约束）
+- **设计 token 五组**（Phase 2 已注册）：使用 CSS 变量而非硬编码：
+  - **shape**：`--shape-xs/sm/md/lg/xl/2xl/pill/circle`（`border-radius` 走 var）
+  - **density**：`--density-xs/sm/md/lg/xl`（间距 / 内边距）
+  - **elevation**：`--elevation-none/xs/sm/md/lg/xl`（`box-shadow` 完整字符串）
+  - **blur**：`--blur-sm/md/lg/xl`（`backdrop-filter` 半径）
+  - **motion**：`--motion-fast/base/slow/page` 等（已由 gsap.ts MOTION 常量镜像同步）
+  - 新组件的样式默认从这些变量开始；非标准尺寸（如 7px / 22px）需组件专属时可保留硬编码，但需注释理由
+- **视觉族切换**（Phase 3 已落地）：新增 primitive 若需支持 family × depth 差异，两种模式二选一：
+  - **DOM 拆分**：视觉本质不同（如 iOS spring vs Material fade），在 `src/lib/components/app/player/{glass,material}/` 建对应 view；Router 组件保留原路径读 `getVisualContract().family` 分发；业务逻辑收敛到 `src/lib/features/player/controllers/` 由 view 共享
+  - **CSS 域覆盖**：DOM 结构 / 交互 family-无关，只有 chrome（背景 / shadow / blur）差异，在 `src/app.css` 用 `:root[data-theme-family='material']` / `[data-theme-family='terminal']` 域选择器覆盖
+  - 详细决策矩阵与家族切换视觉状态重置契约见 `docs/reference/frontend-guide.md` §9.3
+- **主题包 opt-out flag**：`theme_packages_v1` localStorage 仅控制设置页 UI 显隐（`localStorage['theme_packages_v1'] === '0'` 才隐藏），**后端 IPC 与 preferences v2 schema 始终生效**。灰度运维清单见 `docs/reference/frontend-guide.md` §9.4
 
 ### 后端与文档
 
