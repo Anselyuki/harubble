@@ -198,9 +198,21 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
   let installedPackages = $state<ThemePackageSummary[]>([]);
   let latestError = $state<string | null>(null);
   let unlistenSnapshot: (() => void) | null = null;
+  // 订阅纪元号：startSubscription 入口 ++epoch 后异步 await deps.listen；
+  // 若 await 期间 stopSubscription 再次 ++epoch，async continuation 检测到
+  // epoch mismatch 会 unlisten 刚 resolve 的 fn，防止订阅泄漏与幻影事件。
+  let subscriptionEpoch = 0;
 
   /**
    * 从后端拉取最新 preferences 与 packages 列表（初始化 / 手动 rebase 用）。
+   *
+   * # 悬挂 activePackageId 自愈
+   *
+   * 若 `preferences.theme.activePackageId` 引用的包已被卸载或未导入（例如
+   * Phase 3.2→3.3 flag opt-in→opt-out 切换后的用户，或用户在关闭 UI 期间通过
+   * 其他手段修改了 preferences），静默清空 activePackageId 避免应用启动时
+   * 尝试激活不存在的包导致的错误。清空通过 setActive(null) 走后端 CAS 流程，
+   * 保证与其它窗口的一致性。
    */
   async function hydrate(): Promise<void> {
     try {
@@ -211,8 +223,59 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
       applySnapshot(prefs, 'startup');
       installedPackages = packages;
       latestError = null;
+      await selfHealDanglingActive(prefs, packages);
     } catch (err) {
       latestError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /**
+   * 悬挂 activePackageId 自愈：
+   * - 成功路径立即以返回 snapshot 更新本地态（不依赖后端事件广播——
+   *   RevisionMismatch 是错误路径，后端不广播 preferences_snapshot）
+   * - CAS 冲突路径 bounded 重试一次：重新 getPreferences 拿最新 revision；
+   *   若他人已把 active 改成合法值则跳过；仍冲突则记录警告
+   */
+  async function selfHealDanglingActive(
+    prefs: AppPreferences,
+    packages: ThemePackageSummary[]
+  ): Promise<void> {
+    const active = prefs.theme?.activePackageId ?? null;
+    if (!active || packages.some((p) => p.id === active)) return;
+
+    async function tryClear(expectedRevision: number): Promise<boolean> {
+      try {
+        const snap = await setActiveThemePackage(null, expectedRevision);
+        applySnapshot(snap, 'command');
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    if (await tryClear(prefs.theme?.revision ?? 0)) return;
+
+    try {
+      const [latestPrefs, latestPackages] = await Promise.all([
+        getPreferences(),
+        listThemePackages(),
+      ]);
+      installedPackages = latestPackages;
+      applySnapshot(latestPrefs, 'startup');
+      const latestActive = latestPrefs.theme?.activePackageId ?? null;
+      if (!latestActive || latestPackages.some((p) => p.id === latestActive))
+        return;
+      const ok = await tryClear(latestPrefs.theme?.revision ?? 0);
+      if (!ok) {
+        console.warn(
+          '[themePackageManager] dangling activePackageId self-heal failed after retry; will retry on next hydrate'
+        );
+      }
+    } catch (err) {
+      console.warn(
+        '[themePackageManager] dangling self-heal retry failed:',
+        err
+      );
     }
   }
 
@@ -378,21 +441,39 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    * 启动 preferences_snapshot 事件订阅，并返回释放函数。
    *
    * 幂等：重复调用会先释放旧订阅再建立新订阅。
+   *
+   * # Pending-listen 竞态防护
+   *
+   * `deps.listen` 是异步的：await 期间用户可能通过 stopSubscription 关闭订阅。
+   * 用 `subscriptionEpoch` 计数器捕获入口时刻的纪元号，await 完成后比对：
+   * - 纪元一致：正常写入 unlistenSnapshot
+   * - 纪元过期：说明 stop 已发生，主动 unlisten 刚 resolve 的 fn 后返回
+   *
+   * 避免"start 起飞、stop 到达、listen resolve、订阅泄漏"的场景。
    */
   async function startSubscription(): Promise<void> {
     if (unlistenSnapshot) {
       unlistenSnapshot();
       unlistenSnapshot = null;
     }
-    unlistenSnapshot = await deps.listen<AppPreferences>(
+    const myEpoch = ++subscriptionEpoch;
+    const unlisten = await deps.listen<AppPreferences>(
       'preferences_snapshot',
       (event) => {
         applySnapshot(event.payload, 'event');
       }
     );
+    if (myEpoch !== subscriptionEpoch) {
+      // stopSubscription 已经发生（epoch 递增过），释放刚 resolve 的 fn 后放弃
+      unlisten();
+      return;
+    }
+    unlistenSnapshot = unlisten;
   }
 
   function stopSubscription(): void {
+    // 递增 epoch 使 in-flight start 的 continuation 作废
+    subscriptionEpoch += 1;
     if (unlistenSnapshot) {
       unlistenSnapshot();
       unlistenSnapshot = null;

@@ -9,8 +9,8 @@
  * - 全部 6 slot 均可被 `deriveGlobalTokensFromSlots` 解析并生成完整 21 token
  * - variants 稀疏语义验证（midnight-glass 有 dark 覆盖）
  *
- * 灰度上线策略：Phase 1 W4 内测通过后，将 `theme_packages_v1` flag
- * 从 opt-in 转 opt-out；4 个 minor 版本后移除 flag。
+ * 灰度上线策略：Phase 3.3 完成时 `theme_packages_v1` flag 从 opt-in 转 opt-out
+ *（当前状态）；再稳定 4 个 minor 版本后移除 flag。
  */
 import { describe, it, expect } from 'vitest';
 import type { ThemePackageDocument, ThemeColorSlots } from '$lib/types';

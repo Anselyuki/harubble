@@ -362,7 +362,11 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 
 ### 9.1 支持集与 fallback
 
-`SUPPORTED_THEME_FAMILIES = ['glass', 'material']`，`SUPPORTED_THEME_DEPTHS = ['flat', 'balanced', 'deep']`。主题包声明超出支持集的值 fallback 到 `glass` / `balanced` 并生成 `sanitizeWarnings`；不 reject 保证前向兼容。
+`SUPPORTED_THEME_FAMILIES = ['glass', 'material', 'terminal']`，`SUPPORTED_THEME_DEPTHS = ['flat', 'balanced', 'deep']`。主题包声明超出支持集的值 fallback 到 `glass` / `balanced` 并生成 `sanitizeWarnings`；不 reject 保证前向兼容。
+
+- **glass**：iOS 液态玻璃（默认族，视觉零变化）
+- **material**：Material 3 elevation + emphasized easing
+- **terminal**：monochrome + 直角 + 无光晕，Router 复用 Material view，通过 `:root[data-theme-family='terminal']` CSS baseline 把 shape/elevation/blur token 全部归零实现风格切换
 
 ### 9.2 家族切换契约（重要）
 
@@ -382,6 +386,28 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 - **CSS 域覆盖**：DOM 结构和交互 family-无关，只有 chrome（背景、shadow、blur）差异
 
 不确定时优先 CSS 域覆盖，成本更低、不引入运行时状态重置。
+
+### 9.4 灰度上线状态（`theme_packages_v1` flag）
+
+主题包库 UI（`ThemePackageLibrarySection`）由 localStorage flag `theme_packages_v1` 控制显隐：
+
+- **Phase 1–3.2**：opt-in（`localStorage['theme_packages_v1'] === '1'` 才显示）
+- **Phase 3.3 起（当前）**：**opt-out**（默认显示；`localStorage['theme_packages_v1'] === '0'` 隐藏）
+- 稳定 4 个 minor 版本后移除 flag 检查
+
+后端 IPC（`list_theme_packages` 等 9 条命令）与 preferences v2 schema 不受此 flag 控制，始终生效。flag 只是设置页 UI 入口的最后一道回退开关。
+
+#### 悬挂 activePackageId 自愈
+
+Phase 3.2→3.3 opt-in→opt-out 切换的 legacy 用户可能在关闭 UI 期间导入过主题包并留下 `preferences.theme.activePackageId`。翻转 flag 后 UI 恢复显示，若该包被卸载或未导入，会触发悬挂引用。
+
+`themePackageManager.hydrate()` 在启动时校验 activePackageId 是否在 `installedPackages` 列表内；不在则通过 `setActiveThemePackage(null)` CAS 清空。用户体感 = "首次打开设置页时主题静默回到内置 preset"，无需手工介入。
+
+#### 运维排查清单
+
+1. **单用户状态排查**：让用户在浏览器 devtools 执行 `localStorage.getItem('theme_packages_v1')`。返回 `null` = opt-out 默认启用；返回 `'1'` = 显式启用（legacy opt-in 用户）；返回 `'0'` = 显式禁用。
+2. **全局回滚路径**：本 flag 是**客户端本地开关**，无远端 kill switch。回滚必须发版：把 `featureFlagEnabled` 的默认值从 `!== '0'` 改回 `=== '1'`（回到 opt-in），或临时把 `<section>` 整段注释掉。
+3. **结束灰度的判据**：连续 2 个 minor 版本内主题包相关支持工单 ≤ 1；主题包 preview→apply 转化率 ≥ 30%；`RevisionMismatch` 错误率 ≤ 0.1%。三项同时满足才移除 flag。
 
 ## 10. 相关文档
 

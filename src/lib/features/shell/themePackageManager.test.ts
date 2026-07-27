@@ -109,4 +109,29 @@ describe('themePackageManager reducer 单调 revision', () => {
     // 再 stop 不应报错
     mgr.stopSubscription();
   });
+
+  it('startSubscription pending 期间 stopSubscription 会作废 in-flight listen（epoch 竞态）', async () => {
+    const unlisten = vi.fn();
+    // 手动挂起 listen 的 resolve，模拟 await pending
+    let resolveListen: (fn: () => void) => void = () => {};
+    const listen = vi.fn(
+      () =>
+        new Promise<() => void>((r) => {
+          resolveListen = r;
+        })
+    );
+    const mgr = createThemePackageManager({ listen: listen as any });
+    const startPromise = mgr.startSubscription();
+    expect(listen).toHaveBeenCalledTimes(1);
+    // 在 listen resolve 前，用户点隐藏 → stopSubscription
+    mgr.stopSubscription();
+    // 现在 listen resolve
+    resolveListen(unlisten);
+    await startPromise;
+    // 关键断言：epoch 检测生效，主动 unlisten 了刚 resolve 的 fn
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    // 再次 stopSubscription 不应重复 unlisten（订阅从未真正安装到 manager 上）
+    mgr.stopSubscription();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
 });

@@ -1,9 +1,15 @@
 <script lang="ts">
   /**
-   * 主题包库 UI（Phase 1 Step 1.g）。
+   * 主题包库 UI（Phase 1 Step 1.g，灰度阶段变更）。
    *
    * 提供已安装主题包的列表、导入按钮和 preview/apply/dismiss/uninstall 交互。
-   * 通过 feature flag `theme_packages_v1` 控制显隐（默认关闭）。
+   *
+   * # Feature flag `theme_packages_v1` 生命周期
+   *
+   * - Phase 1-3.2 期间：opt-in 语义，`localStorage['theme_packages_v1'] === '1'` 才显示
+   * - **Phase 3.3 完成后（当前）**：opt-out 语义，默认显示；用户可通过设置
+   *   `localStorage['theme_packages_v1'] = '0'` 隐藏（用于遇到问题时临时回退）
+   * - 灰度稳定 N 个 minor 版本后：移除 flag 检查，永远显示
    *
    * 状态管理由 `themePackageManager` 完成，本组件仅负责视图和用户操作。
    */
@@ -21,10 +27,37 @@
   let urlInput = $state('');
   let busyId = $state<string | null>(null);
 
-  const featureFlagEnabled = $derived(
-    typeof window !== 'undefined' &&
-      window.localStorage?.getItem('theme_packages_v1') === '1'
-  );
+  // Phase 3.3+ 灰度：opt-out 语义。默认启用；用户可通过 localStorage 设 '0' 显式禁用。
+  // 注意：localStorage 读不是 Svelte 反应依赖，用 $state 保存快照；toggle 时同步更新
+  // state + storage 双写，避免依赖 reload 才能感知 flag 变化。
+  function readInitialFlag(): boolean {
+    if (typeof window === 'undefined') return true;
+    try {
+      return window.localStorage.getItem('theme_packages_v1') !== '0';
+    } catch {
+      // 沙盒 iframe / 严格隐私模式 / 禁用第三方存储时抛 SecurityError
+      return true;
+    }
+  }
+
+  let featureFlagEnabled = $state(readInitialFlag());
+
+  function setFeatureFlag(enabled: boolean): void {
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem('theme_packages_v1', enabled ? '1' : '0');
+      } catch {
+        /* SecurityError：无 localStorage 访问权限，仍更新 state 以让本会话生效 */
+      }
+    }
+    if (enabled && !featureFlagEnabled) {
+      void manager.hydrate();
+      void manager.startSubscription();
+    } else if (!enabled && featureFlagEnabled) {
+      manager.stopSubscription();
+    }
+    featureFlagEnabled = enabled;
+  }
 
   onMount(() => {
     if (!featureFlagEnabled) return;
@@ -134,9 +167,17 @@
     <header class="section-header">
       <h3 class="section-title">主题包库</h3>
       <p class="section-hint">
-        Phase 1 MVP · feature flag <code>theme_packages_v1</code>。导入本地 JSON
-        主题包，切换整体外观。
+        导入 JSON 主题包切换配色 / motion / shape / density / elevation / blur
+        与视觉族。
       </p>
+      <button
+        type="button"
+        class="btn btn-tertiary section-disable"
+        onclick={() => setFeatureFlag(false)}
+        data-testid="theme-package-library-disable"
+      >
+        隐藏主题包库
+      </button>
     </header>
 
     <div class="toolbar">
@@ -265,6 +306,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    position: relative;
   }
   .section-title {
     font-size: 1rem;
@@ -277,11 +319,17 @@
     color: var(--text-secondary);
     margin: 0;
   }
-  .section-hint code {
-    background-color: var(--bg-tertiary);
-    padding: 2px 6px;
-    border-radius: var(--shape-xs);
-    font-family: var(--font-mono);
+  .section-disable {
+    align-self: flex-start;
+    margin-top: 4px;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    background: transparent;
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+  }
+  .section-disable:hover {
+    color: var(--text-secondary);
   }
   .url-import {
     display: flex;
