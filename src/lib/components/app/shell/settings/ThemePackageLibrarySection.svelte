@@ -18,6 +18,35 @@
   import { listen } from '@tauri-apps/api/event';
   import { createThemePackageManager } from '$lib/features/shell/themePackageManager.svelte';
   import type { ThemePackageSummary } from '$lib/types';
+  import * as m from '$lib/paraglide/messages.js';
+  import { localeState } from '$lib/i18n';
+
+  interface Props {
+    sectionTitle: string;
+    sectionDescription: string;
+  }
+
+  let { sectionTitle, sectionDescription }: Props = $props();
+
+  // 集中收敛 paraglide 文案入口，显式声明 locale 依赖，locale 切换时全部 label 重求。
+  // 参考 SidebarNav / SettingsSheet 的标准模式（void localeState.current 放在
+  // $derived.by 内部才生效，放模块顶层等价 dead code）。
+  const labels = $derived.by(() => {
+    void localeState.current;
+    return {
+      disable: m.settings_theme_packages_disable(),
+      importFile: m.settings_theme_packages_import_file(),
+      importUrl: m.settings_theme_packages_import_url(),
+      urlPlaceholder: m.settings_theme_packages_url_placeholder(),
+      preview: m.settings_theme_packages_preview(),
+      apply: m.settings_theme_packages_apply(),
+      dismissPreview: m.settings_theme_packages_dismiss_preview(),
+      clearActive: m.settings_theme_packages_clear_active(),
+      uninstall: m.settings_theme_packages_uninstall(),
+      empty: m.settings_theme_packages_empty(),
+      activeBadge: m.settings_theme_packages_active_badge(),
+    };
+  });
 
   const manager = createThemePackageManager({ listen });
   let importError = $state<string | null>(null);
@@ -66,6 +95,11 @@
   });
 
   onDestroy(() => {
+    // 如果用户在预览态下关闭了设置抽屉，主动 dismiss 避免视觉残留。
+    // manager.dismissPreview 内部若无 previewingId 会 no-op。
+    if (manager.previewingId) {
+      void manager.dismissPreview();
+    }
     manager.stopSubscription();
   });
 
@@ -161,24 +195,22 @@
 
 {#if featureFlagEnabled}
   <section
-    class="theme-package-section"
+    class="sheet-section settings-section theme-package-section"
     data-testid="theme-package-library-section"
   >
-    <header class="section-header">
-      <h3 class="section-title">主题包库</h3>
-      <p class="section-hint">
-        导入 JSON 主题包切换配色 / motion / shape / density / elevation / blur
-        与视觉族。
-      </p>
+    <div class="settings-section-heading">
+      <h3>{sectionTitle}</h3>
       <button
         type="button"
         class="btn btn-tertiary section-disable"
         onclick={() => setFeatureFlag(false)}
         data-testid="theme-package-library-disable"
+        title={labels.disable}
       >
-        隐藏主题包库
+        {labels.disable}
       </button>
-    </header>
+    </div>
+    <p class="settings-section-description">{sectionDescription}</p>
 
     <div class="toolbar">
       <button
@@ -188,7 +220,7 @@
         disabled={importing}
         data-testid="theme-package-import"
       >
-        {importing ? '导入中…' : '导入主题包 (.json)'}
+        {labels.importFile}
       </button>
       {#if manager.activePackageId}
         <button
@@ -197,7 +229,7 @@
           onclick={handleClearActive}
           disabled={busyId === '__clear__'}
         >
-          清空激活状态
+          {labels.clearActive}
         </button>
       {/if}
       {#if manager.previewingId}
@@ -207,7 +239,7 @@
           onclick={handleDismissPreview}
           data-testid="theme-package-dismiss-preview"
         >
-          退出预览（{manager.previewingId}）
+          {labels.dismissPreview}（{manager.previewingId}）
         </button>
       {/if}
     </div>
@@ -216,7 +248,7 @@
       <input
         type="url"
         class="url-input"
-        placeholder="https://example.com/theme.json"
+        placeholder={labels.urlPlaceholder}
         bind:value={urlInput}
         disabled={importingUrl}
         data-testid="theme-package-url-input"
@@ -228,15 +260,15 @@
         disabled={importingUrl || urlInput.trim() === ''}
         data-testid="theme-package-url-submit"
       >
-        {importingUrl ? '下载中…' : '从 URL 导入'}
+        {labels.importUrl}
       </button>
     </div>
 
     {#if importError}
-      <p class="error-banner" role="alert">导入失败：{importError}</p>
+      <p class="error-banner" role="alert">{importError}</p>
     {/if}
     {#if actionError}
-      <p class="error-banner" role="alert">操作失败：{actionError}</p>
+      <p class="error-banner" role="alert">{actionError}</p>
     {/if}
 
     <ul class="package-list">
@@ -259,7 +291,7 @@
               onclick={() => handlePreview(pkg)}
               disabled={busyId === pkg.id}
             >
-              预览
+              {labels.preview}
             </button>
             <button
               type="button"
@@ -267,7 +299,9 @@
               onclick={() => handleApply(pkg)}
               disabled={busyId === pkg.id || manager.activePackageId === pkg.id}
             >
-              {manager.activePackageId === pkg.id ? '当前激活' : '应用'}
+              {manager.activePackageId === pkg.id
+                ? labels.activeBadge
+                : labels.apply}
             </button>
             <button
               type="button"
@@ -275,12 +309,12 @@
               onclick={() => handleUninstall(pkg)}
               disabled={busyId === pkg.id}
             >
-              卸载
+              {labels.uninstall}
             </button>
           </div>
         </li>
       {:else}
-        <li class="package-empty">尚未安装主题包，点击"导入主题包"添加。</li>
+        <li class="package-empty">{labels.empty}</li>
       {/each}
     </ul>
 
@@ -294,34 +328,21 @@
 
 <style>
   .theme-package-section {
+    /* 外框 (border / bg / radius / padding) 已由 .sheet-section 提供，
+       这里只补充内部 flex 布局与略大的 gap（section 内元素较多） */
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding: 20px;
-    background-color: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--shape-lg);
   }
-  .section-header {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    position: relative;
-  }
-  .section-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0;
-    color: var(--text-primary);
-  }
-  .section-hint {
+  /* section 描述文字，紧邻 heading 下方，与其他 section 视觉一致 */
+  .settings-section-description {
     font-size: 0.8125rem;
     color: var(--text-secondary);
-    margin: 0;
+    margin: -8px 0 0;
+    line-height: 1.5;
   }
   .section-disable {
     align-self: flex-start;
-    margin-top: 4px;
     font-size: 0.75rem;
     color: var(--text-tertiary);
     background: transparent;

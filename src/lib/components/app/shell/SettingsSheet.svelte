@@ -4,6 +4,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
   import PreferencesSettingsSection from '$lib/components/app/shell/settings/PreferencesSettingsSection.svelte';
   import ThemeSettingsSection from '$lib/components/app/shell/settings/ThemeSettingsSection.svelte';
+  import ThemePackageLibrarySection from '$lib/components/app/shell/settings/ThemePackageLibrarySection.svelte';
   import NotificationsSettingsSection from '$lib/components/app/shell/settings/NotificationsSettingsSection.svelte';
   import CacheSettingsSection from '$lib/components/app/shell/settings/CacheSettingsSection.svelte';
   import LogsSettingsSection from '$lib/components/app/shell/settings/LogsSettingsSection.svelte';
@@ -125,6 +126,8 @@
       description: m.settings_description(),
       sectionPreferences: m.settings_section_preferences(),
       sectionTheme: m.settings_section_theme(),
+      sectionThemePackages: m.settings_section_theme_packages(),
+      sectionThemePackagesDescription: m.settings_theme_packages_description(),
       sectionNotifications: m.settings_section_notifications(),
       sectionCache: m.settings_section_cache(),
       sectionLogs: m.settings_section_logs(),
@@ -474,6 +477,12 @@
             onThemeTextInput={handleThemeTextInput}
             onThemeColorInput={handleThemeColorInput}
             onResetThemeCustomColors={resetThemeCustomColors}
+          />
+        </div>
+        <div data-settings-section="theme-packages">
+          <ThemePackageLibrarySection
+            sectionTitle={labels.sectionThemePackages}
+            sectionDescription={labels.sectionThemePackagesDescription}
           />
         </div>
         <div data-settings-section="notifications">

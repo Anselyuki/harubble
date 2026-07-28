@@ -7,6 +7,7 @@
 export type SettingsSection =
   | 'preferences'
   | 'theme'
+  | 'theme-packages'
   | 'notifications'
   | 'cache'
   | 'logs';
