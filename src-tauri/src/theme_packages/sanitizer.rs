@@ -49,6 +49,14 @@ const MAX_DENSITY_PX: u32 = 128;
 const MAX_BLUR_PX: u32 = 128;
 /// elevation box-shadow 字符串允许的最大字节数。
 const MAX_ELEVATION_LEN: usize = 512;
+/// fontFamily 单个字体名允许的最大字节数。
+const MAX_FONT_NAME_LEN: usize = 256;
+/// cssVariables 允许的最大条目数（防止注入超量 CSS 变量拖慢浏览器）。
+const MAX_CSS_VARIABLES: usize = 64;
+/// cssVariables 单个值允许的最大字节数。
+const MAX_CSS_VAR_VALUE_LEN: usize = 256;
+/// cssVariables key 的必须前缀（命名空间隔离，防止覆盖 app 内部变量）。
+const CSS_VAR_KEY_PREFIX: &str = "--theme-custom-";
 
 /// CSS 值黑名单关键字。遇到即拒绝该字段（不区分大小写）。
 const CSS_BLACKLIST: &[&str] = &[
@@ -347,6 +355,16 @@ pub(crate) fn sanitize_document(document: &mut ThemePackageDocument) -> Result<(
         sanitize_elevation_field("xl", &mut elevation.xl, &mut warnings);
     }
 
+    // fontFamily 字体名清洗
+    if let Some(ref mut ff) = document.font_family {
+        sanitize_font_name_field("fontFamily.body", &mut ff.body, &mut warnings);
+        sanitize_font_name_field("fontFamily.display", &mut ff.display, &mut warnings);
+        sanitize_font_name_field("fontFamily.mono", &mut ff.mono, &mut warnings);
+    }
+
+    // cssVariables 条目数 + 命名空间 + 值清洗
+    sanitize_css_variables(&mut document.css_variables, &mut warnings);
+
     document.warnings = warnings;
     Ok(())
 }
@@ -395,6 +413,21 @@ fn sanitize_elevation_field(field: &str, value: &mut Option<String>, warnings: &
         *value = None;
         return;
     }
+    // 结构字符拦截（defense-in-depth）：box-shadow value 内不应含 CSS 声明分隔符、
+    // HTML 逃逸符或 CSS 转义符。与 cssVariables 共享同一套结构字符集。
+    if raw.contains(';')
+        || raw.contains('{')
+        || raw.contains('}')
+        || raw.contains('<')
+        || raw.contains('>')
+        || raw.contains('\\')
+    {
+        warnings.push(format!(
+            "elevation.{field} contains structural chars (;{{}}<>\\), dropped"
+        ));
+        *value = None;
+        return;
+    }
     let lower = raw.to_ascii_lowercase();
     for banned in CSS_BLACKLIST {
         if lower.contains(banned) {
@@ -407,12 +440,131 @@ fn sanitize_elevation_field(field: &str, value: &mut Option<String>, warnings: &
     }
 }
 
+/// 校验单个字体名字段（Phase 4）。
+///
+/// 允许字符集：`[a-zA-Z0-9 ,\-_\.]`（字体名常见字符）。
+/// 命中 CSS 黑名单或超长则清空并 warn。
+fn sanitize_font_name_field(field: &str, value: &mut Option<String>, warnings: &mut Vec<String>) {
+    let Some(raw) = value else { return };
+    if raw.is_empty() {
+        *value = None;
+        return;
+    }
+    if raw.len() > MAX_FONT_NAME_LEN {
+        warnings.push(format!(
+            "{field} exceeds {MAX_FONT_NAME_LEN} chars, dropped"
+        ));
+        *value = None;
+        return;
+    }
+    let lower = raw.to_ascii_lowercase();
+    for banned in CSS_BLACKLIST {
+        if lower.contains(banned) {
+            warnings.push(format!(
+                "{field} contains disallowed keyword '{banned}', dropped"
+            ));
+            *value = None;
+            return;
+        }
+    }
+    let allowed = raw
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || " ,\\-_.".contains(c));
+    if !allowed {
+        warnings.push(format!(
+            "{field} contains invalid characters for a font name, dropped"
+        ));
+        *value = None;
+    }
+}
+
+/// 校验 cssVariables map（Phase 4）。
+///
+/// - key 必须以 `--theme-custom-` 开头（命名空间隔离）
+/// - key 除前缀外只允许 `[a-z0-9\-]`（合法 CSS 自定义属性名）
+/// - value 经 CSS 黑名单过滤 + 长度截断
+/// - 条目数超 MAX_CSS_VARIABLES 时截断并 warn
+fn sanitize_css_variables(
+    vars: &mut std::collections::BTreeMap<String, String>,
+    warnings: &mut Vec<String>,
+) {
+    let mut to_remove: Vec<String> = Vec::new();
+    let mut count = 0;
+    for (key, value) in vars.iter_mut() {
+        count += 1;
+        if count > MAX_CSS_VARIABLES {
+            warnings.push(format!(
+                "cssVariables exceeds {MAX_CSS_VARIABLES} entries; extra entries dropped"
+            ));
+            to_remove.push(key.clone());
+            continue;
+        }
+        // key 命名空间校验
+        if !key.starts_with(CSS_VAR_KEY_PREFIX) {
+            warnings.push(format!(
+                "cssVariables key '{key}' must start with '{CSS_VAR_KEY_PREFIX}', dropped"
+            ));
+            to_remove.push(key.clone());
+            continue;
+        }
+        let suffix = &key[CSS_VAR_KEY_PREFIX.len()..];
+        let key_valid = !suffix.is_empty()
+            && suffix
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !key_valid {
+            warnings.push(format!(
+                "cssVariables key '{key}' suffix must be [a-z0-9-], dropped"
+            ));
+            to_remove.push(key.clone());
+            continue;
+        }
+        // value 校验
+        if value.len() > MAX_CSS_VAR_VALUE_LEN {
+            warnings.push(format!(
+                "cssVariables['{key}'] value truncated to {MAX_CSS_VAR_VALUE_LEN} chars"
+            ));
+            *value = value.chars().take(MAX_CSS_VAR_VALUE_LEN).collect();
+        }
+        // 结构字符拦截（defense-in-depth）：
+        // - `;` `{` `}`：CSS 声明与块结构分隔面，setProperty 会拒绝，
+        //   但显式丢弃避免值经过其他 sink（如 <style> innerHTML）成为注入面
+        // - `<` `>`：防止 `</style>` HTML 上下文逃逸
+        // - `\`：CSS 转义可绕过 keyword 黑名单（`url\28 evil\29` 等价 `url(evil)`）
+        if value.contains(';')
+            || value.contains('{')
+            || value.contains('}')
+            || value.contains('<')
+            || value.contains('>')
+            || value.contains('\\')
+        {
+            warnings.push(format!(
+                "cssVariables['{key}'] contains structural chars (;{{}}<>\\), dropped"
+            ));
+            to_remove.push(key.clone());
+            continue;
+        }
+        let lower = value.to_ascii_lowercase();
+        let value_ok = !CSS_BLACKLIST.iter().any(|b| lower.contains(b));
+        if !value_ok {
+            warnings.push(format!(
+                "cssVariables['{key}'] contains disallowed keyword, dropped"
+            ));
+            to_remove.push(key.clone());
+        }
+    }
+    for k in to_remove {
+        vars.remove(&k);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::theme_packages::types::{
-        ThemePackageBlur, ThemePackageDensity, ThemePackageElevation, ThemePackageManifest,
-        ThemePackageMotion, ThemePackageShape, ThemePackageVariants, ThemePackageVisualContract,
+        ThemePackageBlur, ThemePackageDensity, ThemePackageElevation, ThemePackageFontFamily,
+        ThemePackageManifest, ThemePackageMotion, ThemePackageShape, ThemePackageVariants,
+        ThemePackageVisualContract,
     };
 
     fn base_document() -> ThemePackageDocument {
@@ -440,6 +592,8 @@ mod tests {
             elevation: None,
             blur: None,
             visual_contract: None,
+            font_family: None,
+            css_variables: BTreeMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -707,5 +861,190 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("elevation.md") && w.contains("exceeds")));
+    }
+
+    #[test]
+    fn sanitize_accepts_valid_font_names() {
+        let mut doc = base_document();
+        doc.font_family = Some(ThemePackageFontFamily {
+            body: Some("HarmonyOS Sans SC".to_string()),
+            display: Some("Geometos, sans-serif".to_string()),
+            mono: Some("SF Mono".to_string()),
+        });
+        sanitize_document(&mut doc).unwrap();
+        let ff = doc.font_family.as_ref().unwrap();
+        assert_eq!(ff.body.as_deref(), Some("HarmonyOS Sans SC"));
+        assert_eq!(ff.display.as_deref(), Some("Geometos, sans-serif"));
+        assert!(doc.warnings.is_empty());
+    }
+
+    #[test]
+    fn sanitize_rejects_font_with_css_injection() {
+        let mut doc = base_document();
+        doc.font_family = Some(ThemePackageFontFamily {
+            body: Some("url(evil.woff)".to_string()),
+            display: None,
+            mono: None,
+        });
+        sanitize_document(&mut doc).unwrap();
+        let ff = doc.font_family.as_ref().unwrap();
+        assert!(ff.body.is_none());
+        assert!(doc.warnings.iter().any(|w| w.contains("fontFamily.body")));
+    }
+
+    #[test]
+    fn sanitize_rejects_font_with_invalid_chars() {
+        let mut doc = base_document();
+        doc.font_family = Some(ThemePackageFontFamily {
+            body: Some("Font<Name>".to_string()),
+            display: None,
+            mono: None,
+        });
+        sanitize_document(&mut doc).unwrap();
+        let ff = doc.font_family.as_ref().unwrap();
+        assert!(ff.body.is_none());
+    }
+
+    #[test]
+    fn sanitize_css_variables_accepts_valid_entries() {
+        let mut doc = base_document();
+        doc.css_variables
+            .insert("--theme-custom-bg".to_string(), "#ff0000".to_string());
+        doc.css_variables
+            .insert("--theme-custom-radius".to_string(), "8px".to_string());
+        sanitize_document(&mut doc).unwrap();
+        assert_eq!(
+            doc.css_variables
+                .get("--theme-custom-bg")
+                .map(String::as_str),
+            Some("#ff0000")
+        );
+        assert!(doc.warnings.is_empty());
+    }
+
+    #[test]
+    fn sanitize_css_variables_rejects_bad_prefix() {
+        let mut doc = base_document();
+        doc.css_variables
+            .insert("--bg-primary".to_string(), "#ff0000".to_string()); // wrong prefix
+        sanitize_document(&mut doc).unwrap();
+        assert!(doc.css_variables.is_empty());
+        assert!(doc.warnings.iter().any(|w| w.contains("--bg-primary")));
+    }
+
+    #[test]
+    fn sanitize_css_variables_rejects_injection_value() {
+        let mut doc = base_document();
+        doc.css_variables.insert(
+            "--theme-custom-test".to_string(),
+            "url(evil.png)".to_string(),
+        );
+        sanitize_document(&mut doc).unwrap();
+        assert!(doc.css_variables.is_empty());
+        assert!(doc
+            .warnings
+            .iter()
+            .any(|w| w.contains("--theme-custom-test")));
+    }
+
+    #[test]
+    fn sanitize_css_variables_enforces_max_entries() {
+        let mut doc = base_document();
+        for i in 0..=MAX_CSS_VARIABLES {
+            doc.css_variables
+                .insert(format!("--theme-custom-v{i}"), "#000".to_string());
+        }
+        sanitize_document(&mut doc).unwrap();
+        assert!(doc.css_variables.len() <= MAX_CSS_VARIABLES);
+        assert!(doc.warnings.iter().any(|w| w.contains("cssVariables")));
+    }
+
+    #[test]
+    fn sanitize_rejects_css_variable_values_with_structural_chars() {
+        let mut doc = base_document();
+        doc.css_variables.insert(
+            "--theme-custom-x".to_string(),
+            "red; z-index: 999".to_string(),
+        );
+        doc.css_variables
+            .insert("--theme-custom-y".to_string(), "{ color: red }".to_string());
+        doc.css_variables
+            .insert("--theme-custom-z".to_string(), "#7c3aed".to_string());
+        sanitize_document(&mut doc).unwrap();
+        // 含 ';' 或 '{}' 的两个被丢弃，正常十六进制颜色保留
+        assert!(!doc.css_variables.contains_key("--theme-custom-x"));
+        assert!(!doc.css_variables.contains_key("--theme-custom-y"));
+        assert_eq!(
+            doc.css_variables
+                .get("--theme-custom-z")
+                .map(|s| s.as_str()),
+            Some("#7c3aed")
+        );
+        assert!(
+            doc.warnings
+                .iter()
+                .filter(|w| w.contains("structural chars"))
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn sanitize_rejects_elevation_with_structural_chars() {
+        let mut doc = base_document();
+        // 覆盖 ';' '{' '}' 三种结构字符（与 cssVariables 字符集对称）
+        for bad_val in [
+            "0 8px 24px black; color: red",
+            "0 8px 24px { color: red }",
+            "0 8px 24px }",
+        ] {
+            let mut d = base_document();
+            d.elevation = Some(ThemePackageElevation {
+                md: Some(bad_val.to_string()),
+                ..Default::default()
+            });
+            sanitize_document(&mut d).unwrap();
+            assert!(
+                d.elevation.as_ref().unwrap().md.is_none(),
+                "should reject: {bad_val}"
+            );
+            assert!(
+                d.warnings
+                    .iter()
+                    .any(|w| w.contains("elevation.md") && w.contains("structural chars")),
+                "should warn for: {bad_val}"
+            );
+        }
+        // 合法的多层 shadow 不受误伤
+        doc.elevation = Some(ThemePackageElevation {
+            md: Some("0 4px 12px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08)".to_string()),
+            ..Default::default()
+        });
+        sanitize_document(&mut doc).unwrap();
+        assert!(doc.elevation.as_ref().unwrap().md.is_some());
+    }
+
+    #[test]
+    fn sanitize_rejects_css_variable_values_with_html_escape_and_backslash() {
+        let mut doc = base_document();
+        doc.css_variables
+            .insert("--theme-custom-lt".to_string(), "</style>".to_string());
+        doc.css_variables.insert(
+            "--theme-custom-bs".to_string(),
+            "url\\28evil\\29".to_string(),
+        );
+        doc.css_variables
+            .insert("--theme-custom-ok".to_string(), "#7c3aed".to_string());
+        sanitize_document(&mut doc).unwrap();
+        assert!(!doc.css_variables.contains_key("--theme-custom-lt"));
+        assert!(!doc.css_variables.contains_key("--theme-custom-bs"));
+        assert!(doc.css_variables.contains_key("--theme-custom-ok"));
+        assert!(
+            doc.warnings
+                .iter()
+                .filter(|w| w.contains("structural chars"))
+                .count()
+                >= 2
+        );
     }
 }

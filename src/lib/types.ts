@@ -324,6 +324,19 @@ export interface ThemePackageBlur {
 }
 
 /**
+ * 主题包字体族声明（Phase 4）。
+ *
+ * 声明 body / display / mono 三个语义角色的字体名，前端覆盖
+ * `--font-body` / `--font-display` / `--font-mono` CSS 变量。
+ * sanitizer 强制值不含 CSS 注入关键字与非法字符。
+ */
+export interface ThemePackageFontFamily {
+  body?: string;
+  display?: string;
+  mono?: string;
+}
+
+/**
  * 主题包 visualContract 声明（Phase 3）。
  *
  * `family`：视觉语言族。当前 app 版本支持集在 SUPPORTED_THEME_FAMILIES 常量里；
@@ -346,6 +359,10 @@ export interface ThemePackageDocument {
   elevation?: ThemePackageElevation;
   blur?: ThemePackageBlur;
   visualContract?: ThemePackageVisualContract;
+  /** Phase 4：字体族声明，覆盖 --font-body / --font-display / --font-mono。 */
+  fontFamily?: ThemePackageFontFamily;
+  /** Phase 4：自定义 CSS 变量，key 必须以 `--theme-custom-` 开头。 */
+  cssVariables?: Record<string, string>;
   warnings?: string[];
 }
 

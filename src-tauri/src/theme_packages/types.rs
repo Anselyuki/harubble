@@ -50,8 +50,46 @@ pub struct ThemePackageDocument {
     pub blur: Option<ThemePackageBlur>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visual_contract: Option<ThemePackageVisualContract>,
+    /// Phase 4：字体族声明（可选）。
+    ///
+    /// 允许主题包声明要使用的字体名，前端通过 `@font-face` + Tauri asset 协议加载。
+    /// sanitizer 只校验字符串长度与允许字符集，不验证字体文件是否存在（运行时降级）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<ThemePackageFontFamily>,
+    /// Phase 4：自定义 CSS 变量声明（可选）。
+    ///
+    /// 允许主题包声明超出预定义 5 组 token 的 CSS 变量。key 必须以 `--theme-custom-`
+    /// 开头（命名空间隔离，防止覆盖 app 内部变量），value 经过白名单 sanitize。
+    /// 前端注入到 `:root` 下，所有组件均可通过 `var(--theme-custom-xxx)` 消费。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub css_variables: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+}
+
+/// 主题包字体族声明（Phase 4）。
+///
+/// 通过声明 `body` / `display` / `mono` 三个语义角色的字体名，前端覆盖
+/// `--font-body` / `--font-display` / `--font-mono` CSS 变量。
+///
+/// # 安全约束
+///
+/// - 字体名只允许 `[a-zA-Z0-9 \-_,]` 字符集（32-127 ASCII 可打印，排除引号与括号）
+/// - 最长 256 字节
+/// - 不包含 `url()` / `@import` / `expression()` 等危险关键字
+/// - 应用于 CSS 时值会被单引号包裹，防止 CSS 注入
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemePackageFontFamily {
+    /// body 文本字体（对应 `--font-body`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// 标题 / 品牌字体（对应 `--font-display`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+    /// 等宽字体（对应 `--font-mono`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mono: Option<String>,
 }
 
 /// 主题包 visual contract 声明（Phase 3 Step 3.1）。

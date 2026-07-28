@@ -245,6 +245,74 @@ export function applyBlurOverride(overrides: BlurOverride | null): void {
 }
 
 /**
+ * 主题包字体族覆盖（Phase 4）。
+ *
+ * 覆盖 `--font-body` / `--font-display` / `--font-mono` CSS 变量。
+ * 值应已经 sanitizer 过滤，此处不做二次校验；不需要 `@font-face`
+ * 声明（依赖用户系统字体或已通过 Tauri asset 加载的字体）。
+ */
+export type FontFamilyOverride = Partial<
+  Record<'body' | 'display' | 'mono', string>
+>;
+
+export function applyFontFamilyOverride(
+  overrides: FontFamilyOverride | null
+): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  const map: Record<keyof FontFamilyOverride, string> = {
+    body: '--font-body',
+    display: '--font-display',
+    mono: '--font-mono',
+  };
+  for (const [key, cssVar] of Object.entries(map) as Array<
+    [keyof FontFamilyOverride, string]
+  >) {
+    const value = overrides?.[key];
+    if (value && value.trim() !== '') {
+      root.style.setProperty(cssVar, value);
+    } else {
+      root.style.removeProperty(cssVar);
+    }
+  }
+}
+
+/**
+ * 主题包自定义 CSS 变量覆盖（Phase 4）。
+ *
+ * 把主题包声明的 `--theme-custom-*` key-value 直接写入 `documentElement`。
+ * key 已由 sanitizer 强制以 `--theme-custom-` 前缀开头（命名空间隔离）；
+ * value 已经 sanitizer 过滤 CSS 黑名单。此处不做二次校验。
+ *
+ * # 状态清理
+ *
+ * 应用新的覆盖前，先移除所有之前设置的 `--theme-custom-*` 变量（追踪
+ * 上一次注入的 key 集合），保证切换主题包时不残留旧变量。
+ */
+let previousCustomKeys = new Set<string>();
+
+export function applyCssVariablesOverride(
+  overrides: Record<string, string> | null
+): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  // 移除上一次注入的 keys（防止残留）
+  for (const key of previousCustomKeys) {
+    root.style.removeProperty(key);
+  }
+  const nextKeys = new Set<string>();
+  if (overrides) {
+    for (const [key, value] of Object.entries(overrides)) {
+      if (key.startsWith('--theme-custom-')) {
+        root.style.setProperty(key, value);
+        nextKeys.add(key);
+      }
+    }
+  }
+  previousCustomKeys = nextKeys;
+}
+
+/**
  * 统一动效时长令牌（毫秒）。
  *
  * 作为前端 GSAP 动画时长的单一真相来源，主档位与 `src/app.css` 中的

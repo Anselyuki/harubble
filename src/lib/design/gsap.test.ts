@@ -147,4 +147,62 @@ describe('gsap · getMotionDuration + shouldSkipMotion', () => {
       ''
     );
   });
+
+  it('applyFontFamilyOverride 覆盖 --font-body/display/mono（Phase 4）', async () => {
+    const { applyFontFamilyOverride } = await import('./gsap');
+    applyFontFamilyOverride({
+      body: 'HarmonyOS Sans SC',
+      display: 'Geometos',
+      mono: 'SF Mono',
+    });
+    expect(document.documentElement.style.getPropertyValue('--font-body')).toBe(
+      'HarmonyOS Sans SC'
+    );
+    expect(
+      document.documentElement.style.getPropertyValue('--font-display')
+    ).toBe('Geometos');
+    expect(document.documentElement.style.getPropertyValue('--font-mono')).toBe(
+      'SF Mono'
+    );
+    applyFontFamilyOverride(null);
+    expect(document.documentElement.style.getPropertyValue('--font-body')).toBe(
+      ''
+    );
+  });
+
+  it('applyCssVariablesOverride 只写入 --theme-custom-* 前缀 key（Phase 4）', async () => {
+    const { applyCssVariablesOverride } = await import('./gsap');
+    applyCssVariablesOverride({
+      '--theme-custom-brand': '#ff0000',
+      '--bg-primary': 'evil', // 无前缀 → 应被忽略
+    });
+    expect(
+      document.documentElement.style.getPropertyValue('--theme-custom-brand')
+    ).toBe('#ff0000');
+    // 未前缀的 key 不能污染 app 变量
+    const bgAfter =
+      document.documentElement.style.getPropertyValue('--bg-primary');
+    expect(bgAfter).not.toBe('evil');
+    applyCssVariablesOverride(null);
+    expect(
+      document.documentElement.style.getPropertyValue('--theme-custom-brand')
+    ).toBe('');
+  });
+
+  it('applyCssVariablesOverride 切换主题包时清理前一次注入的 key（Phase 4）', async () => {
+    const { applyCssVariablesOverride } = await import('./gsap');
+    applyCssVariablesOverride({
+      '--theme-custom-a': '#001',
+      '--theme-custom-b': '#002',
+    });
+    // 切到新主题包只声明 a
+    applyCssVariablesOverride({ '--theme-custom-a': '#003' });
+    expect(
+      document.documentElement.style.getPropertyValue('--theme-custom-a')
+    ).toBe('#003');
+    // b 应该已被清理
+    expect(
+      document.documentElement.style.getPropertyValue('--theme-custom-b')
+    ).toBe('');
+  });
 });

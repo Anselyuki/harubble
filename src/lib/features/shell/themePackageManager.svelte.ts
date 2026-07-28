@@ -33,6 +33,7 @@ import type {
   ThemePackageDensity,
   ThemePackageDocument,
   ThemePackageElevation,
+  ThemePackageFontFamily,
   ThemePackageMotion,
   ThemePackageShape,
   ThemePackageSummary,
@@ -51,13 +52,16 @@ import {
 } from '$lib/api';
 import {
   applyBlurOverride,
+  applyCssVariablesOverride,
   applyDensityOverride,
   applyElevationOverride,
+  applyFontFamilyOverride,
   applyMotionOverride,
   applyShapeOverride,
   type BlurOverride,
   type DensityOverride,
   type ElevationOverride,
+  type FontFamilyOverride,
   type MotionOverride,
   type ShapeOverride,
 } from '$lib/design/gsap';
@@ -154,9 +158,24 @@ function toBlurOverride(
 }
 
 /**
+ * 将主题包稀疏 fontFamily 转换为 gsap.ts 的 FontFamilyOverride（Phase 4）。
+ */
+function toFontFamilyOverride(
+  ff: ThemePackageFontFamily | undefined
+): FontFamilyOverride | null {
+  if (!ff) return null;
+  const mapped: FontFamilyOverride = {};
+  if (ff.body !== undefined) mapped.body = ff.body;
+  if (ff.display !== undefined) mapped.display = ff.display;
+  if (ff.mono !== undefined) mapped.mono = ff.mono;
+  return Object.keys(mapped).length > 0 ? mapped : null;
+}
+
+/**
  * 同步应用一个主题包的所有令牌覆盖到 GSAP 与 CSS 变量。
  *
- * 覆盖域：motion / shape / density / elevation / blur。
+ * 覆盖域：motion / shape / density / elevation / blur / visualContract /
+ * fontFamily / cssVariables（Phase 4 追加）。
  * 传入 `null` 或缺失字段等价于卸载对应覆盖（恢复默认）。
  * setActive / preview / dismissPreview 通过它保持所有域的一致性，
  * 避免遗漏某个域导致视觉状态错乱。
@@ -169,6 +188,9 @@ function applyPackageOverrides(doc: ThemePackageDocument | null): void {
   applyBlurOverride(toBlurOverride(doc?.blur));
   // Phase 3 Step 3.1：同步 visual contract（family + depth）到 $state 与 data-theme-* 属性
   applyVisualContract(doc?.visualContract);
+  // Phase 4：字体族 + 自定义 CSS 变量
+  applyFontFamilyOverride(toFontFamilyOverride(doc?.fontFamily));
+  applyCssVariablesOverride(doc?.cssVariables ?? null);
 }
 
 /**

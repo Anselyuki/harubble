@@ -189,4 +189,24 @@ describe('主题包 demo · 契约测试', () => {
     expect(pkg.visualContract?.depth).toBe('flat');
     // Phase 3.3 起 SUPPORTED_THEME_FAMILIES 已包含 terminal，运行时直通不 fallback
   });
+
+  it('midnight-glass 声明 Phase 4 fontFamily + cssVariables', () => {
+    const pkg = midnightGlassPkg as unknown as ThemePackageDocument;
+    expect(pkg.fontFamily?.display).toBe('Geometos, Inter, sans-serif');
+    expect(pkg.fontFamily?.body).toBe('Inter, HarmonyOS Sans SC, sans-serif');
+    expect(pkg.cssVariables?.['--theme-custom-brand-glow']).toBe(
+      'rgba(124, 58, 237, 0.42)'
+    );
+    expect(pkg.cssVariables?.['--theme-custom-scrim-alpha']).toBe('0.68');
+  });
+
+  it('未声明 fontFamily / cssVariables 的 demo 包字段为 undefined', () => {
+    const minimal = minimalPkg as unknown as ThemePackageDocument;
+    const material = materialYouPkg as unknown as ThemePackageDocument;
+    const retro = retroTerminalPkg as unknown as ThemePackageDocument;
+    expect(minimal.fontFamily).toBeUndefined();
+    expect(minimal.cssVariables).toBeUndefined();
+    expect(material.fontFamily).toBeUndefined();
+    expect(retro.fontFamily).toBeUndefined();
+  });
 });

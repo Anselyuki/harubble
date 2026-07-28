@@ -36,5 +36,13 @@
   "visualContract": {
     "family": "glass",
     "depth": "deep"
+  },
+  "fontFamily": {
+    "display": "Geometos, Inter, sans-serif",
+    "body": "Inter, HarmonyOS Sans SC, sans-serif"
+  },
+  "cssVariables": {
+    "--theme-custom-brand-glow": "rgba(124, 58, 237, 0.42)",
+    "--theme-custom-scrim-alpha": "0.68"
   }
 }
