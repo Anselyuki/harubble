@@ -95,6 +95,28 @@ describe('themePackageManager reducer 单调 revision', () => {
     expect(mgr.activePackageId).toBeNull();
   });
 
+  it('applySnapshot 检测到 activePackageId 变化时同步 DOM（P0 回归 guard）', async () => {
+    // 应用启动 hydrate / 跨窗口事件路径必须触发 DOM 侧 applyPackageOverrides，
+    // 不能只更新 $state 反应变量。见 themePackageManager::applySnapshot → syncDomToActive
+    // 手动模拟"上次会话遗留的 CSS 覆盖"
+    document.documentElement.dataset.themeFamily = 'terminal';
+    document.documentElement.style.setProperty('--shape-md', '2px');
+    const mgr = createThemePackageManager({ listen: NO_OP_LISTEN });
+    // 第一次 applySnapshot：activePackageId 从初始 null 变为 'acme'。
+    // 触发 syncDomToActive('acme')，在 test env 里 inspect 失败 → catch 返回 null →
+    // applyPackageOverrides(null) → DOM 拉回默认 glass、清除 --shape-md inline style
+    mgr._applySnapshot(
+      makePrefs({ activePackageId: 'acme', revision: 1 }),
+      'startup'
+    );
+    // 让 syncDomToActive 的 inspect promise + .catch + applyPackageOverrides flush
+    await new Promise((r) => setTimeout(r, 10));
+    expect(document.documentElement.dataset.themeFamily).toBe('glass');
+    expect(document.documentElement.style.getPropertyValue('--shape-md')).toBe(
+      ''
+    );
+  });
+
   it('保留 startSubscription / stopSubscription 幂等能力', async () => {
     const unlisten = vi.fn();
     const listen = vi.fn(async () => unlisten);

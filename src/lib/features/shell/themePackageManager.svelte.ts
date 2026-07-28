@@ -224,6 +224,10 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
   // 若 await 期间 stopSubscription 再次 ++epoch，async continuation 检测到
   // epoch mismatch 会 unlisten 刚 resolve 的 fn，防止订阅泄漏与幻影事件。
   let subscriptionEpoch = 0;
+  // Sync 纪元号：syncDomToActive 入口 ++epoch 后异步 await inspect；
+  // 若 await 期间又有新的 syncDomToActive 调用（例如快速切主题包），
+  // async continuation 检测到 epoch mismatch 会丢弃陈旧结果。
+  let syncEpoch = 0;
 
   /**
    * 从后端拉取最新 preferences 与 packages 列表（初始化 / 手动 rebase 用）。
@@ -330,10 +334,56 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
       // 老 snapshot，丢弃
       return false;
     }
+    const prevActive = activePackageId;
     currentRevision = incoming;
     activePackageId = theme.activePackageId ?? null;
     renderSeq += 1;
+    // 若 activePackageId 变化（含启动首次赋值），异步同步 DOM 侧的 5 组 token +
+    // visualContract 到当前包。setActive 命令路径也会走 applySnapshot，但它随后
+    // 会用返回的 doc 显式 applyPackageOverrides，所以命令路径这里只是幂等重放，
+    // 无副作用；事件 / 启动路径则是首次真正应用。
+    if (prevActive !== activePackageId) {
+      void syncDomToActive(activePackageId);
+    }
     return true;
+  }
+
+  /**
+   * 根据 activePackageId 拉取文档并应用 5 组 token + visualContract。
+   *
+   * - `id === null`：清空所有覆盖（恢复 app 默认）
+   * - `id === some`：inspect 该包，失败或不存在则视为清空（避免应用陈旧文档）
+   *
+   * 与 setActive 命令路径不同，此函数由事件 / 启动 / self-heal 路径调用，
+   * 不做 CAS 检查，因为 revision 已由 applySnapshot 更新。
+   *
+   * # Sync epoch 竞态防护
+   *
+   * inspect 是异步的：连续两次 applySnapshot 可能触发两次 syncDomToActive，
+   * 若 resolve 顺序颠倒，陈旧 doc 会覆盖新态。用 `syncEpoch` 计数器捕获入口
+   * 纪元号，await 完成后比对；纪元过期则直接丢弃结果。
+   */
+  async function syncDomToActive(id: string | null): Promise<void> {
+    const myEpoch = ++syncEpoch;
+    if (id === null) {
+      applyPackageOverrides(null);
+      return;
+    }
+    // inspect 失败区分两类：dangling ref 由 selfHealDanglingActive 兜底闭环，
+    // 但事件同步 / 瞬时 IO 错误路径下用户会看到主题"无声消失"却无反馈。
+    // 这里写 latestError + console.warn 留痕，UI 可通过 latestError 决定是否
+    // toast；仍 fallback 到默认覆盖避免冻结 UI。
+    const doc = await inspectThemePackage(id).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[themePackageManager] inspect failed for', id, err);
+      latestError = `无法加载主题包 ${id}: ${message}`;
+      return null;
+    });
+    if (myEpoch !== syncEpoch) {
+      // 有更新的 syncDomToActive 请求在飞或已完成，丢弃陈旧结果
+      return;
+    }
+    applyPackageOverrides(doc);
   }
 
   /**
@@ -348,15 +398,9 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
       const snapshot = await setActiveThemePackage(id, currentRevision);
       // 只有最新的意图才能改变本地态（防止乱序响应覆盖后续操作）
       if (localIntent === intentSeq) {
+        // applySnapshot 检测到 activePackageId 变化后会异步 syncDomToActive，
+        // 自动拉取 doc 并应用 5 组 token + visualContract 到 DOM
         applySnapshot(snapshot, 'command');
-        // 同步 motion 覆盖：激活主题包时读取其 motion 字段并应用，
-        // 清空激活状态（id=null）时恢复默认档位
-        if (id === null) {
-          applyPackageOverrides(null);
-        } else {
-          const doc = await inspectThemePackage(id).catch(() => null);
-          applyPackageOverrides(doc);
-        }
       }
       return snapshot;
     } catch (err) {
