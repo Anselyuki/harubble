@@ -499,24 +499,39 @@
 
   .remove-btn {
     appearance: none;
+    display: inline-flex;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
     border: none;
     background: none;
     color: var(--text-tertiary);
     cursor: pointer;
-    padding: 4px 6px;
+    padding: 0;
     border-radius: var(--shape-sm);
     font-size: 12px;
     opacity: 0;
+    pointer-events: none;
     flex-shrink: 0;
   }
 
-  .collection-song-wrapper:hover .remove-btn {
+  .collection-song-wrapper:hover .remove-btn,
+  .collection-song-wrapper:focus-within .remove-btn {
     opacity: 1;
+    pointer-events: auto;
   }
 
   .remove-btn:hover {
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.08);
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .remove-btn {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 
   .section-header {

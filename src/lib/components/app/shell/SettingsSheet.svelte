@@ -2,6 +2,9 @@
   import { untrack } from 'svelte';
   import * as Sheet from '$lib/components/ui/sheet/index.js';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import ChevronsLeftIcon from '@lucide/svelte/icons/chevrons-left';
+  import ChevronsRightIcon from '@lucide/svelte/icons/chevrons-right';
   import PreferencesSettingsSection from '$lib/components/app/shell/settings/PreferencesSettingsSection.svelte';
   import ThemeSettingsSection from '$lib/components/app/shell/settings/ThemeSettingsSection.svelte';
   import ThemePackageLibrarySection from '$lib/components/app/shell/settings/ThemePackageLibrarySection.svelte';
@@ -38,6 +41,26 @@
     OutputFormat,
   } from '$lib/types';
   import type { SettingsSection } from '$lib/components/app/shell/settingsSection';
+  import {
+    getThemePackageManager,
+    type ThemePackageManager,
+  } from '$lib/features/shell/themePackageManager.svelte';
+
+  type SettingsThemePackageManager = Pick<
+    ThemePackageManager,
+    | 'currentRevision'
+    | 'activePackageId'
+    | 'previewingId'
+    | 'installedPackages'
+    | 'latestError'
+    | 'hydrate'
+    | 'setActive'
+    | 'preview'
+    | 'dismissPreview'
+    | 'importFromFile'
+    | 'importFromUrl'
+    | 'uninstall'
+  >;
 
   interface Props {
     open?: boolean;
@@ -54,6 +77,7 @@
     dynamicAlbumAccent?: boolean;
     logRefreshToken?: number;
     initialSection?: SettingsSection | null;
+    themePackageManager?: SettingsThemePackageManager;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
     onOutputDirChange: (outputDir: string) => boolean | Promise<boolean>;
@@ -73,12 +97,25 @@
     dynamicAlbumAccent = $bindable<boolean>(true),
     logRefreshToken = 0,
     initialSection = null,
+    themePackageManager = getThemePackageManager(),
     notifyInfo,
     notifyError,
     onOutputDirChange,
   }: Props = $props();
 
   let sheetBodyEl = $state<HTMLDivElement | null>(null);
+  let previewBackdropRetracted = $state(false);
+  const previewingThemePackage = $derived(
+    Boolean(
+      themePackageManager.previewingId &&
+      themePackageManager.previewingId !== themePackageManager.activePackageId
+    )
+  );
+  const packageColorsLocked = $derived(
+    Boolean(
+      themePackageManager.activePackageId || themePackageManager.previewingId
+    )
+  );
 
   // 打开设置抽屉时若外部指定了 initialSection，等 Sheet 内容挂载后再滚动到锚点。
   // Sheet 使用 GSAP 缓动进场（约 260ms），因此这里用两次 rAF 让它稳定后再滚。
@@ -169,6 +206,10 @@
       dynamicAlbumLabel: m.settings_theme_dynamic_album_label(),
       dynamicAlbumOn: m.settings_theme_dynamic_album_on(),
       dynamicAlbumOff: m.settings_theme_dynamic_album_off(),
+      retractPreviewOverlay:
+        m.settings_theme_packages_retract_preview_overlay(),
+      restorePreviewOverlay:
+        m.settings_theme_packages_restore_preview_overlay(),
     };
   });
   const formatOptions = $derived.by(() => {
@@ -328,6 +369,11 @@
     syncThemeDraftsToResolvedColors(nextResolvedColors, true);
   }
 
+  function togglePreviewBackdrop() {
+    if (!previewingThemePackage) return;
+    previewBackdropRetracted = !previewBackdropRetracted;
+  }
+
   async function refreshLogs(kind = logFileKind) {
     const requestSeq = ++logRequestSeq;
     logViewerLoading = true;
@@ -416,17 +462,68 @@
     void themeCustomColors;
     syncThemeDraftsToResolvedColors(resolvedThemeColors);
   });
+  $effect(() => {
+    if ((!open || !previewingThemePackage) && previewBackdropRetracted) {
+      previewBackdropRetracted = false;
+    }
+  });
 </script>
 
 <Sheet.Root bind:open>
   <Sheet.Content
-    class="app-side-sheet settings-sheet gap-0 overflow-hidden border-[var(--sheet-border)] bg-[var(--surface-sheet)] p-0 text-[var(--text-primary)] shadow-[0_24px_64px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+    class="app-side-sheet settings-sheet gap-0 border-[var(--sheet-border)] bg-[var(--surface-sheet)] p-0 text-[var(--text-primary)] shadow-[0_24px_64px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+    data-testid="settings-sheet"
+    data-previewing={previewingThemePackage}
+    data-preview-backdrop-retracted={previewBackdropRetracted}
+    overlayProps={{
+      class: previewBackdropRetracted
+        ? 'settings-preview-overlay settings-preview-overlay--retracted'
+        : 'settings-preview-overlay',
+      'data-testid': 'settings-preview-backdrop',
+      'data-previewing': previewingThemePackage,
+      'data-retracted': previewBackdropRetracted,
+    }}
   >
     <Sheet.Header class="sheet-header settings-sheet-header">
       <Sheet.Title>{labels.title}</Sheet.Title>
       <Sheet.Description>{labels.description}</Sheet.Description>
     </Sheet.Header>
     <Tooltip.Provider>
+      {#if previewingThemePackage}
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant="outline"
+                size="icon-lg"
+                class="preview-backdrop-toggle"
+                aria-label={previewBackdropRetracted
+                  ? labels.restorePreviewOverlay
+                  : labels.retractPreviewOverlay}
+                aria-pressed={previewBackdropRetracted}
+                data-testid="theme-preview-backdrop-toggle"
+                onclick={togglePreviewBackdrop}
+              >
+                {#if previewBackdropRetracted}
+                  <ChevronsRightIcon aria-hidden="true" />
+                {:else}
+                  <ChevronsLeftIcon aria-hidden="true" />
+                {/if}
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content
+            class="preview-backdrop-tooltip"
+            side="left"
+            sideOffset={8}
+          >
+            {previewBackdropRetracted
+              ? labels.restorePreviewOverlay
+              : labels.retractPreviewOverlay}
+          </Tooltip.Content>
+        </Tooltip.Root>
+      {/if}
       <div class="sheet-body" bind:this={sheetBodyEl}>
         <div data-settings-section="preferences">
           <PreferencesSettingsSection
@@ -453,6 +550,7 @@
           <ThemeSettingsSection
             bind:colorScheme
             bind:dynamicAlbumAccent
+            {packageColorsLocked}
             {themePresetId}
             {resolvedThemeColors}
             {themePresetOptions}
@@ -481,6 +579,7 @@
         </div>
         <div data-settings-section="theme-packages">
           <ThemePackageLibrarySection
+            manager={themePackageManager}
             sectionTitle={labels.sectionThemePackages}
             sectionDescription={labels.sectionThemePackagesDescription}
           />
@@ -560,6 +659,39 @@
     font-weight: 700;
     letter-spacing: 0;
   }
+  :global(.settings-sheet .preview-backdrop-toggle) {
+    position: absolute;
+    top: 12px;
+    left: -48px;
+    z-index: 1;
+    width: 40px;
+    height: 40px;
+    border-color: var(--sheet-border, var(--border));
+    border-radius: var(--shape-md);
+    background: var(--sheet-control-bg, var(--bg-primary));
+    color: var(--text-primary);
+    box-shadow: 0 8px 22px
+      color-mix(in srgb, var(--text-primary) 12%, transparent);
+  }
+  :global(.settings-sheet .preview-backdrop-toggle:hover) {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-readable-foreground);
+  }
+  :global(.settings-sheet .preview-backdrop-toggle:focus-visible) {
+    border-color: var(--accent);
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+  :global(.settings-preview-overlay) {
+    clip-path: inset(0);
+    transition: clip-path var(--motion-slow) var(--ease-ios);
+    will-change: clip-path;
+  }
+  :global(.settings-preview-overlay--retracted) {
+    clip-path: inset(0 100% 0 0);
+  }
   :global(.settings-section-heading p) {
     margin: 3px 0 0;
     color: var(--text-secondary);
@@ -600,12 +732,27 @@
   }
   :global(.settings-segment button.active) {
     background: var(--accent);
-    color: white;
+    color: var(--accent-readable-foreground);
   }
   @media (max-width: 420px) {
+    :global(.settings-sheet .settings-sheet-header) {
+      padding-right: 108px;
+    }
+    :global(.settings-sheet .preview-backdrop-toggle) {
+      right: 60px;
+      left: auto;
+    }
+    :global(.preview-backdrop-tooltip) {
+      display: none;
+    }
     :global(.settings-section-heading) {
       display: grid;
       grid-template-columns: 1fr;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :global(.settings-preview-overlay) {
+      transition-duration: 0ms;
     }
   }
 </style>

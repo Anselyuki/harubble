@@ -65,6 +65,7 @@ export function createVolumeCapsuleController(
   let state: CapsuleState = CapsuleState.Closed;
   let isDragging = false;
   let sliderPreview: number | null = null;
+  let focusSliderOnOpen = false;
 
   function send(event: CapsuleEvent): void {
     state = transition(state, event);
@@ -89,9 +90,13 @@ export function createVolumeCapsuleController(
         send('OPEN');
         animator.expand(() => {
           send('EXPANDED');
-          opts.focusSlider();
+          if (focusSliderOnOpen) {
+            focusSliderOnOpen = false;
+            opts.focusSlider();
+          }
         });
       } else if (!opts.getOpen() && state === CapsuleState.Open) {
+        focusSliderOnOpen = false;
         send('CLOSE');
         animator.collapse(() => send('COLLAPSED'));
       }
@@ -126,10 +131,21 @@ export function createVolumeCapsuleController(
       collapseTimer.cancel();
       // 用 prop 值（getOpen）而不是内部 state：在 Expanding 阶段 state≠Open 但父组件
       // 已收到 open=true，避免重复触发 onopen。与原始 view 严格一致。
-      if (!opts.getOpen()) opts.onopen();
+      if (!opts.getOpen()) {
+        // Hover reveals the capsule visually but must not steal focus from the
+        // control the user is currently using.
+        focusSliderOnOpen = false;
+        opts.onopen();
+      }
     },
     handleIconClick() {
-      if (!opts.getOpen()) opts.onopen();
+      if (opts.getOpen()) {
+        focusSliderOnOpen = false;
+        opts.focusSlider();
+      } else {
+        focusSliderOnOpen = true;
+        opts.onopen();
+      }
     },
     installGlobalPointerListeners() {
       // 与原始 glass/material view 严格一致：拖到胶囊外松开时，只要指针不 hover
@@ -146,6 +162,7 @@ export function createVolumeCapsuleController(
         document.removeEventListener('pointerup', handleGlobalPointerUp);
     },
     destroy() {
+      focusSliderOnOpen = false;
       collapseTimer.destroy();
       animator.destroy();
     },

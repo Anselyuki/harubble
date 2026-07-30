@@ -63,8 +63,24 @@ pub struct ThemePackageDocument {
     /// 前端注入到 `:root` 下，所有组件均可通过 `var(--theme-custom-xxx)` 消费。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub css_variables: BTreeMap<String, String>,
+    /// 自定义 CSS 变量的昼夜稀疏覆盖（可选）。
+    ///
+    /// 运行时先应用 `css_variables`，再合并当前 effective scheme 对应的 map。
+    /// 两套 map 与基础变量共享相同的命名空间和安全清洗规则。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css_variable_variants: Option<ThemePackageCssVariableVariants>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+}
+
+/// 自定义 CSS 变量的 scheme 变体覆盖（稀疏语义）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemePackageCssVariableVariants {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dark: Option<BTreeMap<String, String>>,
 }
 
 /// 主题包字体族声明（Phase 4）。
@@ -102,8 +118,8 @@ pub struct ThemePackageFontFamily {
 /// - `depth`：视觉深度。同上，fallback 到 `balanced`。
 ///
 /// **注意**：schema 校验和"当前 app 版本已实现的支持集"是两回事。
-/// 作者可以声明 `family: 'terminal'`，但 Phase 3.1 只实现了 `glass / material`；
-/// 未支持的 family 会 fallback 并 warn，而不是拒绝安装（保持前向兼容）。
+/// 当前前端支持 legacy family 以及 Ark UI inspired 的五个内置 family；未知值会
+/// fallback 并 warn，而不是拒绝安装（保持前向兼容）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemePackageVisualContract {
@@ -277,8 +293,8 @@ pub enum ThemePackageStatus {
 
 /// 主题包展示摘要（`list_theme_packages` 命令返回值元素）。
 ///
-/// 前端主题列表 UI 只需要 id/name/version + 是否为内置/是否激活即可渲染卡片，
-/// 完整 slots 通过 `inspect_theme_package` 按需获取。这样列表命令返回体积最小化。
+/// 前端主题列表 UI 使用 id/name/version + 内置状态渲染卡片，并保留 sanitizer
+/// warnings 供导入结果反馈；完整 slots 仍通过 `inspect_theme_package` 按需获取。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemePackageSummary {
@@ -290,4 +306,6 @@ pub struct ThemePackageSummary {
     pub builtin: bool,
     #[serde(default)]
     pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }

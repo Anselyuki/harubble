@@ -10,6 +10,7 @@ import type { AppPreferences, PlayerState } from '$lib/types';
 import {
   getPlayerState,
   getPreferences,
+  inspectThemePackage,
   pausePlayback,
   resumePlayback,
   playNext,
@@ -23,6 +24,7 @@ export type { PlayerState };
 export {
   getPlayerState,
   getPreferences,
+  inspectThemePackage,
   pausePlayback,
   resumePlayback,
   playNext,

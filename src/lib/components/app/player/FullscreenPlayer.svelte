@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { flushSync } from 'svelte';
+  import { flushSync, onDestroy } from 'svelte';
   import {
     gsap,
     animateIn,
@@ -62,12 +62,143 @@
     }
   }
 
+  function handleClose(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    player.toggleFullscreen();
+  }
+
   let dialogEl: HTMLDivElement | undefined = $state();
+  const restoreFocusEl =
+    typeof document !== 'undefined' &&
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  let inertNodes: {
+    element: HTMLElement;
+    inert: boolean;
+    ariaHidden: string | null;
+  }[] = [];
+
+  const FOCUSABLE_SELECTOR =
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
+  function getFocusableElements(): HTMLElement[] {
+    if (!dialogEl) return [];
+    return Array.from(
+      dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+    ).filter(
+      (element) =>
+        !element.inert && element.getAttribute('aria-hidden') !== 'true'
+    );
+  }
+
+  function handleDialogKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Tab') return;
+    const focusable = getFocusableElements();
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialogEl?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function isTextEntryTarget(target: EventTarget | null): boolean {
+    return (
+      target instanceof HTMLElement &&
+      Boolean(
+        target.closest(
+          'input, textarea, select, [contenteditable="true"], [role="textbox"], [type="range"]'
+        )
+      )
+    );
+  }
+
+  function isUpperLayerTarget(target: EventTarget | null): boolean {
+    return (
+      target instanceof HTMLElement &&
+      Boolean(
+        target.closest(
+          '[data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="alert-dialog-content"], [data-slot="select-content"], [role="menu"], [role="listbox"]'
+        )
+      )
+    );
+  }
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (event.defaultPrevented || !dialogEl) return;
+    const target = event.target;
+    if (isTextEntryTarget(target) || isUpperLayerTarget(target)) return;
+    if (target instanceof Node && !dialogEl.contains(target)) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      player.toggleFullscreen();
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      player.setVolume(Math.min(1, player.volume + 0.05));
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      player.setVolume(Math.max(0, player.volume - 0.05));
+      return;
+    }
+    if (event.key === 'm' || event.key === 'M') {
+      event.preventDefault();
+      player.toggleMute();
+    }
+  }
 
   $effect(() => {
     if (dialogEl) {
       dialogEl.focus();
     }
+  });
+
+  $effect(() => {
+    const root = dialogEl;
+    if (!root) return;
+    const mainRegion = root.closest<HTMLElement>('.main-region');
+    const shellRoot = mainRegion?.closest<HTMLElement>('.app-shell');
+    const candidates = [
+      ...(mainRegion ? Array.from(mainRegion.children) : []),
+      ...(shellRoot
+        ? Array.from(shellRoot.children).filter(
+            (element) => element !== mainRegion
+          )
+        : []),
+    ].filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement && element !== root
+    );
+    inertNodes = candidates.map((element) => ({
+      element,
+      inert: element.inert,
+      ariaHidden: element.getAttribute('aria-hidden'),
+    }));
+    candidates.forEach((element) => {
+      element.inert = true;
+      element.setAttribute('aria-hidden', 'true');
+    });
+    return () => {
+      inertNodes.forEach(({ element, inert, ariaHidden }) => {
+        element.inert = inert;
+        if (ariaHidden === null) element.removeAttribute('aria-hidden');
+        else element.setAttribute('aria-hidden', ariaHidden);
+      });
+      inertNodes = [];
+    };
   });
 
   let lyricsListRef = $state<HTMLElement | null>(null);
@@ -195,29 +326,25 @@
   });
 
   $effect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        player.toggleFullscreen();
-        return;
+    document.addEventListener('keydown', handleGlobalKeydown);
+    return () => document.removeEventListener('keydown', handleGlobalKeydown);
+  });
+
+  onDestroy(() => {
+    inertNodes.forEach(({ element, inert, ariaHidden }) => {
+      element.inert = inert;
+      if (ariaHidden === null) element.removeAttribute('aria-hidden');
+      else element.setAttribute('aria-hidden', ariaHidden);
+    });
+    inertNodes = [];
+    requestAnimationFrame(() => {
+      if (
+        restoreFocusEl?.isConnected &&
+        !restoreFocusEl.hasAttribute('inert')
+      ) {
+        restoreFocusEl.focus();
       }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        player.setVolume(Math.min(1, player.volume + 0.05));
-        return;
-      }
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        player.setVolume(Math.max(0, player.volume - 0.05));
-        return;
-      }
-      if (event.key === 'm' || event.key === 'M') {
-        event.preventDefault();
-        player.toggleMute();
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    });
   });
 
   $effect(() => {
@@ -295,7 +422,7 @@
   aria-label={song.name}
   tabindex="-1"
   bind:this={dialogEl}
-  onkeydown={(e) => e.key === 'Escape' && player.toggleFullscreen()}
+  onkeydown={handleDialogKeydown}
 >
   <div
     class="fullscreen-drag-region"
@@ -319,8 +446,9 @@
   <button
     type="button"
     class="fullscreen-close"
+    data-testid="fullscreen-close"
     aria-label={labels.close}
-    onclick={player.toggleFullscreen}
+    onclick={handleClose}
   >
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M18 6 6 18"></path>

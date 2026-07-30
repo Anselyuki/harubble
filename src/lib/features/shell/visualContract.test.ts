@@ -13,6 +13,7 @@ import {
   applyVisualContract,
   getVisualContract,
   resolveVisualContract,
+  usesStructuredControls,
 } from './visualContract.svelte';
 
 describe('resolveVisualContract 支持集与 fallback', () => {
@@ -34,6 +35,14 @@ describe('resolveVisualContract 支持集与 fallback', () => {
     expect(result.family).toBe('terminal');
     expect(result.warnings).toEqual([]);
   });
+
+  it.each(['ark', 'endfield', 'exa', 'popucom', 'corporate'] as const)(
+    'Ark UI family %s 以 moderate 深度直通',
+    (family) => {
+      const result = resolveVisualContract({ family, depth: 'moderate' });
+      expect(result).toEqual({ family, depth: 'moderate', warnings: [] });
+    }
+  );
 
   it('未支持的 family fallback 到 glass 并 warn', () => {
     const result = resolveVisualContract({
@@ -74,12 +83,16 @@ describe('applyVisualContract 同步 JS state 与 DOM 属性', () => {
   beforeEach(() => {
     delete document.documentElement.dataset.themeFamily;
     delete document.documentElement.dataset.themeDepth;
+    delete document.documentElement.dataset.arkTheme;
+    delete document.documentElement.dataset.arkDepth;
   });
 
   it('applyVisualContract 写入 data-theme-* 属性', () => {
     applyVisualContract({ family: 'material', depth: 'deep' });
     expect(document.documentElement.dataset.themeFamily).toBe('material');
     expect(document.documentElement.dataset.themeDepth).toBe('deep');
+    expect(document.documentElement.dataset.arkTheme).toBe('material');
+    expect(document.documentElement.dataset.arkDepth).toBe('deep');
   });
 
   it('applyVisualContract 同步 getVisualContract() 返回值', () => {
@@ -109,7 +122,23 @@ describe('支持集常量结构稳定', () => {
     expect(SUPPORTED_THEME_FAMILIES).toContain('material');
   });
 
-  it('SUPPORTED_THEME_DEPTHS 包含 flat / balanced / deep', () => {
-    expect(SUPPORTED_THEME_DEPTHS).toEqual(['flat', 'balanced', 'deep']);
+  it('工业/企业 family 使用硬边控件，叙事/游乐 family 保留胶囊控件', () => {
+    expect(usesStructuredControls('ark')).toBe(true);
+    expect(usesStructuredControls('endfield')).toBe(true);
+    expect(usesStructuredControls('corporate')).toBe(true);
+    expect(usesStructuredControls('exa')).toBe(false);
+    expect(usesStructuredControls('popucom')).toBe(false);
+  });
+
+  it('SUPPORTED_THEME_DEPTHS 同时兼容 legacy 与 Ark UI 四档深度', () => {
+    expect(SUPPORTED_THEME_DEPTHS).toEqual([
+      'flat',
+      'balanced',
+      'deep',
+      'minimal',
+      'moderate',
+      'complex',
+      'maximal',
+    ]);
   });
 });

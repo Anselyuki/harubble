@@ -41,6 +41,10 @@ export default defineConfig({
       testMatch: /smoke\.test\.ts$/,
     },
   ],
-  // 视觉回归使用本地 file:// URL 直接加载 fixture，暂不需要 webServer；
-  // Tauri 冒烟测试的 WebDriver 集成待补齐后再启用。
+  webServer: {
+    command: 'bun run dev:web -- --host 127.0.0.1',
+    url: 'http://127.0.0.1:1421',
+    reuseExistingServer: true,
+    timeout: 120_000,
+  },
 });

@@ -362,17 +362,28 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 
 ### 9.1 支持集与 fallback
 
-`SUPPORTED_THEME_FAMILIES = ['glass', 'material', 'terminal']`，`SUPPORTED_THEME_DEPTHS = ['flat', 'balanced', 'deep']`。主题包声明超出支持集的值 fallback 到 `glass` / `balanced` 并生成 `sanitizeWarnings`；不 reject 保证前向兼容。
+`SUPPORTED_THEME_FAMILIES` 当前包含 `glass / material / terminal / ark / endfield / exa / popucom / corporate`；`SUPPORTED_THEME_DEPTHS` 同时兼容 legacy 的 `flat / balanced / deep` 与 Ark UI 的 `minimal / moderate / complex / maximal`。主题包声明超出支持集的值 fallback 到 `glass` / `balanced` 并生成 warning；不 reject 保证前向兼容。
 
 - **glass**：iOS 液态玻璃（默认族，视觉零变化）
 - **material**：Material 3 elevation + emphasized easing
 - **terminal**：monochrome + 直角 + 无光晕，Router 复用 Material view，通过 `:root[data-theme-family='terminal']` CSS baseline 把 shape/elevation/blur token 全部归零实现风格切换
+- **ark / endfield / exa / popucom / corporate**：Harubble 内置的 Ark UI inspired 原创家族。包负责 tokens，`src/app.css` 负责 moderate 深度的壳层签名；不包含官方 logo、游戏素材或远程字体。
+
+内置包源码位于 `src/lib/theme-packages/builtins/`，由 Rust `builtin.rs` 在编译期嵌入。内置包可预览、激活和导出，但不能卸载或被同 ID 导入包覆盖。
+
+主题包与昼夜模式是独立轴，运行时遵循以下所有权：
+
+- `slots` 提供包的基础色，`variants.light / variants.dark` 稀疏覆盖当前 effective scheme；`auto` 只负责把系统模式解析为 light 或 dark。
+- `cssVariables` 提供家族公共变量，`cssVariableVariants.light / dark` 只覆盖依赖昼夜模式的变量。切换 scheme 时必须重新合并并清理上一模式的 inline 变量。
+- 内容画布的 panel / rule 随昼夜模式变化；Ark UI 家族的固定 rail / toolbar 属于 shell grammar，使用独立壳层 token，不能复用 scheme-aware panel。
+- 激活或预览主题包时，不应用 legacy preset 的单套 `customColors`；这些值保留在偏好中，停用主题包后恢复。设置页在此期间仅锁定 preset 与六个旧色槽，昼夜模式和动态专辑色仍可调整。
+- 专辑 Context Theme 继续只通过 `CONTEXT_TOKEN_ALLOWLIST` 覆盖专辑语义色，不得写入 App Theme 的全局背景、正文或主题包家族变量。
 
 ### 9.2 家族切换契约（重要）
 
 **家族运行时切换会重置组件的瞬时视觉状态**，具体表现：
 
-- `PlayToggleGlyph`、`VolumeCapsule` 使用 `{#if}{:else}` 分发到 `glass/` / `material/` 子 view。切换 family 时旧 view 被 unmount，触发 `controller.destroy()` / `animator.destroy()`，新 view 从初始态（Closed / play）mount。
+- `PlayToggleGlyph`、`VolumeCapsule` 使用 `{#if}{:else}` 分发到 glass / structured-control 子 view。`material / terminal / ark / endfield / corporate` 使用硬边实现，`glass / exa / popucom` 使用胶囊实现。切换两类 view 时旧 view 被 unmount，触发 `controller.destroy()` / `animator.destroy()`，新 view 从初始态（Closed / play）mount。
 - 用户在音量胶囊 open 状态下切主题包，胶囊会瞬间收起（不是 bug）。
 - `LyricsBubble`、`FullscreenPlayer` 家族切换用 CSS 域覆盖（`:root[data-theme-family='material']` 选择器），DOM 保留，不重置瞬时状态。
 
@@ -387,27 +398,25 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 
 不确定时优先 CSS 域覆盖，成本更低、不引入运行时状态重置。
 
-### 9.4 灰度上线状态（`theme_packages_v1` flag）
+### 9.4 主题包库折叠状态（`theme_packages_v1`）
 
-主题包库 UI（`ThemePackageLibrarySection`）由 localStorage flag `theme_packages_v1` 控制显隐：
+主题包库沿用灰度阶段的 localStorage key `theme_packages_v1`，当前仅控制详细管理区的展开状态：
 
 - **Phase 1–3.2**：opt-in（`localStorage['theme_packages_v1'] === '1'` 才显示）
-- **Phase 3.3 起（当前）**：**opt-out**（默认显示；`localStorage['theme_packages_v1'] === '0'` 隐藏）
-- 稳定 4 个 minor 版本后移除 flag 检查
+- **Phase 3.3 起**：改为 opt-out（默认显示；`localStorage['theme_packages_v1'] === '0'` 隐藏）
+- **当前**：`'0'` 只收起主题包详情，原位置始终保留“展开主题包库”入口；收起不会清除 activePackageId 或 previewingId
 
-后端 IPC（`list_theme_packages` 等 9 条命令）与 preferences v2 schema 不受此 flag 控制，始终生效。flag 只是设置页 UI 入口的最后一道回退开关。
+后端 IPC（`list_theme_packages` 等 9 条命令）、preferences v2 schema 与主窗口启动 hydration 不受此状态控制，始终生效。折叠只改变设置页布局，不会让已经激活或正在预览的主题失效。
 
 #### 悬挂 activePackageId 自愈
 
 Phase 3.2→3.3 opt-in→opt-out 切换的 legacy 用户可能在关闭 UI 期间导入过主题包并留下 `preferences.theme.activePackageId`。翻转 flag 后 UI 恢复显示，若该包被卸载或未导入，会触发悬挂引用。
 
-`themePackageManager.hydrate()` 在启动时校验 activePackageId 是否在 `installedPackages` 列表内；不在则通过 `setActiveThemePackage(null)` CAS 清空。用户体感 = "首次打开设置页时主题静默回到内置 preset"，无需手工介入。
+共享 `themePackageManager` 在主窗口启动时先订阅 `preferences_snapshot`，再执行 `hydrate()` 并校验 activePackageId 是否在 installed + built-in 列表内；不在则通过 `setActiveThemePackage(null)` CAS 清空。该流程不依赖用户首次打开设置页。
 
-#### 运维排查清单
+#### 状态排查
 
-1. **单用户状态排查**：让用户在浏览器 devtools 执行 `localStorage.getItem('theme_packages_v1')`。返回 `null` = opt-out 默认启用；返回 `'1'` = 显式启用（legacy opt-in 用户）；返回 `'0'` = 显式禁用。
-2. **全局回滚路径**：本 flag 是**客户端本地开关**，无远端 kill switch。回滚必须发版：把 `featureFlagEnabled` 的默认值从 `!== '0'` 改回 `=== '1'`（回到 opt-in），或临时把 `<section>` 整段注释掉。
-3. **结束灰度的判据**：连续 2 个 minor 版本内主题包相关支持工单 ≤ 1；主题包 preview→apply 转化率 ≥ 30%；`RevisionMismatch` 错误率 ≤ 0.1%。三项同时满足才移除 flag。
+`localStorage.getItem('theme_packages_v1')` 返回 `null` 或 `'1'` 时详情默认展开，返回 `'0'` 时详情收起。无论该值为何，标题与展开/收起按钮都必须存在；主题包激活状态以 preferences v2 为准。
 
 ### 9.5 Phase 4 · CSS 覆盖层（未启动 · 触发式）
 

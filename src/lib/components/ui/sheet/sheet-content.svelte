@@ -26,10 +26,13 @@
     side = 'right',
     showCloseButton = true,
     portalProps,
+    overlayProps,
     children,
+    restoreScrollDelay = 0,
     ...restProps
   }: WithoutChildrenOrChild<SheetPrimitive.ContentProps> & {
     portalProps?: WithoutChildrenOrChild<ComponentProps<typeof SheetPortal>>;
+    overlayProps?: WithoutChildrenOrChild<ComponentProps<typeof SheetOverlay>>;
     side?: Side;
     showCloseButton?: boolean;
     children: Snippet;
@@ -38,7 +41,7 @@
   const openCtx = getContext<{ value: boolean } | undefined>('sheet-open');
   const open = $derived(openCtx?.value ?? true);
 
-  let mounted = $state(true);
+  let mounted = $state(openCtx?.value ?? true);
 
   function getSlideFrom(s: Side): { x?: string; y?: string } {
     if (s === 'top') return { y: '-100%' };
@@ -86,34 +89,42 @@
 
 {#if mounted}
   <SheetPortal {...portalProps}>
-    <SheetOverlay />
+    <SheetOverlay {...overlayProps} />
     <SheetPrimitive.Content
       bind:ref
       forceMount
+      {restoreScrollDelay}
       data-slot="sheet-content"
       data-side={side}
       class={cn(
-        'bg-popover text-popover-foreground fixed z-[190] flex flex-col gap-4 text-sm shadow-lg data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:h-full data-[side=left]:w-3/4 data-[side=left]:border-r data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:border-l data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm',
-        className
+        'bg-popover text-popover-foreground fixed z-[var(--z-sheet)] flex flex-col gap-4 text-sm shadow-lg data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:h-full data-[side=left]:w-3/4 data-[side=left]:border-r data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:border-l data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm',
+        className,
+        !open && '!pointer-events-none'
       )}
       {...restProps}
+      inert={!open}
+      aria-hidden={!open}
     >
-      {@render children?.()}
-      {#if showCloseButton}
-        <SheetPrimitive.Close data-slot="sheet-close">
-          {#snippet child({ props })}
-            <Button
-              variant="ghost"
-              class="absolute top-3 right-3"
-              size="icon-sm"
-              {...props}
-            >
-              <XIcon />
-              <span class="sr-only">{m.ui_close()}</span>
-            </Button>
-          {/snippet}
-        </SheetPrimitive.Close>
-      {/if}
+      {#snippet child({ props })}
+        <div {...props}>
+          {@render children?.()}
+          {#if showCloseButton}
+            <SheetPrimitive.Close data-slot="sheet-close">
+              {#snippet child({ props: closeProps })}
+                <Button
+                  variant="ghost"
+                  class="absolute top-3 right-3 size-10"
+                  size="icon-sm"
+                  {...closeProps}
+                >
+                  <XIcon />
+                  <span class="sr-only">{m.ui_close()}</span>
+                </Button>
+              {/snippet}
+            </SheetPrimitive.Close>
+          {/if}
+        </div>
+      {/snippet}
     </SheetPrimitive.Content>
   </SheetPortal>
 {/if}

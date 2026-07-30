@@ -50,7 +50,7 @@ describe('主题包 demo · 契约测试', () => {
 
   it.each(DEMO_PACKAGES)('%s 声明全部 6 个 slot', (_id, pkg) => {
     for (const slot of REQUIRED_SLOTS) {
-      const value = pkg.slots?.[slot];
+      const value = pkg.slots[slot];
       expect(value, `slot ${slot} missing`).toBeTruthy();
       expect(value).toMatch(/^#[0-9a-fA-F]{6}$/);
     }

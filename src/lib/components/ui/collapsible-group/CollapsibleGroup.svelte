@@ -126,7 +126,12 @@
   {/if}
 
   {#if contentMounted}
-    <div class="collapsible-group-content" bind:this={contentEl}>
+    <div
+      class="collapsible-group-content"
+      bind:this={contentEl}
+      inert={!shouldShow}
+      aria-hidden={!shouldShow}
+    >
       {@render children()}
     </div>
   {/if}
@@ -173,10 +178,20 @@
     align-items: center;
     gap: 2px;
     opacity: 0;
+    pointer-events: none;
   }
 
-  :global(.sidebar-item-button:hover) .collapsible-group-actions {
+  :global(.sidebar-item-button:hover) .collapsible-group-actions,
+  :global(.sidebar-item-button:focus-within) .collapsible-group-actions {
     opacity: 1;
+    pointer-events: auto;
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .collapsible-group-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 
   .collapsible-group-chevron {

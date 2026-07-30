@@ -4,6 +4,7 @@
   import {
     getPlayerState,
     getPreferences,
+    inspectThemePackage,
     pausePlayback,
     playNext,
     playPrevious,
@@ -14,12 +15,23 @@
     listenPlayerProgress,
     listenPreferencesSnapshot,
   } from '$lib/features/player/miniPlayerBridge';
-  import type { AppPreferences, ColorScheme, PlayerState } from '$lib/types';
+  import type {
+    AppPreferences,
+    ColorScheme,
+    PlayerState,
+    ThemePackageDocument,
+  } from '$lib/types';
   import {
     applyAppThemeTokenSet,
+    applyContextThemePalette,
+    deriveGlobalTokensFromSlots,
     resolveAppThemeTokenSet,
   } from '$lib/themeTokens';
   import { resolveThemeColors } from '$lib/themePresets';
+  import { resolveThemePackageColors } from '$lib/features/shell/themePackageRuntime.svelte';
+  import { applyThemePackageDocument } from '$lib/features/shell/themePackageManager.svelte';
+  import { runThemePackageTransition } from '$lib/features/shell/themePackageTransition';
+  import { shouldAcceptThemeSnapshot } from '$lib/features/player/themeSnapshotGuard';
   import { formatTime } from '$lib/features/player/formatUtils';
   import {
     hasPlaybackCompleted,
@@ -32,6 +44,15 @@
 
   type PendingAction = 'play' | 'previous' | 'next' | 'seek';
   type PlayToggleTarget = 'playing' | 'paused';
+  type MiniThemeScheme = 'light' | 'dark';
+
+  interface MiniThemeRequest {
+    revision: number;
+    activePackageId: string | null;
+    scheme: MiniThemeScheme;
+  }
+
+  const MINI_THEME_INSPECT_RETRY_MS = 250;
 
   const EMPTY_PLAYER_STATE: PlayerState = {
     sessionId: 0,
@@ -60,6 +81,14 @@
   let reducedMotionQuery: MediaQueryList | null = null;
   // 本窗口自持的 theme.revision，供 preferences_snapshot 事件 reducer 单调筛选
   let miniThemeRevision = -1;
+  let miniThemeActivePackageId: string | null = null;
+  let miniThemeApplySeq = 0;
+  let hasCommittedThemeSnapshot = false;
+  let committedThemePackageId: string | null = null;
+  let lastThemePreferences: AppPreferences | null = null;
+  let pendingMiniThemeRequest: MiniThemeRequest | null = null;
+  let retriedMiniThemeRequest: MiniThemeRequest | null = null;
+  let miniThemeRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   const hasSong = $derived(Boolean(playerState.songCid));
   const title = $derived(playerState.songName || 'Harubble');
@@ -88,8 +117,53 @@
 
   function applySystemTheme() {
     const dark = mediaQuery?.matches ?? false;
+    const colorScheme = lastThemePreferences?.theme?.colorScheme;
+    const followsSystem = colorScheme === undefined || colorScheme === 'auto';
+    if (lastThemePreferences && !followsSystem) {
+      return;
+    }
+    if (lastThemePreferences) {
+      void applyThemePreferences(lastThemePreferences);
+      return;
+    }
     document.documentElement.classList.toggle('dark', dark);
     document.documentElement.classList.toggle('light', !dark);
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  }
+
+  function isSameMiniThemeRequest(
+    left: MiniThemeRequest | null,
+    right: MiniThemeRequest
+  ): boolean {
+    return (
+      left?.revision === right.revision &&
+      left.activePackageId === right.activePackageId &&
+      left.scheme === right.scheme
+    );
+  }
+
+  function scheduleMiniThemeInspectRetry(
+    snapshot: AppPreferences,
+    request: MiniThemeRequest,
+    applySeq: number
+  ): void {
+    if (isSameMiniThemeRequest(retriedMiniThemeRequest, request)) return;
+    retriedMiniThemeRequest = request;
+    if (miniThemeRetryTimer !== null) clearTimeout(miniThemeRetryTimer);
+    miniThemeRetryTimer = setTimeout(() => {
+      miniThemeRetryTimer = null;
+      if (applySeq !== miniThemeApplySeq) return;
+      void applyThemePreferences(snapshot);
+    }, MINI_THEME_INSPECT_RETRY_MS);
+  }
+
+  function clearMiniThemeInspectRetry(request: MiniThemeRequest): void {
+    if (!isSameMiniThemeRequest(retriedMiniThemeRequest, request)) return;
+    retriedMiniThemeRequest = null;
+    if (miniThemeRetryTimer !== null) {
+      clearTimeout(miniThemeRetryTimer);
+      miniThemeRetryTimer = null;
+    }
   }
 
   /**
@@ -97,31 +171,123 @@
    *
    * 严格按 `theme.revision` 单调递增接受快照：老事件直接丢弃。
    * 解析 scheme（跟随系统时依赖 mediaQuery）后调用 `resolveAppThemeTokenSet` 派生
-   * 21 个全局 token，并写入本窗口 documentElement 的 CSS 变量（不带过渡动画）。
+   * 23 个全局 token；首次快照和同包重算同步提交，跨包切换在遮罩中点原子提交。
    */
-  function applyThemePreferences(snapshot: AppPreferences): void {
+  async function applyThemePreferences(
+    snapshot: AppPreferences
+  ): Promise<void> {
     const theme = snapshot.theme;
     if (!theme) return;
     const incomingRevision = theme.revision ?? 0;
-    if (incomingRevision < miniThemeRevision) return;
-    miniThemeRevision = incomingRevision;
-
-    const themeColors = resolveThemeColors({
-      presetId: theme.presetId,
-      customColors: theme.customColors,
-    });
+    const incomingActivePackageId = theme.activePackageId ?? null;
+    if (
+      !shouldAcceptThemeSnapshot(
+        miniThemeRevision,
+        miniThemeActivePackageId,
+        incomingRevision,
+        incomingActivePackageId
+      )
+    ) {
+      return;
+    }
     const scheme = resolveScheme(theme.colorScheme);
-    document.documentElement.classList.toggle('dark', scheme === 'dark');
-    document.documentElement.classList.toggle('light', scheme !== 'dark');
-    document.documentElement.style.colorScheme =
-      scheme === 'dark' ? 'dark' : 'light';
-    const tokens = resolveAppThemeTokenSet(themeColors, scheme);
-    applyAppThemeTokenSet(tokens, { animate: false });
+    const request: MiniThemeRequest = {
+      revision: incomingRevision,
+      activePackageId: incomingActivePackageId,
+      scheme,
+    };
+    if (isSameMiniThemeRequest(pendingMiniThemeRequest, request)) {
+      // The bridge may replay the same snapshot while its package inspect or
+      // reveal is still pending. The existing request owns that transition;
+      // restarting it would make a same-target wipe visibly jump backwards.
+      return;
+    }
+    miniThemeRevision = incomingRevision;
+    miniThemeActivePackageId = incomingActivePackageId;
+    lastThemePreferences = snapshot;
+    const applySeq = ++miniThemeApplySeq;
+    if (
+      retriedMiniThemeRequest !== null &&
+      !isSameMiniThemeRequest(retriedMiniThemeRequest, request)
+    ) {
+      clearMiniThemeInspectRetry(retriedMiniThemeRequest);
+    }
+    pendingMiniThemeRequest = request;
+
+    try {
+      let packageDocument: ThemePackageDocument | null = null;
+      let packageInspectFailed = false;
+      if (incomingActivePackageId) {
+        try {
+          const inspected = await inspectThemePackage(incomingActivePackageId);
+          if (inspected?.manifest.id === incomingActivePackageId) {
+            packageDocument = inspected;
+          } else {
+            packageInspectFailed = true;
+          }
+        } catch {
+          packageInspectFailed = true;
+        }
+      }
+      if (
+        applySeq !== miniThemeApplySeq ||
+        incomingRevision !== miniThemeRevision ||
+        incomingActivePackageId !== miniThemeActivePackageId
+      ) {
+        return;
+      }
+
+      const themeColors = packageDocument
+        ? resolveThemePackageColors(theme, packageDocument, scheme)
+        : resolveThemeColors({
+            presetId: theme.presetId,
+            customColors: theme.customColors,
+          });
+      const tokens = packageDocument
+        ? deriveGlobalTokensFromSlots(themeColors, scheme)
+        : resolveAppThemeTokenSet(themeColors, scheme);
+      const animate =
+        !packageInspectFailed &&
+        hasCommittedThemeSnapshot &&
+        incomingActivePackageId !== committedThemePackageId;
+
+      await runThemePackageTransition(
+        () => {
+          if (
+            applySeq !== miniThemeApplySeq ||
+            incomingRevision !== miniThemeRevision ||
+            incomingActivePackageId !== miniThemeActivePackageId
+          ) {
+            return;
+          }
+          document.documentElement.classList.toggle('dark', scheme === 'dark');
+          document.documentElement.classList.toggle('light', scheme !== 'dark');
+          document.documentElement.style.colorScheme = scheme;
+          applyThemePackageDocument(packageDocument, scheme);
+          applyAppThemeTokenSet(tokens, { animate: false });
+          applyContextThemePalette(null, tokens, scheme, { animate: false });
+          hasCommittedThemeSnapshot = true;
+          committedThemePackageId = packageDocument?.manifest.id ?? null;
+        },
+        {
+          animate,
+          reason: 'activate',
+          targetPackageId: packageDocument?.manifest.id ?? null,
+        }
+      );
+      if (packageInspectFailed && applySeq === miniThemeApplySeq) {
+        scheduleMiniThemeInspectRetry(snapshot, request, applySeq);
+      } else if (!packageInspectFailed) {
+        clearMiniThemeInspectRetry(request);
+      }
+    } finally {
+      if (pendingMiniThemeRequest === request) {
+        pendingMiniThemeRequest = null;
+      }
+    }
   }
 
-  function resolveScheme(
-    preference: ColorScheme | undefined
-  ): 'light' | 'dark' {
+  function resolveScheme(preference: ColorScheme | undefined): MiniThemeScheme {
     if (preference === 'dark') return 'dark';
     if (preference === 'light') return 'light';
     return mediaQuery?.matches ? 'dark' : 'light';
@@ -240,41 +406,60 @@
         })
         .catch((_error: unknown) => {});
 
-      // 初始拉取偏好并应用主题令牌（首次进入 Mini Player 时同步 CSS 变量）
-      void getPreferences()
-        .then((prefs) => {
-          if (!lifecycle.disposed) applyThemePreferences(prefs);
+      // Playback subscriptions are independent of theme hydration. A slow or
+      // failed preferences/inspect request must not create a startup event gap.
+      void listenPlayerStateChanged((state) => {
+        if (lifecycle.disposed) return;
+        playerState = state;
+        clearPlayPendingIfSettled(state);
+      })
+        .then((stateUnlisten) => {
+          if (lifecycle.disposed) {
+            stateUnlisten();
+            return;
+          }
+          unlisteners.push(stateUnlisten);
+        })
+        .catch((_error: unknown) => {});
+      void listenPlayerProgress((state) => {
+        if (
+          lifecycle.disposed ||
+          !shouldApplyPlaybackProgress(state, playerState)
+        ) {
+          return;
+        }
+        playerState = {
+          ...playerState,
+          sessionId: state.sessionId,
+          progress: state.progress,
+          duration: state.duration,
+        };
+      })
+        .then((progressUnlisten) => {
+          if (lifecycle.disposed) {
+            progressUnlisten();
+            return;
+          }
+          unlisteners.push(progressUnlisten);
         })
         .catch((_error: unknown) => {});
 
       void (async () => {
-        const stateUnlisten = await listenPlayerStateChanged((state) => {
-          playerState = state;
-          clearPlayPendingIfSettled(state);
-        });
-        const progressUnlisten = await listenPlayerProgress((state) => {
-          if (!shouldApplyPlaybackProgress(state, playerState)) return;
-          playerState = {
-            ...playerState,
-            sessionId: state.sessionId,
-            progress: state.progress,
-            duration: state.duration,
-          };
-        });
-        // 订阅主窗口的 preferences_snapshot 广播，跨窗口同步主题令牌
+        // 先订阅主题事件，再读取初始快照，避免两步之间发生的切换丢失。
         const prefsUnlisten = await listenPreferencesSnapshot((snapshot) => {
           if (lifecycle.disposed) return;
-          applyThemePreferences(snapshot);
+          void applyThemePreferences(snapshot);
         });
-
         if (lifecycle.disposed) {
-          stateUnlisten();
-          progressUnlisten();
           prefsUnlisten();
           return;
         }
-
-        unlisteners.push(stateUnlisten, progressUnlisten, prefsUnlisten);
+        unlisteners.push(prefsUnlisten);
+        await getPreferences()
+          .then((prefs) => {
+            if (!lifecycle.disposed) return applyThemePreferences(prefs);
+          })
+          .catch((_error: unknown) => {});
       })().catch((_error: unknown) => {});
     }
 
@@ -291,6 +476,11 @@
   });
 
   onDestroy(() => {
+    miniThemeApplySeq += 1;
+    if (miniThemeRetryTimer !== null) {
+      clearTimeout(miniThemeRetryTimer);
+      miniThemeRetryTimer = null;
+    }
     document.documentElement.classList.remove('mini-player-document');
   });
 
@@ -305,7 +495,7 @@
 
 <main class="mini-player">
   <section class="track-row" aria-label={m.mini_player_track_section_aria()}>
-    <div class="cover-shell" aria-hidden="true" data-tauri-drag-region>
+    <div class="cover-shell" aria-hidden="true" data-tauri-drag-region="deep">
       {#if playerState.coverUrl}
         <img class="cover-art" use:imageDataSrc={playerState.coverUrl} alt="" />
       {:else}
@@ -313,7 +503,7 @@
       {/if}
     </div>
 
-    <div class="track-meta" data-tauri-drag-region>
+    <div class="track-meta" data-tauri-drag-region="deep">
       <p class="track-title" {title}>{title}</p>
       <p class="track-artists" title={artists}>{artists}</p>
     </div>
@@ -445,7 +635,7 @@
   .track-row {
     min-width: 0;
     display: grid;
-    grid-template-columns: 54px minmax(0, 1fr) 30px;
+    grid-template-columns: 54px minmax(0, 1fr) 40px;
     align-items: center;
     gap: 10px;
   }
@@ -557,8 +747,8 @@
 
   .icon-button,
   .play-button {
-    width: 30px;
-    height: 30px;
+    width: 40px;
+    height: 40px;
     display: grid;
     place-items: center;
     border: 1px solid transparent;
@@ -569,8 +759,8 @@
   }
 
   .play-button {
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     background: linear-gradient(
       135deg,
       var(--album-accent),

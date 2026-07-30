@@ -65,9 +65,10 @@ export function getMotionDuration(baseMs: number): number {
   if (reducedMotionActive) return 0;
   const override = motionOverride;
   if (override) {
-    for (const [key, value] of Object.entries(override) as Array<
-      [keyof typeof MOTION, number]
-    >) {
+    for (const [key, value] of Object.entries(override) as [
+      keyof typeof MOTION,
+      number,
+    ][]) {
       if (MOTION[key] === baseMs) {
         return value / 1000;
       }
@@ -102,9 +103,10 @@ export function applyMotionOverride(overrides: MotionOverride | null): void {
     PAGE_OUT: null,
     OVERLAY_IN: null,
   };
-  for (const [key, cssVar] of Object.entries(cssMap) as Array<
-    [keyof typeof MOTION, string | null]
-  >) {
+  for (const [key, cssVar] of Object.entries(cssMap) as [
+    keyof typeof MOTION,
+    string | null,
+  ][]) {
     if (!cssVar) continue;
     const value = overrides?.[key];
     if (value !== undefined) {
@@ -137,9 +139,10 @@ export function applyShapeOverride(overrides: ShapeOverride | null): void {
     '2xl': '--shape-2xl',
     pill: '--shape-pill',
   };
-  for (const [key, cssVar] of Object.entries(map) as Array<
-    [keyof ShapeOverride, string]
-  >) {
+  for (const [key, cssVar] of Object.entries(map) as [
+    keyof ShapeOverride,
+    string,
+  ][]) {
     const value = overrides?.[key];
     if (value !== undefined) {
       root.style.setProperty(cssVar, `${value}px`);
@@ -168,9 +171,10 @@ export function applyDensityOverride(overrides: DensityOverride | null): void {
     lg: '--density-lg',
     xl: '--density-xl',
   };
-  for (const [key, cssVar] of Object.entries(map) as Array<
-    [keyof DensityOverride, string]
-  >) {
+  for (const [key, cssVar] of Object.entries(map) as [
+    keyof DensityOverride,
+    string,
+  ][]) {
     const value = overrides?.[key];
     if (value !== undefined) {
       root.style.setProperty(cssVar, `${value}px`);
@@ -203,9 +207,10 @@ export function applyElevationOverride(
     lg: '--elevation-lg',
     xl: '--elevation-xl',
   };
-  for (const [key, cssVar] of Object.entries(map) as Array<
-    [keyof ElevationOverride, string]
-  >) {
+  for (const [key, cssVar] of Object.entries(map) as [
+    keyof ElevationOverride,
+    string,
+  ][]) {
     const value = overrides?.[key];
     if (value !== undefined) {
       root.style.setProperty(cssVar, value);
@@ -232,9 +237,10 @@ export function applyBlurOverride(overrides: BlurOverride | null): void {
     lg: '--blur-lg',
     xl: '--blur-xl',
   };
-  for (const [key, cssVar] of Object.entries(map) as Array<
-    [keyof BlurOverride, string]
-  >) {
+  for (const [key, cssVar] of Object.entries(map) as [
+    keyof BlurOverride,
+    string,
+  ][]) {
     const value = overrides?.[key];
     if (value !== undefined) {
       root.style.setProperty(cssVar, `${value}px`);
@@ -265,9 +271,10 @@ export function applyFontFamilyOverride(
     display: '--font-display',
     mono: '--font-mono',
   };
-  for (const [key, cssVar] of Object.entries(map) as Array<
-    [keyof FontFamilyOverride, string]
-  >) {
+  for (const [key, cssVar] of Object.entries(map) as [
+    keyof FontFamilyOverride,
+    string,
+  ][]) {
     const value = overrides?.[key];
     if (value && value.trim() !== '') {
       root.style.setProperty(cssVar, value);

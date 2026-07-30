@@ -42,5 +42,9 @@ describe('SettingsSheet section composition', () => {
       );
       expect(source).toContain(`<${section}`);
     }
+
+    expect(source).toContain('packageColorsLocked');
+    expect(source).toContain('themePackageManager.activePackageId');
+    expect(source).toContain('themePackageManager.previewingId');
   });
 });

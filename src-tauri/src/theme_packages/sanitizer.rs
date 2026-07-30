@@ -4,7 +4,7 @@
 //!
 //! 承担主题包 JSON 反序列化后的字段级校验与清洗：
 //!
-//! - **颜色 slot 白名单**：只允许 `#RRGGBB` / `#RRGGBBAA` hex 与 `rgb()` / `rgba()` 三种形式
+//! - **颜色 slot 白名单**：只允许运行时可无损消费的 `#RRGGBB`
 //! - **CSS 值黑名单**：拒绝 `url(...)`、`expression(...)`、`@import`、`javascript:` 等易被滥用的形式
 //! - **manifest 长度限制**：id ≤ 64、name ≤ 128、version ≤ 32、其它文本 ≤ 512
 //! - **motion 数值范围**：所有档位 clamp 到 `[0, 5000]` ms，超出区间以警告降级
@@ -36,6 +36,67 @@ const MAX_ID_LEN: usize = 64;
 const MAX_NAME_LEN: usize = 128;
 const MAX_VERSION_LEN: usize = 32;
 const MAX_TEXT_LEN: usize = 512;
+
+/// Validate the stable identifier used by newly imported packages.
+pub(crate) fn validate_package_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > MAX_ID_LEN {
+        return Err(format!(
+            "theme package id must contain 1 to {MAX_ID_LEN} ASCII characters"
+        ));
+    }
+    let bytes = id.as_bytes();
+    if !bytes[0].is_ascii_lowercase() || !bytes[bytes.len() - 1].is_ascii_alphanumeric() {
+        return Err("theme package id must use lowercase kebab-case".to_string());
+    }
+    if bytes
+        .iter()
+        .any(|byte| !(byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-'))
+        || id.split('-').any(str::is_empty)
+    {
+        return Err("theme package id must use lowercase kebab-case".to_string());
+    }
+    Ok(())
+}
+
+/// Validate an identifier read from the committed directory.
+///
+/// Older releases allowed uppercase letters and underscores in package ids.  We
+/// keep those packages addressable, but the value still has to be a conservative
+/// single path component so it can never escape `committed/` when used as a file
+/// stem.  New imports continue to use the stricter kebab-case validator above.
+pub(crate) fn validate_stored_package_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > MAX_ID_LEN {
+        return Err(format!(
+            "stored theme package id must contain 1 to {MAX_ID_LEN} ASCII characters"
+        ));
+    }
+    if id == "." || id == ".." {
+        return Err("stored theme package id cannot be a path component".to_string());
+    }
+    let bytes = id.as_bytes();
+    if !bytes[0].is_ascii_alphanumeric() || !bytes[bytes.len() - 1].is_ascii_alphanumeric() {
+        return Err("stored theme package id must be a safe file stem".to_string());
+    }
+    if bytes.iter().any(|byte| {
+        !(byte.is_ascii_alphanumeric() || *byte == b'-' || *byte == b'_' || *byte == b'.')
+    }) {
+        return Err("stored theme package id must be a safe file stem".to_string());
+    }
+    // Do not create or address Windows device names even when running on Unix;
+    // package directories can be copied between platforms.
+    let upper = id.to_ascii_uppercase();
+    let stem = upper.split('.').next().unwrap_or(upper.as_str());
+    if matches!(stem, "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && matches!(stem.as_bytes().first(), Some(b'C' | b'L'))
+            && stem.as_bytes()[1].is_ascii_digit()
+            && stem.as_bytes()[2].is_ascii_digit()
+            && stem.as_bytes()[3].is_ascii_digit())
+    {
+        return Err("stored theme package id uses a reserved device name".to_string());
+    }
+    Ok(())
+}
 
 /// motion 档位允许的最大毫秒数（超出视为异常，clamp）。
 const MAX_MOTION_MS: u32 = 5000;
@@ -71,59 +132,89 @@ const CSS_BLACKLIST: &[&str] = &[
     "data:text/html",
 ];
 
-/// 判断字符串是否合法的颜色值（hex / rgb / rgba）。
+/// Normalize a legacy color spelling to the six-digit form consumed by the UI.
 ///
-/// 允许：
-/// - `#[0-9a-fA-F]{3,4}` / `#[0-9a-fA-F]{6,8}`（3/4/6/8 字符）
-/// - `rgb(r, g, b)` / `rgba(r, g, b, a)`（数值范围检查交给浏览器，本层仅做形态校验）
-pub(crate) fn is_valid_color_value(raw: &str) -> bool {
-    let s = raw.trim();
-    if s.is_empty() {
-        return false;
-    }
-    // 黑名单短路：任何危险关键字直接拒
-    let lower = s.to_ascii_lowercase();
-    for bad in CSS_BLACKLIST {
-        if lower.contains(bad) {
-            return false;
+/// The alpha channel is intentionally discarded: theme slots are opaque in the
+/// current runtime contract.  The boolean in the return value indicates that a
+/// legacy/alpha spelling was accepted and should produce a diagnostic warning.
+fn normalize_color_value(raw: &str) -> Option<(String, bool)> {
+    let value = raw.trim();
+    if let Some(hex) = value.strip_prefix('#') {
+        if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
         }
-    }
-    // hex 形式
-    if let Some(rest) = s.strip_prefix('#') {
-        let len = rest.len();
-        return (len == 3 || len == 4 || len == 6 || len == 8)
-            && rest.chars().all(|c| c.is_ascii_hexdigit());
-    }
-    // rgb() / rgba() 形式
-    if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
-        let open = s.find('(').unwrap_or(0);
-        let close = s.rfind(')');
-        if close != Some(s.len() - 1) {
-            return false;
-        }
-        let inner = &s[open + 1..s.len() - 1];
-        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
-        if parts.len() < 3 || parts.len() > 4 {
-            return false;
-        }
-        // 前三个数值 0-255，第四个 0-1（若存在）
-        for (i, p) in parts.iter().enumerate() {
-            if i < 3 {
-                if p.parse::<u16>().map(|n| n <= 255).unwrap_or(false) {
-                    continue;
+        let rgb = match hex.len() {
+            3 => {
+                let mut expanded = String::with_capacity(6);
+                for ch in hex.chars() {
+                    expanded.push(ch);
+                    expanded.push(ch);
                 }
-                return false;
-            } else if let Ok(a) = p.parse::<f32>() {
-                if !(0.0..=1.0).contains(&a) {
-                    return false;
-                }
-            } else {
-                return false;
+                expanded
             }
-        }
-        return true;
+            4 => hex[..3].chars().flat_map(|ch| [ch, ch]).collect(),
+            6 => hex.to_string(),
+            8 => hex[..6].to_string(),
+            _ => return None,
+        };
+        return Some((format!("#{rgb}").to_ascii_lowercase(), hex.len() != 6));
     }
-    false
+
+    let inner = value.strip_suffix(')')?;
+    let open = inner.find('(')?;
+    if inner[open + 1..].contains(')') {
+        return None;
+    }
+    let function = inner[..open].trim().to_ascii_lowercase();
+    let args = &inner[open + 1..];
+    let expected = match function.as_str() {
+        "rgb" => 3,
+        "rgba" => 4,
+        _ => return None,
+    };
+    let parts = args.split(',').map(str::trim).collect::<Vec<_>>();
+    if parts.len() != expected || parts.iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    let mut channels = [0u8; 3];
+    for (index, part) in parts.iter().take(3).enumerate() {
+        let channel = if let Some(percent) = part.strip_suffix('%') {
+            let value = percent.parse::<f32>().ok()?;
+            if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+                return None;
+            }
+            (value * 2.55).round() as u8
+        } else {
+            let value = part.parse::<u16>().ok()?;
+            if value > 255 {
+                return None;
+            }
+            value as u8
+        };
+        channels[index] = channel;
+    }
+    if expected == 4 {
+        let alpha = parts[3];
+        let valid_alpha = if let Some(percent) = alpha.strip_suffix('%') {
+            let value = percent.parse::<f32>().ok()?;
+            value.is_finite() && (0.0..=100.0).contains(&value)
+        } else {
+            let value = alpha.parse::<f32>().ok()?;
+            value.is_finite() && (0.0..=1.0).contains(&value)
+        };
+        if !valid_alpha {
+            return None;
+        }
+    }
+    Some((
+        format!("#{:02x}{:02x}{:02x}", channels[0], channels[1], channels[2]),
+        true,
+    ))
+}
+
+/// 判断字符串是否为可兼容的颜色值（包括旧格式）。
+pub(crate) fn is_valid_color_value(raw: &str) -> bool {
+    normalize_color_value(raw).is_some()
 }
 
 /// 单个 slot BTreeMap 清洗结果。
@@ -141,13 +232,18 @@ fn sanitize_slot_map(raw: &BTreeMap<String, String>, scope: &str) -> SlotCleanRe
             warnings.push(format!("{scope}: unknown slot '{key}' dropped"));
             continue;
         }
-        if !is_valid_color_value(value) {
+        let Some((normalized, legacy)) = normalize_color_value(value) else {
             warnings.push(format!(
                 "{scope}: slot '{key}' has invalid color value, dropped"
             ));
             continue;
+        };
+        if legacy {
+            warnings.push(format!(
+                "{scope}: slot '{key}' normalized to opaque #RRGGBB"
+            ));
         }
-        cleaned.insert(key.clone(), value.trim().to_string());
+        cleaned.insert(key.clone(), normalized);
     }
     SlotCleanResult { cleaned, warnings }
 }
@@ -190,11 +286,21 @@ fn clamp_scalar(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackageIdPolicy {
+    Canonical,
+    Stored,
+}
+
 /// 完整清洗一份主题包文档（in-place）。
 ///
 /// 返回 `Err` 表示遭遇不可恢复的完整性错误（schemaVersion / manifest.id 缺失等）；
 /// 否则文档被就地修补，`document.warnings` 累积所有降级说明。
-pub(crate) fn sanitize_document(document: &mut ThemePackageDocument) -> Result<(), String> {
+fn sanitize_document_with_policy(
+    document: &mut ThemePackageDocument,
+    id_policy: PackageIdPolicy,
+    preserve_warnings: bool,
+) -> Result<(), String> {
     // 硬门槛：schemaVersion / id 缺失直接拒（不 warn）
     if document.schema_version != 1 {
         return Err(format!(
@@ -202,8 +308,9 @@ pub(crate) fn sanitize_document(document: &mut ThemePackageDocument) -> Result<(
             document.schema_version
         ));
     }
-    if document.manifest.id.trim().is_empty() {
-        return Err("theme package id must be non-empty".to_string());
+    match id_policy {
+        PackageIdPolicy::Canonical => validate_package_id(&document.manifest.id)?,
+        PackageIdPolicy::Stored => validate_stored_package_id(&document.manifest.id)?,
     }
     if document.manifest.name.trim().is_empty() {
         return Err("theme package name must be non-empty".to_string());
@@ -212,10 +319,13 @@ pub(crate) fn sanitize_document(document: &mut ThemePackageDocument) -> Result<(
         return Err("theme package version must be non-empty".to_string());
     }
 
-    let mut warnings: Vec<String> = std::mem::take(&mut document.warnings);
+    let mut warnings: Vec<String> = if preserve_warnings {
+        std::mem::take(&mut document.warnings)
+    } else {
+        Vec::new()
+    };
 
-    // manifest 长度截断
-    clamp_text("id", &mut document.manifest.id, MAX_ID_LEN, &mut warnings);
+    // manifest 长度截断（id 已在上方硬校验，不可截断改变身份）
     clamp_text(
         "name",
         &mut document.manifest.name,
@@ -363,10 +473,56 @@ pub(crate) fn sanitize_document(document: &mut ThemePackageDocument) -> Result<(
     }
 
     // cssVariables 条目数 + 命名空间 + 值清洗
-    sanitize_css_variables(&mut document.css_variables, &mut warnings);
+    sanitize_css_variables(&mut document.css_variables, "cssVariables", &mut warnings);
+
+    // cssVariableVariants 与基础变量共享完全相同的安全边界；每套 map 独立限额。
+    if let Some(ref mut variants) = document.css_variable_variants {
+        if let Some(ref mut light) = variants.light {
+            sanitize_css_variables(light, "cssVariableVariants.light", &mut warnings);
+            if light.is_empty() {
+                variants.light = None;
+            }
+        }
+        if let Some(ref mut dark) = variants.dark {
+            sanitize_css_variables(dark, "cssVariableVariants.dark", &mut warnings);
+            if dark.is_empty() {
+                variants.dark = None;
+            }
+        }
+        if variants.light.is_none() && variants.dark.is_none() {
+            document.css_variable_variants = None;
+        }
+    }
 
     document.warnings = warnings;
     Ok(())
+}
+
+/// Sanitize a newly imported or built-in package using the canonical id policy.
+pub(crate) fn sanitize_document(document: &mut ThemePackageDocument) -> Result<(), String> {
+    sanitize_document_with_policy(document, PackageIdPolicy::Canonical, true)
+}
+
+/// Sanitize a document that already lives in committed storage.
+///
+/// This compatibility entry point accepts the safe legacy id grammar while
+/// retaining trusted warnings that were previously generated by Harubble.
+pub(crate) fn sanitize_stored_document(document: &mut ThemePackageDocument) -> Result<(), String> {
+    sanitize_document_with_policy(document, PackageIdPolicy::Stored, true)
+}
+
+/// Sanitize a committed document whose sidecar is missing. Without the
+/// integrity marker, serialized warnings are treated as untrusted package
+/// input and replaced with diagnostics generated by this pass.
+pub(crate) fn sanitize_untrusted_stored_document(
+    document: &mut ThemePackageDocument,
+) -> Result<(), String> {
+    sanitize_document_with_policy(document, PackageIdPolicy::Stored, false)
+}
+
+/// Sanitize untrusted imported data and ignore package-authored warnings.
+pub(crate) fn sanitize_import_document(document: &mut ThemePackageDocument) -> Result<(), String> {
+    sanitize_document_with_policy(document, PackageIdPolicy::Canonical, false)
 }
 
 /// 校验单个 elevation box-shadow 字符串。
@@ -374,7 +530,7 @@ pub(crate) fn sanitize_document(document: &mut ThemePackageDocument) -> Result<(
 /// - 长度超上限 → 截断
 /// - 命中 CSS 黑名单（url/expression/javascript/等）→ 直接置 None 并 warn
 /// - 允许多层逗号分隔的 shadow；不做 CSS AST 层校验（保持 warn-而非-reject 语义）
-/// 清洗 visualContract 单字段：长度 ≤ 32 + 允许字符集 [a-z0-9\-_]，非法则清空并 warn。
+///   清洗 visualContract 单字段：长度 ≤ 32 + 允许字符集 [a-z0-9\-_]，非法则清空并 warn。
 ///
 /// 支持集校验（是否在当前 app 版本已实现的 family/depth 内）不在此层执行，
 /// 由前端 `resolveVisualContract` 在应用主题包时做 fallback + warning。
@@ -478,7 +634,7 @@ fn sanitize_font_name_field(field: &str, value: &mut Option<String>, warnings: &
     }
 }
 
-/// 校验 cssVariables map（Phase 4）。
+/// 校验一个自定义 CSS 变量 map（Phase 4）。
 ///
 /// - key 必须以 `--theme-custom-` 开头（命名空间隔离）
 /// - key 除前缀外只允许 `[a-z0-9\-]`（合法 CSS 自定义属性名）
@@ -486,6 +642,7 @@ fn sanitize_font_name_field(field: &str, value: &mut Option<String>, warnings: &
 /// - 条目数超 MAX_CSS_VARIABLES 时截断并 warn
 fn sanitize_css_variables(
     vars: &mut std::collections::BTreeMap<String, String>,
+    scope: &str,
     warnings: &mut Vec<String>,
 ) {
     let mut to_remove: Vec<String> = Vec::new();
@@ -494,7 +651,7 @@ fn sanitize_css_variables(
         count += 1;
         if count > MAX_CSS_VARIABLES {
             warnings.push(format!(
-                "cssVariables exceeds {MAX_CSS_VARIABLES} entries; extra entries dropped"
+                "{scope} exceeds {MAX_CSS_VARIABLES} entries; extra entries dropped"
             ));
             to_remove.push(key.clone());
             continue;
@@ -502,7 +659,7 @@ fn sanitize_css_variables(
         // key 命名空间校验
         if !key.starts_with(CSS_VAR_KEY_PREFIX) {
             warnings.push(format!(
-                "cssVariables key '{key}' must start with '{CSS_VAR_KEY_PREFIX}', dropped"
+                "{scope} key '{key}' must start with '{CSS_VAR_KEY_PREFIX}', dropped"
             ));
             to_remove.push(key.clone());
             continue;
@@ -514,7 +671,7 @@ fn sanitize_css_variables(
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if !key_valid {
             warnings.push(format!(
-                "cssVariables key '{key}' suffix must be [a-z0-9-], dropped"
+                "{scope} key '{key}' suffix must be [a-z0-9-], dropped"
             ));
             to_remove.push(key.clone());
             continue;
@@ -522,7 +679,7 @@ fn sanitize_css_variables(
         // value 校验
         if value.len() > MAX_CSS_VAR_VALUE_LEN {
             warnings.push(format!(
-                "cssVariables['{key}'] value truncated to {MAX_CSS_VAR_VALUE_LEN} chars"
+                "{scope}['{key}'] value truncated to {MAX_CSS_VAR_VALUE_LEN} chars"
             ));
             *value = value.chars().take(MAX_CSS_VAR_VALUE_LEN).collect();
         }
@@ -539,7 +696,7 @@ fn sanitize_css_variables(
             || value.contains('\\')
         {
             warnings.push(format!(
-                "cssVariables['{key}'] contains structural chars (;{{}}<>\\), dropped"
+                "{scope}['{key}'] contains structural chars (;{{}}<>\\), dropped"
             ));
             to_remove.push(key.clone());
             continue;
@@ -548,7 +705,7 @@ fn sanitize_css_variables(
         let value_ok = !CSS_BLACKLIST.iter().any(|b| lower.contains(b));
         if !value_ok {
             warnings.push(format!(
-                "cssVariables['{key}'] contains disallowed keyword, dropped"
+                "{scope}['{key}'] contains disallowed keyword, dropped"
             ));
             to_remove.push(key.clone());
         }
@@ -562,9 +719,9 @@ fn sanitize_css_variables(
 mod tests {
     use super::*;
     use crate::theme_packages::types::{
-        ThemePackageBlur, ThemePackageDensity, ThemePackageElevation, ThemePackageFontFamily,
-        ThemePackageManifest, ThemePackageMotion, ThemePackageShape, ThemePackageVariants,
-        ThemePackageVisualContract,
+        ThemePackageBlur, ThemePackageCssVariableVariants, ThemePackageDensity,
+        ThemePackageElevation, ThemePackageFontFamily, ThemePackageManifest, ThemePackageMotion,
+        ThemePackageShape, ThemePackageVariants, ThemePackageVisualContract,
     };
 
     fn base_document() -> ThemePackageDocument {
@@ -594,27 +751,41 @@ mod tests {
             visual_contract: None,
             font_family: None,
             css_variables: BTreeMap::new(),
+            css_variable_variants: None,
             warnings: Vec::new(),
         }
     }
 
     #[test]
-    fn is_valid_color_value_accepts_hex_rgb_rgba() {
-        assert!(is_valid_color_value("#fff"));
-        assert!(is_valid_color_value("#abcd"));
+    fn is_valid_color_value_accepts_exact_six_digit_hex() {
         assert!(is_valid_color_value("#7c3aed"));
-        assert!(is_valid_color_value("#7c3aedff"));
-        assert!(is_valid_color_value("rgb(255, 0, 0)"));
-        assert!(is_valid_color_value("rgba(0, 0, 0, 0.5)"));
+        assert!(is_valid_color_value(" #ABCDEF "));
+    }
+
+    #[test]
+    fn is_valid_color_value_accepts_legacy_opaque_forms() {
+        for value in [
+            "#fff",
+            "#abcd",
+            "#7c3aedff",
+            "rgb(255, 0, 0)",
+            "rgba(0,0,0,0.5)",
+            "rgb(100%, 0%, 0%)",
+        ] {
+            assert!(is_valid_color_value(value), "expected valid color: {value}");
+        }
     }
 
     #[test]
     fn is_valid_color_value_rejects_invalid_forms() {
         assert!(!is_valid_color_value("red"));
         assert!(!is_valid_color_value("#zz"));
+        assert!(!is_valid_color_value("#ab"));
         assert!(!is_valid_color_value("#12345"));
         assert!(!is_valid_color_value("rgb(300, 0, 0)"));
         assert!(!is_valid_color_value("rgba(0,0,0,2.5)"));
+        assert!(!is_valid_color_value("rgb(1,2,3,4)"));
+        assert!(!is_valid_color_value("rgba(1,2,3)"));
         assert!(!is_valid_color_value(""));
         assert!(!is_valid_color_value("   "));
     }
@@ -655,6 +826,37 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_normalizes_legacy_slot_colors_without_losing_rgb() {
+        let mut doc = base_document();
+        doc.slots.insert("accent".to_string(), "#abc".to_string());
+        doc.slots
+            .insert("surface".to_string(), "rgba(1, 2, 3, 0.25)".to_string());
+        sanitize_document(&mut doc).unwrap();
+        assert_eq!(doc.slots.get("accent").map(String::as_str), Some("#aabbcc"));
+        assert_eq!(
+            doc.slots.get("surface").map(String::as_str),
+            Some("#010203")
+        );
+        assert!(
+            doc.warnings
+                .iter()
+                .filter(|warning| warning.contains("normalized"))
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn stored_id_policy_accepts_legacy_safe_stems_and_rejects_paths() {
+        for valid in ["Legacy_Theme", "Ark-UI", "theme.v1", "theme_2"] {
+            assert!(validate_stored_package_id(valid).is_ok(), "{valid}");
+        }
+        for invalid in ["../escape", "a/b", "a\\b", "CON", "", "a b", "a\0b"] {
+            assert!(validate_stored_package_id(invalid).is_err(), "{invalid:?}");
+        }
+    }
+
+    #[test]
     fn sanitize_rejects_unsupported_schema_version() {
         let mut doc = base_document();
         doc.schema_version = 2;
@@ -666,6 +868,35 @@ mod tests {
         let mut doc = base_document();
         doc.manifest.id = "  ".to_string();
         assert!(sanitize_document(&mut doc).is_err());
+    }
+
+    #[test]
+    fn sanitize_rejects_ids_that_are_not_lowercase_kebab_case() {
+        for invalid in [
+            "../../escape",
+            "/tmp/x",
+            "a/b",
+            "Ark-UI",
+            "ark_ui",
+            "ark--ui",
+            "-ark-ui",
+            "ark-ui-",
+        ] {
+            let mut doc = base_document();
+            doc.manifest.id = invalid.to_string();
+            assert!(
+                sanitize_document(&mut doc).is_err(),
+                "id should be rejected: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_accepts_lowercase_kebab_case_id() {
+        let mut doc = base_document();
+        doc.manifest.id = "ark-ui-endfield-2".to_string();
+        sanitize_document(&mut doc).unwrap();
+        assert_eq!(doc.manifest.id, "ark-ui-endfield-2");
     }
 
     #[test]
@@ -920,6 +1151,76 @@ mod tests {
             Some("#ff0000")
         );
         assert!(doc.warnings.is_empty());
+    }
+
+    #[test]
+    fn sanitize_css_variable_variants_uses_the_same_rules_for_both_schemes() {
+        let mut light = BTreeMap::new();
+        light.insert(
+            "--theme-custom-panel".to_string(),
+            "rgba(255, 255, 255, 0.9)".to_string(),
+        );
+        light.insert("--bg-primary".to_string(), "#ffffff".to_string());
+
+        let mut dark = BTreeMap::new();
+        dark.insert(
+            "--theme-custom-panel".to_string(),
+            "rgba(0, 0, 0, 0.9)".to_string(),
+        );
+        dark.insert(
+            "--theme-custom-injected".to_string(),
+            "url(evil.png)".to_string(),
+        );
+
+        let mut doc = base_document();
+        doc.css_variable_variants = Some(ThemePackageCssVariableVariants {
+            light: Some(light),
+            dark: Some(dark),
+        });
+        sanitize_document(&mut doc).unwrap();
+
+        let variants = doc.css_variable_variants.as_ref().unwrap();
+        let light = variants.light.as_ref().unwrap();
+        let dark = variants.dark.as_ref().unwrap();
+        assert_eq!(
+            light.get("--theme-custom-panel").map(String::as_str),
+            Some("rgba(255, 255, 255, 0.9)")
+        );
+        assert!(!light.contains_key("--bg-primary"));
+        assert_eq!(
+            dark.get("--theme-custom-panel").map(String::as_str),
+            Some("rgba(0, 0, 0, 0.9)")
+        );
+        assert!(!dark.contains_key("--theme-custom-injected"));
+        assert!(doc
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cssVariableVariants.light")));
+        assert!(doc
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cssVariableVariants.dark")));
+    }
+
+    #[test]
+    fn deserialize_legacy_document_without_css_variable_variants() {
+        let source = r##"{
+            "schemaVersion": 1,
+            "manifest": { "id": "legacy", "name": "Legacy", "version": "1.0.0" },
+            "slots": { "accent": "#7c3aed" },
+            "cssVariables": { "--theme-custom-panel": "#ffffff" }
+        }"##;
+
+        let mut doc: ThemePackageDocument = serde_json::from_str(source).unwrap();
+        sanitize_document(&mut doc).unwrap();
+
+        assert!(doc.css_variable_variants.is_none());
+        assert_eq!(
+            doc.css_variables
+                .get("--theme-custom-panel")
+                .map(String::as_str),
+            Some("#ffffff")
+        );
     }
 
     #[test]

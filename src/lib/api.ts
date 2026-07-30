@@ -399,9 +399,13 @@ export async function getPreferences(): Promise<AppPreferences> {
 }
 
 export async function setPreferences(
-  preferences: AppPreferences
+  preferences: AppPreferences,
+  expectedRevision: number
 ): Promise<AppPreferences> {
-  return invoke<AppPreferences>('set_preferences', { preferences });
+  return invoke<AppPreferences>('set_preferences', {
+    preferences,
+    expectedRevision,
+  });
 }
 
 export async function listLogRecords(

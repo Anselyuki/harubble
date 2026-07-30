@@ -22,12 +22,27 @@
 /**
  * 视觉语言族。字面量联合，编译期约束支持集。
  */
-export type ThemeFamily = 'glass' | 'material' | 'terminal';
+export type ThemeFamily =
+  | 'glass'
+  | 'material'
+  | 'terminal'
+  | 'ark'
+  | 'endfield'
+  | 'exa'
+  | 'popucom'
+  | 'corporate';
 
 /**
  * 视觉深度层级。
  */
-export type ThemeDepth = 'flat' | 'balanced' | 'deep';
+export type ThemeDepth =
+  | 'flat'
+  | 'balanced'
+  | 'deep'
+  | 'minimal'
+  | 'moderate'
+  | 'complex'
+  | 'maximal';
 
 /**
  * 当前 app 版本已实现的 family 支持集。
@@ -39,6 +54,11 @@ export const SUPPORTED_THEME_FAMILIES: readonly ThemeFamily[] = [
   'glass',
   'material',
   'terminal',
+  'ark',
+  'endfield',
+  'exa',
+  'popucom',
+  'corporate',
 ];
 
 /**
@@ -48,7 +68,24 @@ export const SUPPORTED_THEME_DEPTHS: readonly ThemeDepth[] = [
   'flat',
   'balanced',
   'deep',
+  'minimal',
+  'moderate',
+  'complex',
+  'maximal',
 ];
+
+const STRUCTURED_CONTROL_FAMILIES: readonly ThemeFamily[] = [
+  'material',
+  'terminal',
+  'ark',
+  'endfield',
+  'corporate',
+];
+
+/** 选择现有的硬边/elevation 控件实现；颜色和几何仍由 package token 决定。 */
+export function usesStructuredControls(family: ThemeFamily): boolean {
+  return STRUCTURED_CONTROL_FAMILIES.includes(family);
+}
 
 /**
  * visualContract 解析结果，一定在支持集内。
@@ -142,6 +179,8 @@ export function applyVisualContract(
   if (typeof document !== 'undefined') {
     document.documentElement.dataset.themeFamily = resolved.family;
     document.documentElement.dataset.themeDepth = resolved.depth;
+    document.documentElement.dataset.arkTheme = resolved.family;
+    document.documentElement.dataset.arkDepth = resolved.depth;
   }
   return resolved.warnings;
 }

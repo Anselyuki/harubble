@@ -203,14 +203,6 @@
   /* eslint-enable @typescript-eslint/no-unnecessary-condition */
 </script>
 
-{#if runtime.isMacOS}
-  <div
-    class="macos-window-drag-region"
-    data-tauri-drag-region
-    aria-hidden="true"
-  ></div>
-{/if}
-
 <StatusToastHost />
 
 <AppProviders {runtime}>
@@ -219,12 +211,7 @@
     class:macos-overlay={runtime.isMacOS}
     bind:this={shellEl}
   >
-    <div
-      class="brand-region"
-      aria-hidden="true"
-      use:syncBrandHeight
-      data-tauri-drag-region
-    >
+    <div class="brand-region" aria-hidden="true" use:syncBrandHeight>
       <BrandSlab bind:slabEl={logoSlabEl} />
       <BrandLogo
         isMacOS={runtime.isMacOS}

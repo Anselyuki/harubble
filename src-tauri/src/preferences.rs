@@ -3,6 +3,7 @@ use crate::logging::{LogCenter, LogLevel, LogPayload};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// 应用支持的界面语言
@@ -29,6 +30,8 @@ pub enum ColorScheme {
 }
 
 const DEFAULT_THEME_PRESET_ID: &str = "harubble-classic";
+pub(crate) const CURRENT_PREFERENCES_SCHEMA_VERSION: i32 = 2;
+const MAX_PREFERENCES_IMPORT_BYTES: u64 = 512 * 1024;
 const THEME_PRESET_IDS: &[&str] = &["harubble-classic", "clear-aqua", "night-console"];
 const THEME_COLOR_SLOTS: &[&str] = &[
     "accent",
@@ -257,8 +260,8 @@ impl AppPreferences {
     /// 用途：`PreferencesStore::load` 在识别到 `schema_version < 2` 时调用一次并原地写回，
     /// 让后续的 CAS 从 revision=0 起步。
     pub(crate) fn migrate_v1_to_v2(&mut self) {
-        if self.schema_version < 2 {
-            self.schema_version = 2;
+        if self.schema_version < CURRENT_PREFERENCES_SCHEMA_VERSION {
+            self.schema_version = CURRENT_PREFERENCES_SCHEMA_VERSION;
             // active_package_id 与 revision 已由 serde default 填充，此处仅显式重置以保证语义
             self.theme.active_package_id = None;
             self.theme.revision = 0;
@@ -460,6 +463,42 @@ futureSlot = "#222222"
         assert_eq!(prefs.theme.custom_colors.get("accent").unwrap(), "#111111");
         assert!(!prefs.theme.custom_colors.contains_key("futureSlot"));
     }
+
+    #[test]
+    fn import_accepts_preferences_at_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PreferencesStore::new(dir.path().to_path_buf());
+        let import_path = dir.path().join("preferences-at-limit.toml");
+        let prefs = base_prefs_with_output_dir(dir.path());
+        let mut content = toml::to_string_pretty(&prefs).unwrap().into_bytes();
+        content.extend_from_slice(b"\n#");
+        content.resize(MAX_PREFERENCES_IMPORT_BYTES as usize, b'x');
+        fs::write(&import_path, content).unwrap();
+
+        let imported = store
+            .import_from(&import_path, Locale::default())
+            .expect("an exact-boundary preferences file should import");
+
+        assert_eq!(imported.output_dir, dir.path().to_string_lossy());
+    }
+
+    #[test]
+    fn import_rejects_preferences_above_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PreferencesStore::new(dir.path().to_path_buf());
+        let import_path = dir.path().join("preferences-too-large.toml");
+        fs::write(
+            &import_path,
+            vec![b'#'; MAX_PREFERENCES_IMPORT_BYTES as usize + 1],
+        )
+        .unwrap();
+
+        let error = store
+            .import_from(&import_path, Locale::default())
+            .expect_err("an oversized preferences file must be rejected");
+
+        assert!(error.contains("size limit"));
+    }
 }
 
 fn default_log_level() -> String {
@@ -510,7 +549,7 @@ fn ensure_not_symlink(path: &Path, message: &str) -> Result<(), String> {
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
-            schema_version: 2,
+            schema_version: CURRENT_PREFERENCES_SCHEMA_VERSION,
             output_format: "flac".to_string(),
             output_dir: String::new(),
             download_lyrics: true,
@@ -620,7 +659,7 @@ impl PreferencesStore {
                 .unwrap_or_else(|| std::path::PathBuf::from("/"))
         };
         let default_prefs = AppPreferences {
-            schema_version: 2,
+            schema_version: CURRENT_PREFERENCES_SCHEMA_VERSION,
             output_format: "flac".to_string(),
             output_dir: resolved_output_dir.to_string_lossy().to_string(),
             download_lyrics: true,
@@ -695,8 +734,31 @@ impl PreferencesStore {
         locale: Locale,
     ) -> Result<AppPreferences, String> {
         validate_explicit_import_path(path, locale)?;
-        let content = fs::read_to_string(path)
+        let file =
+            fs::File::open(path).map_err(|_| tr(locale, "preferences-import-file-read-failed"))?;
+        let metadata = file
+            .metadata()
             .map_err(|_| tr(locale, "preferences-import-file-read-failed"))?;
+        if metadata.len() > MAX_PREFERENCES_IMPORT_BYTES {
+            return Err(format!(
+                "preferences import exceeds size limit ({} > {} bytes)",
+                metadata.len(),
+                MAX_PREFERENCES_IMPORT_BYTES
+            ));
+        }
+
+        // Keep the read bounded even if the file grows after the metadata check.
+        let mut content = String::with_capacity(metadata.len() as usize);
+        file.take(MAX_PREFERENCES_IMPORT_BYTES + 1)
+            .read_to_string(&mut content)
+            .map_err(|_| tr(locale, "preferences-import-file-read-failed"))?;
+        if content.len() as u64 > MAX_PREFERENCES_IMPORT_BYTES {
+            return Err(format!(
+                "preferences import exceeds size limit ({} > {} bytes)",
+                content.len(),
+                MAX_PREFERENCES_IMPORT_BYTES
+            ));
+        }
         let prefs: AppPreferences =
             toml::from_str(&content).map_err(|e| format!("failed to parse TOML: {e}"))?;
         prefs.validate(locale)?;

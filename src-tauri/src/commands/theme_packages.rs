@@ -18,8 +18,9 @@ use crate::app_state::AppState;
 use crate::preferences::AppPreferences;
 use crate::theme_packages::{ThemePackageDocument, ThemePackageSummary};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use tauri::{Emitter, State};
+use tauri::State;
 
 /// 主题包命令的结构化错误类型。
 ///
@@ -143,7 +144,29 @@ pub fn install_theme_package_from_file(
             "path must point to a regular file".to_string(),
         ));
     }
-    let raw = fs::read(&path_buf).map_err(|e| ThemePackageError::Io(e.to_string()))?;
+    const MAX_PACKAGE_BYTES: u64 = crate::theme_packages::service::MAX_PACKAGE_JSON_BYTES as u64;
+    if metadata.len() > MAX_PACKAGE_BYTES {
+        return Err(ThemePackageError::InvalidPackage(format!(
+            "theme package exceeds size limit ({} > {} bytes)",
+            metadata.len(),
+            MAX_PACKAGE_BYTES
+        )));
+    }
+    // Bound the read as well as the metadata check. A file can grow between
+    // stat and open (or report a stale size), so never let the command buffer
+    // more than one byte past the service limit.
+    let file = fs::File::open(&path_buf).map_err(|e| ThemePackageError::Io(e.to_string()))?;
+    let mut raw = Vec::with_capacity(metadata.len().min(MAX_PACKAGE_BYTES) as usize);
+    file.take(MAX_PACKAGE_BYTES + 1)
+        .read_to_end(&mut raw)
+        .map_err(|e| ThemePackageError::Io(e.to_string()))?;
+    if raw.len() as u64 > MAX_PACKAGE_BYTES {
+        return Err(ThemePackageError::InvalidPackage(format!(
+            "theme package exceeds size limit ({} > {} bytes)",
+            raw.len(),
+            MAX_PACKAGE_BYTES
+        )));
+    }
     state
         .theme_packages()
         .install_from_bytes(raw)
@@ -194,22 +217,30 @@ pub async fn uninstall_theme_package(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), ThemePackageError> {
-    let previously_active = state.preferences().theme.active_package_id.clone();
-    state
-        .theme_packages()
-        .uninstall(&id)
+    let packages = state.theme_packages().clone();
+    packages
+        .validate_uninstall_target(&id)
         .map_err(ThemePackageError::Internal)?;
-    if previously_active.as_deref() == Some(id.as_str()) {
-        // 同步清空激活状态，防止悬挂引用
-        let snapshot = state
-            .update_preferences(|prefs| {
-                prefs.theme.active_package_id = None;
-                prefs.theme.revision = prefs.theme.revision.wrapping_add(1);
-            })
-            .await
-            .map_err(ThemePackageError::Io)?;
-        emit_preferences_snapshot(&app, &snapshot);
+    let id_for_update = id.clone();
+    let (snapshot, was_active, uninstall_result) = state
+        .update_preferences_then(
+            move |prefs| {
+                let was_active =
+                    prefs.theme.active_package_id.as_deref() == Some(id_for_update.as_str());
+                if was_active {
+                    prefs.theme.active_package_id = None;
+                    prefs.theme.revision = prefs.theme.revision.wrapping_add(1);
+                }
+                was_active
+            },
+            move || packages.uninstall(&id),
+        )
+        .await
+        .map_err(ThemePackageError::Io)?;
+    if was_active {
+        crate::commands::preferences::emit_preferences_snapshot(&app, &snapshot);
     }
+    uninstall_result.map_err(ThemePackageError::Internal)?;
     Ok(())
 }
 
@@ -237,53 +268,42 @@ pub async fn set_active_theme_package(
     id: Option<String>,
     expected_revision: u64,
 ) -> Result<AppPreferences, ThemePackageError> {
-    // 提前校验目标 id 存在（避免 CAS 通过后 write 时才发现 404）
-    if let Some(ref target_id) = id {
-        if state
-            .theme_packages()
-            .inspect(target_id)
-            .map_err(ThemePackageError::Internal)?
-            .is_none()
-        {
-            return Err(ThemePackageError::NotFound(format!(
-                "theme package not found: {target_id}"
-            )));
-        }
-    }
-    // CAS 检查 + 原子更新在同一锁内完成
-    let current_revision = state.preferences().theme.revision;
-    if current_revision != expected_revision {
-        return Err(ThemePackageError::RevisionMismatch(
-            RevisionMismatchDetail {
-                current_revision,
-                expected_revision,
-                message: format!(
-                    "theme revision drift: expected {expected_revision}, got {current_revision}"
-                ),
-            },
-        ));
-    }
-    let snapshot = state
-        .update_preferences(|prefs| {
-            // 双检：写锁内再验一次，抵御 lock-free 阶段的漂移
-            if prefs.theme.revision == expected_revision {
-                prefs.theme.active_package_id = id.clone();
-                prefs.theme.revision = prefs.theme.revision.wrapping_add(1);
+    let packages = state.theme_packages().clone();
+    let result = state
+        .try_update_preferences(move |prefs| {
+            if let Some(ref target_id) = id {
+                if packages
+                    .inspect(target_id)
+                    .map_err(ThemePackageError::Internal)?
+                    .is_none()
+                {
+                    return Err(ThemePackageError::NotFound(format!(
+                        "theme package not found: {target_id}"
+                    )));
+                }
             }
+
+            let current_revision = prefs.theme.revision;
+            if current_revision != expected_revision {
+                return Err(ThemePackageError::RevisionMismatch(
+                    RevisionMismatchDetail {
+                        current_revision,
+                        expected_revision,
+                        message: format!(
+                            "theme revision drift: expected {expected_revision}, got {current_revision}"
+                        ),
+                    },
+                ));
+            }
+
+            prefs.theme.active_package_id = id;
+            prefs.theme.revision = prefs.theme.revision.wrapping_add(1);
+            Ok(())
         })
         .await
         .map_err(ThemePackageError::Io)?;
-    // 双检失败：写锁内 revision 已经变化，返回冲突
-    if snapshot.theme.revision == expected_revision {
-        return Err(ThemePackageError::RevisionMismatch(
-            RevisionMismatchDetail {
-                current_revision: snapshot.theme.revision,
-                expected_revision,
-                message: "theme revision changed while acquiring write lock".to_string(),
-            },
-        ));
-    }
-    emit_preferences_snapshot(&app, &snapshot);
+    let (snapshot, ()) = result?;
+    crate::commands::preferences::emit_preferences_snapshot(&app, &snapshot);
     Ok(snapshot)
 }
 
@@ -350,14 +370,4 @@ pub fn export_theme_package(
                 ThemePackageError::Io(e)
             }
         })
-}
-
-/// 发射 `preferences_snapshot` 事件，让所有窗口（含 Mini Player）同步偏好。
-///
-/// 该事件负载为完整 `AppPreferences`，前端 reducer 依据其中的 `theme.revision`
-/// 单调决定是否接受。失败时仅日志告警，不阻塞命令返回（事件订阅可自愈）。
-fn emit_preferences_snapshot(app: &tauri::AppHandle, snapshot: &AppPreferences) {
-    if let Err(err) = app.emit("preferences_snapshot", snapshot) {
-        eprintln!("[theme_packages] failed to emit preferences_snapshot: {err}");
-    }
 }

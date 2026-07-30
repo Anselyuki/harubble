@@ -76,6 +76,7 @@
   {#if searchResults.length > 0}
     <div class="candidates-list">
       {#each searchResults as val (`${val['zh-CN'] ?? ''}-${val['en-US'] ?? ''}`)}
+        {@const alreadyAdded = isAlreadyAdded(val)}
         {#if editingTag && tagIdentity(editingTag) === tagIdentity(val)}
           <div class="edit-row">
             {#each tagLocales as loc (loc.key)}
@@ -98,7 +99,7 @@
               </div>
             {/each}
             <div class="edit-actions">
-              {#if isAlreadyAdded(val)}
+              {#if alreadyAdded}
                 <Button size="xs" variant="secondary" onclick={handleSave}
                   >{m.tag_editor_edit_save()}</Button
                 >
@@ -113,38 +114,24 @@
             </div>
           </div>
         {:else}
-          <div
-            class="candidate-chip"
-            class:already-added={isAlreadyAdded(val)}
-            role="button"
-            tabindex="0"
-            onclick={() => onSelect(val)}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') {
-                e.stopPropagation();
-                onSelect(val);
-              }
-            }}
-          >
-            <span class="chip-text">
-              {displayValue(val)}
-              {#if val['en-US'] && val['en-US'] !== val['zh-CN']}
-                <span class="chip-en">{val['en-US']}</span>
-              {/if}
-            </span>
+          <div class="candidate-chip" class:already-added={alreadyAdded}>
+            <button
+              type="button"
+              class="candidate-select"
+              disabled={alreadyAdded}
+              onclick={() => onSelect(val)}
+            >
+              <span class="chip-text">
+                {displayValue(val)}
+                {#if val['en-US'] && val['en-US'] !== val['zh-CN']}
+                  <span class="chip-en">{val['en-US']}</span>
+                {/if}
+              </span>
+            </button>
             <button
               type="button"
               class="edit-btn-inset"
-              onclick={(e) => {
-                e.stopPropagation();
-                startEdit(val);
-              }}
-              onkeydown={(e) => {
-                if (e.key === 'Enter') {
-                  e.stopPropagation();
-                  startEdit(val);
-                }
-              }}
+              onclick={() => startEdit(val)}
               aria-label={m.tag_editor_edit_i18n()}
               title={m.tag_editor_edit_i18n()}>✎</button
             >
@@ -192,13 +179,13 @@
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.25rem 0.375rem 0.25rem 0.5rem;
+    min-height: 40px;
+    padding: 0 0.25rem 0 0.5rem;
     font-size: 0.75rem;
     border: 1px solid var(--color-border, #d1d5db);
     border-radius: var(--shape-pill);
     background: transparent;
     color: var(--text-primary);
-    cursor: pointer;
     font-family: var(--font-body);
     text-align: left;
   }
@@ -210,7 +197,31 @@
 
   .candidate-chip.already-added {
     opacity: 0.5;
+  }
+
+  .candidate-select {
+    display: flex;
+    min-width: 0;
+    min-height: 40px;
+    flex: 1;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+  }
+
+  .candidate-select:disabled {
     cursor: default;
+  }
+
+  .candidate-select:focus-visible,
+  .edit-btn-inset:focus-visible {
+    outline: 2px solid var(--color-primary, #6366f1);
+    outline-offset: 1px;
   }
 
   .chip-text {
@@ -227,8 +238,8 @@
 
   .edit-btn-inset {
     flex-shrink: 0;
-    width: 1rem;
-    height: 1rem;
+    width: 40px;
+    height: 40px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -239,15 +250,25 @@
     cursor: pointer;
     border-radius: 50%;
     opacity: 0;
+    pointer-events: none;
   }
 
-  .candidate-chip:hover .edit-btn-inset {
+  .candidate-chip:hover .edit-btn-inset,
+  .candidate-chip:focus-within .edit-btn-inset {
     opacity: 1;
+    pointer-events: auto;
   }
 
   .edit-btn-inset:hover {
     color: var(--color-primary, #6366f1);
     background: var(--color-chip-bg, #f3f4f6);
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .edit-btn-inset {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 
   .edit-row {

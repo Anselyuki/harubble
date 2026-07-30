@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "ark-ui-ark",
+    "name": "Industrial Cyan",
+    "version": "1.0.0",
+    "description": "Original black, white, and cyan industrial information-system theme.",
+    "author": "Harubble Contributors",
+    "license": "MIT",
+    "minAppVersion": "2.2.0"
+  },
+  "visualContract": {
+    "family": "ark",
+    "depth": "moderate"
+  },
+  "slots": {
+    "accent": "#18D1FF",
+    "surface": "#080A0B",
+    "textPrimary": "#F4F6F6",
+    "textSecondary": "#A7B0B3",
+    "tint": "#91B8C0",
+    "danger": "#FF5C6C"
+  },
+  "variants": {
+    "light": {
+      "accent": "#007F9E",
+      "surface": "#F4F6F6",
+      "textPrimary": "#080A0B",
+      "textSecondary": "#4F595D",
+      "tint": "#65777C",
+      "danger": "#C43E4E"
+    },
+    "dark": {
+      "accent": "#18D1FF",
+      "surface": "#080A0B",
+      "textPrimary": "#F4F6F6",
+      "textSecondary": "#A7B0B3",
+      "tint": "#91B8C0",
+      "danger": "#FF5C6C"
+    }
+  },
+  "motion": {
+    "micro": 100,
+    "fast": 180,
+    "base": 240,
+    "slow": 350,
+    "page": 650,
+    "baseOut": 200,
+    "slowOut": 300,
+    "pageOut": 500,
+    "overlayIn": 260
+  },
+  "shape": {
+    "xs": 0,
+    "sm": 0,
+    "md": 2,
+    "lg": 2,
+    "xl": 4,
+    "2xl": 4,
+    "pill": 2
+  },
+  "density": {
+    "xs": 3,
+    "sm": 7,
+    "md": 10,
+    "lg": 14,
+    "xl": 20
+  },
+  "elevation": {
+    "none": "none",
+    "xs": "none",
+    "sm": "0 1px 0 rgba(24, 209, 255, 0.16)",
+    "md": "0 0 0 1px rgba(24, 209, 255, 0.18), 4px 4px 0 rgba(0, 0, 0, 0.24)",
+    "lg": "0 0 0 1px rgba(24, 209, 255, 0.2), 8px 8px 0 rgba(0, 0, 0, 0.28)",
+    "xl": "0 0 0 1px rgba(24, 209, 255, 0.22), 12px 12px 0 rgba(0, 0, 0, 0.32)"
+  },
+  "blur": {
+    "sm": 0,
+    "md": 2,
+    "lg": 4,
+    "xl": 8
+  },
+  "fontFamily": {
+    "body": "HarmonyOS Sans SC, Arial, sans-serif",
+    "display": "NovecentoSansWide, Arial Narrow, sans-serif",
+    "mono": "SFMono-Regular, Cascadia Code, monospace"
+  },
+  "cssVariables": {
+    "--theme-custom-signal-alt": "#C8EB21",
+    "--theme-custom-stage-opacity": "0.24",
+    "--theme-custom-attention-duration": "1800ms"
+  },
+  "cssVariableVariants": {
+    "light": {
+      "--theme-custom-panel": "rgba(244, 246, 246, 0.88)",
+      "--theme-custom-rule": "rgba(8, 10, 11, 0.18)"
+    },
+    "dark": {
+      "--theme-custom-panel": "rgba(8, 10, 11, 0.82)",
+      "--theme-custom-rule": "rgba(244, 246, 246, 0.18)"
+    }
+  }
+}

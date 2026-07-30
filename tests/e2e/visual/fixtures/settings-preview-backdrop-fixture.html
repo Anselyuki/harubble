@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" class="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Settings preview backdrop fixture</title>
+  </head>
+  <body>
+    <script type="module">
+      import '/src/app.css';
+      import { mockIPC } from '@tauri-apps/api/mocks';
+      import { mount } from 'svelte';
+      import Fixture from './SettingsPreviewBackdropFixture.svelte';
+
+      mockIPC((command, args) => {
+        if (command === 'list_log_records') {
+          return {
+            records: [],
+            total: 0,
+            kind: args?.query?.kind ?? 'session',
+          };
+        }
+        if (command === 'get_log_file_status') {
+          return { hasSessionLog: false, hasPersistentLog: false };
+        }
+        throw new Error(`Unexpected fixture IPC command: ${command}`);
+      });
+
+      mount(Fixture, { target: document.body });
+    </script>
+  </body>
+</html>

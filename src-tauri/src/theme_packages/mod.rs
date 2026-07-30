@@ -9,6 +9,7 @@
 //!
 //! # 子模块导航
 //!
+//! - [`builtin`]：编译期内置主题包注册表。
 //! - [`types`]：主题包核心数据结构（`ThemePackageDocument` / `ThemePackageManifest` / `ThemePackageStatus`）。
 //! - [`store`]：`PackageStore` 磁盘状态机（staging/committed/pending-delete + `.sha256.sidecar`）。
 //! - [`sanitizer`]：`PackageSanitizer` schema 校验、字段级 clamp、CSS 值 sanitize。
@@ -21,6 +22,7 @@
 
 #![allow(dead_code)]
 
+pub(crate) mod builtin;
 pub(crate) mod downloader;
 pub(crate) mod sanitizer;
 pub(crate) mod service;

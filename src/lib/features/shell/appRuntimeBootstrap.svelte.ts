@@ -119,6 +119,9 @@ export interface EventSubscriptionDeps {
   ) => Promise<void>;
   setPlayerStateHydratedFromEvent: (value: boolean) => void;
   handleMenuCommand: (id: string) => void | Promise<void>;
+  handlePreferencesSnapshot: (
+    snapshot: AppEventMap['preferences_snapshot']
+  ) => void | Promise<void>;
 }
 /**
  * 应用启动引导流程。
@@ -383,6 +386,13 @@ export async function subscribeToTauriEvents(
     if (
       !(await register('app-menu-command', async (event) => {
         await deps.handleMenuCommand(event.payload.id);
+      }))
+    ) {
+      return cleanup;
+    }
+    if (
+      !(await register('preferences_snapshot', async (event) => {
+        await deps.handlePreferencesSnapshot(event.payload);
       }))
     ) {
       return cleanup;

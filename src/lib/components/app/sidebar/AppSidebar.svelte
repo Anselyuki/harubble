@@ -94,6 +94,8 @@
   <div
     class="sidebar-collections-collapsed"
     class:hidden={!contentCollapsed}
+    inert={!contentCollapsed}
+    aria-hidden={!contentCollapsed}
     bind:this={collectionsCollapsedEl}
   >
     <SidebarItemButton
@@ -116,6 +118,8 @@
     class="sidebar-collections-region"
     class:hidden={contentCollapsed}
     style:pointer-events={contentInteractive ? undefined : 'none'}
+    inert={contentCollapsed || !contentInteractive}
+    aria-hidden={contentCollapsed || !contentInteractive}
     bind:this={collectionsRegionEl}
   >
     <CollapsibleGroup
@@ -245,11 +249,13 @@
 
   .section-action-btn {
     appearance: none;
+    width: 40px;
+    height: 40px;
     border: none;
     background: none;
     color: var(--text-tertiary);
     cursor: pointer;
-    padding: 4px;
+    padding: 0;
     border-radius: var(--shape-sm);
     display: flex;
     align-items: center;

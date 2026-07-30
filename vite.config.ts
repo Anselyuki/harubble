@@ -1,5 +1,6 @@
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelteTesting } from '@testing-library/svelte/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
@@ -12,6 +13,7 @@ export default defineConfig({
       strategy: ['globalVariable', 'baseLocale'],
     }),
     svelte(),
+    svelteTesting(),
     tailwindcss(),
   ],
   clearScreen: false,

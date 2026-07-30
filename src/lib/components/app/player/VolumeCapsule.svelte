@@ -9,7 +9,10 @@
    *
    * 保留原路径让 Phase 3 重构对外看不见（"无缝"承诺）。
    */
-  import { getVisualContract } from '$lib/features/shell/visualContract.svelte';
+  import {
+    getVisualContract,
+    usesStructuredControls,
+  } from '$lib/features/shell/visualContract.svelte';
   import GlassVolumeCapsuleView from './glass/GlassVolumeCapsuleView.svelte';
   import MaterialVolumeCapsuleView from './material/MaterialVolumeCapsuleView.svelte';
 
@@ -37,7 +40,7 @@
   const contract = getVisualContract();
 </script>
 
-{#if contract.family === 'material' || contract.family === 'terminal'}
+{#if usesStructuredControls(contract.family)}
   <MaterialVolumeCapsuleView
     {volume}
     {muted}

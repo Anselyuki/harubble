@@ -6,7 +6,7 @@
 </script>
 
 <div
-  class="player-dock-wrap pointer-events-none relative z-[140] w-full self-stretch px-0"
+  class="player-dock-wrap pointer-events-none relative z-[var(--z-player-dock)] w-full self-stretch px-0"
 >
   <AudioPlayer {...props} />
 </div>

@@ -15,7 +15,10 @@
    * 所有调用方通过 `import PlayToggleGlyph from '.../PlayToggleGlyph.svelte'`
    * 引用，保留原路径能让 Phase 3 重构对外看不见（"无缝"承诺）。
    */
-  import { getVisualContract } from '$lib/features/shell/visualContract.svelte';
+  import {
+    getVisualContract,
+    usesStructuredControls,
+  } from '$lib/features/shell/visualContract.svelte';
   import GlassPlayToggleView from './glass/GlassPlayToggleView.svelte';
   import MaterialPlayToggleView from './material/MaterialPlayToggleView.svelte';
 
@@ -43,7 +46,7 @@
   const contract = getVisualContract();
 </script>
 
-{#if contract.family === 'material' || contract.family === 'terminal'}
+{#if usesStructuredControls(contract.family)}
   <MaterialPlayToggleView
     {isPlaying}
     {isLoading}

@@ -28,6 +28,7 @@ import { createAlbumCatalogRefreshScheduler } from '$lib/features/library/albumC
 import * as m from '$lib/paraglide/messages.js';
 import { toast } from 'svelte-sonner';
 import { dispatchMenuCommand } from '$lib/features/shell/menuCommands';
+import { getThemePackageManager } from '$lib/features/shell/themePackageManager.svelte';
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -59,6 +60,7 @@ export function createAppRuntime() {
     navigationManager,
     downloadBridge,
   } = createRuntimeComposites(notifyInfo, notifyError);
+  const themePackageManager = getThemePackageManager();
 
   const albumCatalogRefreshScheduler = createAlbumCatalogRefreshScheduler({
     ensureFresh: () => albumCatalogController.ensureFresh(),
@@ -206,6 +208,10 @@ export function createAppRuntime() {
           playerStateHydratedFromEvent = value;
         },
         handleMenuCommand,
+        handlePreferencesSnapshot: (snapshot) => {
+          settingsController.applyPreferencesSnapshot(snapshot);
+          themePackageManager.applyPreferencesSnapshot(snapshot);
+        },
       },
       shouldDispose
     );
@@ -308,6 +314,12 @@ export function createAppRuntime() {
         }
         unsubscribe = nextUnsubscribe;
 
+        // 先完成集中事件订阅，再读取主题快照，避免启动期间丢失主题切换。
+        await themePackageManager.hydrate();
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- async lifecycle race guard
+        if (disposed) {
+          return;
+        }
         await doBootstrapApp(() => disposed);
       } catch (error) {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- async race guard

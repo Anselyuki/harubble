@@ -22,7 +22,7 @@
 
 use crate::theme_packages::service::MAX_PACKAGE_JSON_BYTES;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::net::lookup_host;
@@ -149,8 +149,8 @@ pub(crate) fn validate_url_shape(raw: &str) -> Result<Url, String> {
 /// 解析 URL 主机对应的所有 IP 地址，校验都不在禁名单内，返回首个合法地址。
 ///
 /// **DNS rebinding 防护**：即使解析出多个地址，只要其中任一命中禁名单就整体拒绝。
-/// 主方案要求"IP 直连"，因此调用方拿到返回的 `IpAddr` 后应该重写 URL 用它直连，
-/// 但当前 Phase 1 MVP 直接放行域名请求 + 后置 IP 校验（能覆盖 90% 常见 SSRF）。
+/// 返回的地址会通过 reqwest 的静态 resolver 绑定到本次 client；请求仍保留原始
+/// hostname，以便 TLS SNI 和证书校验继续使用站点域名。
 pub(crate) async fn resolve_and_verify_host(host: &str, port: u16) -> Result<IpAddr, String> {
     // 处理形如 `[::1]:443` 的 v6 字面量
     let host_port = format!("{host}:{port}");
@@ -184,18 +184,22 @@ pub(crate) async fn download_theme_package(raw_url: &str) -> Result<Vec<u8>, Str
         .to_string();
     let port = url.port_or_known_default().unwrap_or(443);
     // 先做 SSRF 校验
-    resolve_and_verify_host(&host, port).await?;
+    let resolved_ip = resolve_and_verify_host(&host, port).await?;
 
     let client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(TOTAL_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .https_only(true)
+        // Pin the already-validated DNS answer. This keeps the URL hostname
+        // for Host/SNI while preventing reqwest from resolving it again after
+        // the SSRF check (DNS rebinding TOCTOU).
+        .resolve(&host, SocketAddr::new(resolved_ip, port))
         .user_agent(concat!("Harubble/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| format!("failed to build http client: {e}"))?;
 
-    let response = client
+    let mut response = client
         .get(url)
         .send()
         .await
@@ -231,18 +235,28 @@ pub(crate) async fn download_theme_package(raw_url: &str) -> Result<Vec<u8>, Str
         ));
     }
 
-    // 流式读取 + 累计字节校验（防 Content-Length 撒谎）
-    let bytes = response
-        .bytes()
+    // Consume one chunk at a time. `Response::bytes()` buffers the complete
+    // body before returning, so checking its length afterwards would still
+    // allow an unbounded chunked response to exhaust memory.
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or(0)
+            .min(MAX_PACKAGE_JSON_BYTES as u64) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| format!("failed to read theme package body: {e}"))?;
-    if bytes.len() > MAX_PACKAGE_JSON_BYTES {
-        return Err(format!(
-            "theme package too large after read: {} > {MAX_PACKAGE_JSON_BYTES} bytes",
-            bytes.len()
-        ));
+        .map_err(|e| format!("failed to read theme package body: {e}"))?
+    {
+        if body.len().saturating_add(chunk.len()) > MAX_PACKAGE_JSON_BYTES {
+            return Err(format!(
+                "theme package too large after read: > {MAX_PACKAGE_JSON_BYTES} bytes"
+            ));
+        }
+        body.extend_from_slice(&chunk);
     }
-    Ok(bytes.to_vec())
+    Ok(body)
 }
 
 #[cfg(test)]

@@ -148,6 +148,8 @@ export function formatPreferencesError(error: unknown): string {
         return m.domain_preferences_error_not_found();
       case 'io':
         return m.domain_preferences_error_io();
+      case 'revisionMismatch':
+        return m.domain_generic_error();
       case 'internal':
         return m.domain_generic_error();
     }

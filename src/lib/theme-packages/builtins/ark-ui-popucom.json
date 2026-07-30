@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "ark-ui-popucom",
+    "name": "Co-op Pop",
+    "version": "1.0.0",
+    "description": "Original blue, yellow, and orange playful platform theme.",
+    "author": "Harubble Contributors",
+    "license": "MIT",
+    "minAppVersion": "2.2.0"
+  },
+  "visualContract": {
+    "family": "popucom",
+    "depth": "moderate"
+  },
+  "slots": {
+    "accent": "#FFCC1A",
+    "surface": "#FFFDF4",
+    "textPrimary": "#141414",
+    "textSecondary": "#5A544A",
+    "tint": "#4D77C4",
+    "danger": "#C93E50"
+  },
+  "variants": {
+    "light": {
+      "accent": "#A87500",
+      "surface": "#FFFDF4",
+      "textPrimary": "#141414",
+      "textSecondary": "#5A544A",
+      "tint": "#4D77C4",
+      "danger": "#C93E50"
+    },
+    "dark": {
+      "accent": "#FFCC1A",
+      "surface": "#141414",
+      "textPrimary": "#FFFDF4",
+      "textSecondary": "#C9C0AA",
+      "tint": "#5579C4",
+      "danger": "#FF5D63"
+    }
+  },
+  "motion": {
+    "micro": 100,
+    "fast": 160,
+    "base": 240,
+    "slow": 360,
+    "page": 560,
+    "baseOut": 180,
+    "slowOut": 280,
+    "pageOut": 440,
+    "overlayIn": 260
+  },
+  "shape": {
+    "xs": 6,
+    "sm": 10,
+    "md": 14,
+    "lg": 18,
+    "xl": 24,
+    "2xl": 32,
+    "pill": 9999
+  },
+  "density": {
+    "xs": 5,
+    "sm": 10,
+    "md": 14,
+    "lg": 20,
+    "xl": 28
+  },
+  "elevation": {
+    "none": "none",
+    "xs": "1px 1px 0 rgba(20, 20, 20, 0.16)",
+    "sm": "2px 3px 0 rgba(20, 20, 20, 0.18)",
+    "md": "4px 5px 0 rgba(20, 20, 20, 0.22)",
+    "lg": "6px 8px 0 rgba(20, 20, 20, 0.26)",
+    "xl": "10px 12px 0 rgba(20, 20, 20, 0.3)"
+  },
+  "blur": {
+    "sm": 0,
+    "md": 0,
+    "lg": 2,
+    "xl": 4
+  },
+  "fontFamily": {
+    "body": "HarmonyOS Sans SC, Arial, sans-serif",
+    "display": "HarmonyOS Sans SC, Arial Rounded MT Bold, sans-serif",
+    "mono": "SFMono-Regular, Cascadia Code, monospace"
+  },
+  "cssVariables": {
+    "--theme-custom-signal-alt": "#3994FF",
+    "--theme-custom-action-alt": "#FFA800",
+    "--theme-custom-stage-opacity": "0.3",
+    "--theme-custom-attention-duration": "2000ms"
+  },
+  "cssVariableVariants": {
+    "light": {
+      "--theme-custom-panel": "rgba(255, 253, 244, 0.9)",
+      "--theme-custom-rule": "rgba(20, 20, 20, 0.16)"
+    },
+    "dark": {
+      "--theme-custom-panel": "rgba(20, 20, 20, 0.86)",
+      "--theme-custom-rule": "rgba(255, 253, 244, 0.18)"
+    }
+  }
+}

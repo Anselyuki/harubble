@@ -9,6 +9,9 @@ import {
 import {
   resolveAppThemeTokenSet,
   deriveGlobalTokensFromSlots,
+  applyAppThemeTokenSet,
+  applyContextThemePalette,
+  CONTEXT_TOKEN_ALLOWLIST,
   isSlotDerivationEnabled,
   LIGHT_TOKENS,
   DARK_TOKENS,
@@ -105,7 +108,7 @@ describe('deriveGlobalTokensFromSlots', () => {
     expect(tokens.bgElevated).toMatch(/0\.8/);
   });
 
-  it('all 21 ThemeTokenSet fields are present and non-empty', () => {
+  it('all ThemeTokenSet fields are present and non-empty', () => {
     const tokens = deriveGlobalTokensFromSlots(SAMPLE_LIGHT_SLOTS, 'light');
     const expectedKeys: (keyof ThemeTokenSet)[] = [
       'accent',
@@ -121,6 +124,8 @@ describe('deriveGlobalTokensFromSlots', () => {
       'textPrimary',
       'textSecondary',
       'textTertiary',
+      'tint',
+      'tintRgb',
       'border',
       'ring',
       'destructive',
@@ -139,6 +144,83 @@ describe('deriveGlobalTokensFromSlots', () => {
     const a = deriveGlobalTokensFromSlots(SAMPLE_LIGHT_SLOTS, 'light');
     const b = deriveGlobalTokensFromSlots(SAMPLE_LIGHT_SLOTS, 'light');
     expect(a).toEqual(b);
+  });
+});
+
+describe('App Theme and Context Theme ownership', () => {
+  it('app tokens own global surface, text, danger, and accent variables', () => {
+    const target = document.createElement('div');
+    const tokens = deriveGlobalTokensFromSlots(SAMPLE_LIGHT_SLOTS, 'light');
+
+    applyAppThemeTokenSet(tokens, { target, animate: false });
+
+    expect(target.style.getPropertyValue('--accent')).toBe(tokens.accent);
+    expect(target.style.getPropertyValue('--theme-accent')).toBe(tokens.accent);
+    expect(target.style.getPropertyValue('--theme-surface')).toBe(
+      tokens.bgPrimary
+    );
+    expect(target.style.getPropertyValue('--theme-text-primary')).toBe(
+      tokens.textPrimary
+    );
+    expect(target.style.getPropertyValue('--theme-tint')).toBe(
+      SAMPLE_LIGHT_SLOTS.tint
+    );
+    expect(target.style.getPropertyValue('--theme-tint-rgb')).toBe('0, 0, 0');
+    expect(target.style.getPropertyValue('--destructive')).toBe(
+      tokens.destructive
+    );
+  });
+
+  it('album context changes only allowlisted accent, album, and wave variables', () => {
+    const target = document.createElement('div');
+    const tokens = deriveGlobalTokensFromSlots(SAMPLE_LIGHT_SLOTS, 'light');
+    applyAppThemeTokenSet(tokens, { target, animate: false });
+    const protectedBefore = {
+      accent: target.style.getPropertyValue('--theme-accent'),
+      surface: target.style.getPropertyValue('--theme-surface'),
+      text: target.style.getPropertyValue('--theme-text-primary'),
+      tint: target.style.getPropertyValue('--theme-tint'),
+      danger: target.style.getPropertyValue('--destructive'),
+    };
+
+    applyContextThemePalette(
+      {
+        accentHex: '#112233',
+        accentHoverHex: '#223344',
+        accentRgb: [17, 34, 51],
+        accentHoverRgb: [34, 51, 68],
+        waveColors: [[68, 85, 102]],
+        surfaceHex: '#DDDDDD',
+        textPrimaryHex: '#111111',
+        textSecondaryHex: '#555555',
+        tintHex: '#667788',
+        dangerHex: '#CC3333',
+      },
+      tokens,
+      'light',
+      { target, animate: false }
+    );
+
+    expect(target.style.getPropertyValue('--album-accent')).toBe('#112233');
+    expect(target.style.getPropertyValue('--wave-color-0')).toBe('68, 85, 102');
+    expect(target.style.getPropertyValue('--theme-accent')).toBe(
+      protectedBefore.accent
+    );
+    expect(target.style.getPropertyValue('--theme-surface')).toBe(
+      protectedBefore.surface
+    );
+    expect(target.style.getPropertyValue('--theme-text-primary')).toBe(
+      protectedBefore.text
+    );
+    expect(target.style.getPropertyValue('--theme-tint')).toBe(
+      protectedBefore.tint
+    );
+    expect(target.style.getPropertyValue('--destructive')).toBe(
+      protectedBefore.danger
+    );
+    expect(CONTEXT_TOKEN_ALLOWLIST).not.toContain('--theme-surface');
+    expect(CONTEXT_TOKEN_ALLOWLIST).not.toContain('--theme-accent');
+    expect(CONTEXT_TOKEN_ALLOWLIST).not.toContain('--destructive');
   });
 });
 
@@ -278,6 +360,8 @@ describe('resolveAppThemeTokenSet', () => {
       'textPrimary',
       'textSecondary',
       'textTertiary',
+      'tint',
+      'tintRgb',
       'border',
       'ring',
       'destructive',

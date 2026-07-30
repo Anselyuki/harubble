@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppEventMap } from '$lib/appEvents';
-import type { AlbumCatalogRefreshedEvent } from '$lib/types';
+import type { AlbumCatalogRefreshedEvent, AppPreferences } from '$lib/types';
 import {
   subscribeToTauriEvents,
   type EventSubscriptionDeps,
@@ -60,6 +60,7 @@ function createSubscriptionDeps() {
     invalidateInventoryCaches: vi.fn(),
     setPlayerStateHydratedFromEvent: vi.fn(),
     handleMenuCommand: vi.fn(),
+    handlePreferencesSnapshot: vi.fn(),
   };
 
   return { deps, handlers, handleRefreshedEvent, unlisten };
@@ -82,6 +83,22 @@ describe('subscribeToTauriEvents', () => {
     await handler?.({ payload });
     expect(handleRefreshedEvent).toHaveBeenCalledOnce();
     expect(handleRefreshedEvent).toHaveBeenCalledWith(payload);
+
+    cleanup();
+  });
+
+  it('forwards preference snapshots to the runtime controllers', async () => {
+    const { deps, handlers } = createSubscriptionDeps();
+    const snapshot = {
+      theme: { revision: 4, activePackageId: 'ark-ui-ark' },
+    } as AppPreferences;
+
+    const cleanup = await subscribeToTauriEvents(deps, () => false);
+    const handler = handlers.get('preferences_snapshot');
+
+    expect(handler).toBeTypeOf('function');
+    await handler?.({ payload: snapshot });
+    expect(deps.handlePreferencesSnapshot).toHaveBeenCalledWith(snapshot);
 
     cleanup();
   });

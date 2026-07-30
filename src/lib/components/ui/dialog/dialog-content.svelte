@@ -22,6 +22,7 @@
     portalProps,
     children,
     showCloseButton = true,
+    restoreScrollDelay = 0,
     ...restProps
   }: WithoutChildrenOrChild<DialogPrimitive.ContentProps> & {
     portalProps?: WithoutChildrenOrChild<ComponentProps<typeof DialogPortal>>;
@@ -74,29 +75,37 @@
     <DialogPrimitive.Content
       bind:ref
       forceMount
+      {restoreScrollDelay}
       data-slot="dialog-content"
       class={cn(
-        'app-dialog dialog-content-fix fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 text-sm outline-none',
-        className
+        'app-dialog dialog-content-fix fixed top-1/2 left-1/2 z-[var(--z-dialog)] -translate-x-1/2 -translate-y-1/2 text-sm outline-none',
+        className,
+        !open && '!pointer-events-none'
       )}
       {...restProps}
+      inert={!open}
+      aria-hidden={!open}
     >
-      {@render children?.()}
-      {#if showCloseButton}
-        <DialogPrimitive.Close data-slot="dialog-close">
-          {#snippet child({ props })}
-            <Button
-              variant="ghost"
-              class="absolute top-3 right-3"
-              size="icon-sm"
-              {...props}
-            >
-              <XIcon />
-              <span class="sr-only">{m.ui_close()}</span>
-            </Button>
-          {/snippet}
-        </DialogPrimitive.Close>
-      {/if}
+      {#snippet child({ props })}
+        <div {...props}>
+          {@render children?.()}
+          {#if showCloseButton}
+            <DialogPrimitive.Close data-slot="dialog-close">
+              {#snippet child({ props: closeProps })}
+                <Button
+                  variant="ghost"
+                  class="absolute top-3 right-3 size-10"
+                  size="icon-sm"
+                  {...closeProps}
+                >
+                  <XIcon />
+                  <span class="sr-only">{m.ui_close()}</span>
+                </Button>
+              {/snippet}
+            </DialogPrimitive.Close>
+          {/if}
+        </div>
+      {/snippet}
     </DialogPrimitive.Content>
   </DialogPortal>
 {/if}

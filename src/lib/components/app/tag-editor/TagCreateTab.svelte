@@ -89,7 +89,12 @@
     </button>
   </div>
 
-  <div class="locale-cards" bind:this={localeCardsEl}>
+  <div
+    class="locale-cards"
+    bind:this={localeCardsEl}
+    inert={!createI18n}
+    aria-hidden={!createI18n}
+  >
     <div class="locale-cards-inner">
       {#each tagLocales as loc, idx (loc.key)}
         <div class="locale-card">

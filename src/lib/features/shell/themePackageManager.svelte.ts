@@ -13,20 +13,21 @@
  *
  * # CAS 语义
  *
- * `setActive` 携带上次读取到的 `revision` 调用后端。若后端返回 `RevisionMismatch`：
- * 1. 前端应展示"版本已过期"提示
- * 2. 用户重试时先 `hydrate()` 拉取最新 preferences 再调用 `setActive`
+ * `setActive` 携带上次读取到的 `revision` 调用后端。若后端返回 `RevisionMismatch`，
+ * 前端先 `hydrate()` 拉取最新 preferences：若 active 包未变化，说明通常只是普通
+ * 设置保存推进了共享 revision，可安全 rebase 一次；若 active 包已被其他窗口切换，
+ * 或重试仍冲突，则保留远端状态并向调用方返回错误。
  *
  * 成功路径不需要客户端手动构造 snapshot——后端返回完整 `AppPreferences`
  * 直接作为新态（消除 P1-1 的 customColors 倒退问题）。
  *
- * # `preferences_snapshot` 订阅
+ * # `preferences_snapshot` 归并
  *
- * 后端在 preferences 变更后广播完整快照。reducer 严格按 `revision` 单调递增
+ * 后端在 preferences 变更后广播完整快照，集中事件层调用
+ * `applyPreferencesSnapshot`。reducer 严格按 `revision` 单调递增
  * 接受：老快照直接丢弃，避免网络乱序导致的态回滚。
  */
 
-import type { listen as tauriListen } from '@tauri-apps/api/event';
 import type {
   AppPreferences,
   ThemePackageBlur,
@@ -66,6 +67,13 @@ import {
   type ShapeOverride,
 } from '$lib/design/gsap';
 import { applyVisualContract } from '$lib/features/shell/visualContract.svelte';
+import { setThemePackageRuntimeDocument } from '$lib/features/shell/themePackageRuntime.svelte';
+import {
+  cancelObsoleteThemePackageTransition,
+  cancelThemePackageTransition,
+  runThemePackageTransition,
+  type ThemePackageTransitionReason,
+} from '$lib/features/shell/themePackageTransition';
 
 /**
  * 将主题包声明的稀疏 motion 字段转换为 gsap.ts 使用的 MotionOverride。
@@ -171,6 +179,33 @@ function toFontFamilyOverride(
   return Object.keys(mapped).length > 0 ? mapped : null;
 }
 
+export type EffectiveThemeScheme = 'light' | 'dark';
+
+/** 合并主题包基础 CSS 变量与当前昼夜模式的稀疏覆盖。 */
+export function resolveThemePackageCssVariables(
+  doc: ThemePackageDocument | null,
+  scheme: EffectiveThemeScheme
+): Record<string, string> | null {
+  if (!doc) return null;
+  return {
+    ...(doc.cssVariables ?? {}),
+    ...(doc.cssVariableVariants?.[scheme] ?? {}),
+  };
+}
+
+/** 仅重应用与 effective scheme 相关的自定义 CSS 变量。 */
+export function applyThemePackageCssVariables(
+  doc: ThemePackageDocument | null,
+  scheme: EffectiveThemeScheme
+): void {
+  applyCssVariablesOverride(resolveThemePackageCssVariables(doc, scheme));
+}
+
+function currentDocumentScheme(): EffectiveThemeScheme {
+  if (typeof document === 'undefined') return 'light';
+  return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+}
+
 /**
  * 同步应用一个主题包的所有令牌覆盖到 GSAP 与 CSS 变量。
  *
@@ -180,7 +215,11 @@ function toFontFamilyOverride(
  * setActive / preview / dismissPreview 通过它保持所有域的一致性，
  * 避免遗漏某个域导致视觉状态错乱。
  */
-function applyPackageOverrides(doc: ThemePackageDocument | null): void {
+export function applyThemePackageDocument(
+  doc: ThemePackageDocument | null,
+  scheme: EffectiveThemeScheme = currentDocumentScheme()
+): void {
+  setThemePackageRuntimeDocument(doc);
   applyMotionOverride(toMotionOverride(doc?.motion));
   applyShapeOverride(toShapeOverride(doc?.shape));
   applyDensityOverride(toDensityOverride(doc?.density));
@@ -190,7 +229,29 @@ function applyPackageOverrides(doc: ThemePackageDocument | null): void {
   applyVisualContract(doc?.visualContract);
   // Phase 4：字体族 + 自定义 CSS 变量
   applyFontFamilyOverride(toFontFamilyOverride(doc?.fontFamily));
-  applyCssVariablesOverride(doc?.cssVariables ?? null);
+  applyThemePackageCssVariables(doc, scheme);
+  if (typeof document !== 'undefined') {
+    if (doc) {
+      document.documentElement.dataset.themePackageId = doc.manifest.id;
+    } else {
+      delete document.documentElement.dataset.themePackageId;
+    }
+  }
+}
+
+export interface ThemePackageRenderOptions {
+  animate?: boolean;
+  reason?: ThemePackageTransitionReason;
+}
+
+export function transitionThemePackageDocument(
+  doc: ThemePackageDocument | null,
+  options: ThemePackageRenderOptions = {}
+): Promise<void> {
+  return runThemePackageTransition(
+    () => applyThemePackageDocument(doc, currentDocumentScheme()),
+    { ...options, targetPackageId: doc?.manifest.id ?? null }
+  );
 }
 
 /**
@@ -202,32 +263,77 @@ function applyPackageOverrides(doc: ThemePackageDocument | null): void {
  */
 export type ThemeReducerSource = 'command' | 'event' | 'startup';
 
-/**
- * 主题包前端管理器依赖。
- *
- * `listen` 参数注入让测试可以模拟事件系统，无需依赖 Tauri runtime。
- */
+function isRevisionMismatchError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'revisionMismatch'
+  );
+}
+
+/** 主题包前端管理器的可测试 API 依赖。 */
 export interface ThemePackageManagerDeps {
-  listen: typeof tauriListen;
+  getPreferences: typeof getPreferences;
+  listPackages: typeof listThemePackages;
+  inspectPackage: typeof inspectThemePackage;
+  setActivePackage: typeof setActiveThemePackage;
+  previewPackage: typeof previewThemePackage;
+  dismissPreview: typeof dismissThemePreview;
+  installFromFile?: typeof installThemePackageFromFile;
+  installFromUrl?: typeof installThemePackageFromUrl;
+  uninstallPackage?: typeof uninstallThemePackage;
+  exportPackage?: typeof exportThemePackage;
+  renderDocument?: (
+    doc: ThemePackageDocument | null,
+    options: ThemePackageRenderOptions
+  ) => void | Promise<void>;
 }
 
 export function createThemePackageManager(deps: ThemePackageManagerDeps) {
   let intentSeq = 0;
   let renderSeq = 0;
+  let renderEpoch = 0;
+  let activationQueue: Promise<void> = Promise.resolve();
   let currentRevision = $state(0);
+  let hasSnapshot = false;
   let activePackageId = $state<string | null>(null);
   let previewingId = $state<string | null>(null);
+  let displayMode: 'persisted' | 'preview' | 'pending-persist' = 'persisted';
+  let pendingPreviewId: string | null = null;
   let installedPackages = $state<ThemePackageSummary[]>([]);
   let latestError = $state<string | null>(null);
-  let unlistenSnapshot: (() => void) | null = null;
-  // 订阅纪元号：startSubscription 入口 ++epoch 后异步 await deps.listen；
-  // 若 await 期间 stopSubscription 再次 ++epoch，async continuation 检测到
-  // epoch mismatch 会 unlisten 刚 resolve 的 fn，防止订阅泄漏与幻影事件。
-  let subscriptionEpoch = 0;
+  let failedInspectPackageId: string | null = null;
   // Sync 纪元号：syncDomToActive 入口 ++epoch 后异步 await inspect；
   // 若 await 期间又有新的 syncDomToActive 调用（例如快速切主题包），
   // async continuation 检测到 epoch mismatch 会丢弃陈旧结果。
-  let syncEpoch = 0;
+
+  function currentRenderedPackageId(): string | null | undefined {
+    if (typeof document === 'undefined') return undefined;
+    return document.documentElement.dataset.themePackageId ?? null;
+  }
+
+  function renderDocument(
+    doc: ThemePackageDocument | null,
+    options: ThemePackageRenderOptions = { animate: false }
+  ): Promise<void> {
+    const renderedPackageId = currentRenderedPackageId();
+    const targetPackageId = doc?.manifest.id ?? null;
+    const resolvedOptions =
+      options.animate &&
+      renderedPackageId !== undefined &&
+      renderedPackageId === targetPackageId
+        ? { ...options, animate: false }
+        : options;
+    if (deps.renderDocument) {
+      return Promise.resolve(deps.renderDocument(doc, resolvedOptions));
+    }
+    return transitionThemePackageDocument(doc, resolvedOptions);
+  }
+
+  function hasCurrentPreviewIntent(): boolean {
+    return displayMode === 'preview';
+  }
 
   /**
    * 从后端拉取最新 preferences 与 packages 列表（初始化 / 手动 rebase 用）。
@@ -243,13 +349,25 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
   async function hydrate(): Promise<void> {
     try {
       const [prefs, packages] = await Promise.all([
-        getPreferences(),
-        listThemePackages(),
+        deps.getPreferences(),
+        deps.listPackages(),
       ]);
+      const previousActivePackageId = activePackageId;
       applySnapshot(prefs, 'startup');
       installedPackages = packages;
+      const shouldRetryFailedInspect =
+        displayMode === 'persisted' &&
+        activePackageId !== null &&
+        activePackageId === previousActivePackageId &&
+        activePackageId === failedInspectPackageId;
       latestError = null;
       await selfHealDanglingActive(prefs, packages);
+      if (shouldRetryFailedInspect && activePackageId !== null) {
+        await syncDomToActive(activePackageId, {
+          animate: false,
+          reason: 'activate',
+        });
+      }
     } catch (err) {
       latestError = err instanceof Error ? err.message : String(err);
     }
@@ -271,8 +389,9 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
 
     async function tryClear(expectedRevision: number): Promise<boolean> {
       try {
-        const snap = await setActiveThemePackage(null, expectedRevision);
+        const snap = await deps.setActivePackage(null, expectedRevision);
         applySnapshot(snap, 'command');
+        await syncDomToActive(null, { animate: false });
         return true;
       } catch {
         return false;
@@ -283,8 +402,8 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
 
     try {
       const [latestPrefs, latestPackages] = await Promise.all([
-        getPreferences(),
-        listThemePackages(),
+        deps.getPreferences(),
+        deps.listPackages(),
       ]);
       installedPackages = latestPackages;
       applySnapshot(latestPrefs, 'startup');
@@ -293,15 +412,10 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
         return;
       const ok = await tryClear(latestPrefs.theme?.revision ?? 0);
       if (!ok) {
-        console.warn(
-          '[themePackageManager] dangling activePackageId self-heal failed after retry; will retry on next hydrate'
-        );
+        latestError = '无法修复失效的主题包引用，下次刷新时将重试';
       }
-    } catch (err) {
-      console.warn(
-        '[themePackageManager] dangling self-heal retry failed:',
-        err
-      );
+    } catch (error) {
+      latestError = error instanceof Error ? error.message : String(error);
     }
   }
 
@@ -309,9 +423,14 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    * 手动刷新主题包列表（导入 / 卸载后调用）。
    */
   async function refreshList(): Promise<ThemePackageSummary[]> {
-    const packages = await listThemePackages();
-    installedPackages = packages;
-    return packages;
+    try {
+      const packages = await deps.listPackages();
+      installedPackages = packages;
+      return packages;
+    } catch (error) {
+      latestError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   /**
@@ -319,13 +438,14 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    *
    * reducer 严格按 revision 单调递增接受：
    * - 新 revision > 当前 → 应用
-   * - 新 revision <= 当前 → 丢弃（可能是乱序事件或过期响应）
+   * - 相同 revision 仅接受同一 active id 的幂等重放
+   * - 更小 revision，或相同 revision 携带不同 active id → 丢弃
    *
    * `source` 用于日志与调试，不影响 reducer 决策逻辑。
    */
   function applySnapshot(
     snapshot: AppPreferences,
-    _source: ThemeReducerSource
+    source: ThemeReducerSource
   ): boolean {
     const theme = snapshot.theme;
     if (!theme) return false;
@@ -334,16 +454,42 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
       // 老 snapshot，丢弃
       return false;
     }
+    const incomingActive = theme.activePackageId ?? null;
+    if (
+      hasSnapshot &&
+      incoming === currentRevision &&
+      incomingActive !== activePackageId
+    ) {
+      // A revision identifies the complete theme write. Accepting a conflicting
+      // payload at the same revision could roll back an active package while
+      // still passing the monotonicity check.
+      return false;
+    }
     const prevActive = activePackageId;
+    const previewResolvedByActivation =
+      previewingId !== null && incomingActive === previewingId;
     currentRevision = incoming;
-    activePackageId = theme.activePackageId ?? null;
+    activePackageId = incomingActive;
+    if (previewResolvedByActivation) {
+      previewingId = null;
+      if (displayMode === 'preview' && pendingPreviewId === null) {
+        displayMode = 'persisted';
+      }
+    }
+    hasSnapshot = true;
     renderSeq += 1;
     // 若 activePackageId 变化（含启动首次赋值），异步同步 DOM 侧的 5 组 token +
-    // visualContract 到当前包。setActive 命令路径也会走 applySnapshot，但它随后
-    // 会用返回的 doc 显式 applyPackageOverrides，所以命令路径这里只是幂等重放，
-    // 无副作用；事件 / 启动路径则是首次真正应用。
-    if (prevActive !== activePackageId) {
-      void syncDomToActive(activePackageId);
+    // visualContract 到当前包。command 路径会在 backend preview cleanup 完成后
+    // 显式同步，避免同一次用户操作启动两段重叠动画。
+    if (
+      source !== 'command' &&
+      prevActive !== activePackageId &&
+      displayMode === 'persisted'
+    ) {
+      void syncDomToActive(activePackageId, {
+        animate: source === 'event',
+        reason: 'activate',
+      });
     }
     return true;
   }
@@ -363,51 +509,182 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    * 若 resolve 顺序颠倒，陈旧 doc 会覆盖新态。用 `syncEpoch` 计数器捕获入口
    * 纪元号，await 完成后比对；纪元过期则直接丢弃结果。
    */
-  async function syncDomToActive(id: string | null): Promise<void> {
-    const myEpoch = ++syncEpoch;
+  async function syncDomToActive(
+    id: string | null,
+    options: ThemePackageRenderOptions = { animate: false }
+  ): Promise<void> {
+    const myEpoch = ++renderEpoch;
+    const renderedPackageId = currentRenderedPackageId();
+    if (
+      renderedPackageId !== undefined &&
+      renderedPackageId === id &&
+      displayMode === 'persisted' &&
+      myEpoch === renderEpoch
+    ) {
+      // The transition commit marker is written only after every package token
+      // reaches the DOM. Re-inspecting the same visible package adds no value and
+      // could incorrectly replace a successfully previewed-and-applied package
+      // with defaults if a transient inspect fails.
+      // This request still supersedes any transition whose midpoint has not
+      // committed yet; otherwise an older target can overwrite this same-ID
+      // authoritative state after the early return.
+      cancelObsoleteThemePackageTransition(id);
+      if (failedInspectPackageId === id) failedInspectPackageId = null;
+      return;
+    }
     if (id === null) {
-      applyPackageOverrides(null);
+      if (displayMode === 'persisted' && myEpoch === renderEpoch) {
+        await renderDocument(null, options);
+        failedInspectPackageId = null;
+      }
       return;
     }
     // inspect 失败区分两类：dangling ref 由 selfHealDanglingActive 兜底闭环，
     // 但事件同步 / 瞬时 IO 错误路径下用户会看到主题"无声消失"却无反馈。
     // 这里写 latestError + console.warn 留痕，UI 可通过 latestError 决定是否
     // toast；仍 fallback 到默认覆盖避免冻结 UI。
-    const doc = await inspectThemePackage(id).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn('[themePackageManager] inspect failed for', id, err);
+    let doc: ThemePackageDocument | null;
+    let inspectFailed = false;
+    try {
+      doc = await deps.inspectPackage(id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       latestError = `无法加载主题包 ${id}: ${message}`;
-      return null;
-    });
-    if (myEpoch !== syncEpoch) {
+      failedInspectPackageId = id;
+      inspectFailed = true;
+      doc = null;
+    }
+    if (myEpoch !== renderEpoch || displayMode !== 'persisted') {
       // 有更新的 syncDomToActive 请求在飞或已完成，丢弃陈旧结果
       return;
     }
-    applyPackageOverrides(doc);
+    await renderDocument(doc, options);
+    if (!inspectFailed && failedInspectPackageId === id) {
+      failedInspectPackageId = null;
+    }
   }
 
   /**
    * 通过 CAS 激活指定主题包（或传 null 清空激活状态）。
    *
-   * @returns 新的 preferences 快照；若发生 RevisionMismatch 会先 hydrate
-   *   再抛出原始错误，让调用者决定是否重试。
+   * @returns 新的 preferences 快照；若发生 RevisionMismatch 会先 hydrate，
+   *   仅在 active 包未变化时自动 rebase 一次，否则向调用方返回冲突。
    */
-  async function setActive(id: string | null): Promise<AppPreferences> {
-    const localIntent = ++intentSeq;
+  async function commitActiveIntent(
+    id: string | null,
+    localIntent: number
+  ): Promise<AppPreferences> {
+    const activePackageIdAtAttempt = activePackageId;
+    let snapshot: AppPreferences;
     try {
-      const snapshot = await setActiveThemePackage(id, currentRevision);
-      // 只有最新的意图才能改变本地态（防止乱序响应覆盖后续操作）
-      if (localIntent === intentSeq) {
-        // applySnapshot 检测到 activePackageId 变化后会异步 syncDomToActive，
-        // 自动拉取 doc 并应用 5 组 token + visualContract 到 DOM
-        applySnapshot(snapshot, 'command');
-      }
-      return snapshot;
+      snapshot = await deps.setActivePackage(id, currentRevision);
     } catch (err) {
+      if (localIntent === intentSeq) {
+        displayMode = previewingId ? 'preview' : 'persisted';
+      }
       // CAS 冲突或其他错误：拉取最新态，让上层重试
       await hydrate();
-      throw err;
+      if (
+        localIntent === intentSeq &&
+        isRevisionMismatchError(err) &&
+        activePackageId === activePackageIdAtAttempt
+      ) {
+        // An ordinary settings save advances the shared snapshot revision too.
+        // If the persisted package selection itself did not change, rebasing
+        // once is safe and prevents a nearby settings auto-save from making the
+        // Apply button appear to fail. A real cross-window package switch still
+        // falls through to the conflict path below.
+        if (localIntent === intentSeq) displayMode = 'pending-persist';
+        try {
+          snapshot = await deps.setActivePackage(id, currentRevision);
+        } catch (retryError) {
+          if (localIntent === intentSeq) {
+            displayMode = previewingId ? 'preview' : 'persisted';
+          }
+          await hydrate();
+          if (localIntent === intentSeq && displayMode === 'persisted') {
+            await syncDomToActive(activePackageId);
+          }
+          throw retryError;
+        }
+      } else {
+        if (localIntent === intentSeq && displayMode === 'persisted') {
+          // A preferences_snapshot received while this command was pending is
+          // intentionally state-only.  Its revision is equal to the subsequent
+          // hydrate response, so the reducer will not schedule another render;
+          // explicitly reconcile the DOM after the failed CAS instead.
+          await syncDomToActive(activePackageId);
+        }
+        throw err;
+      }
     }
+
+    // Even a superseded local command is an authoritative backend write. Apply
+    // its revision so the next queued activation rebases instead of repeating
+    // the stale CAS token.
+    const activeBeforeSnapshot = activePackageId;
+    const snapshotAccepted = applySnapshot(snapshot, 'command');
+    const commandChangedActive =
+      snapshotAccepted && activePackageId !== activeBeforeSnapshot;
+    const renderEpochAfterCommandSnapshot = renderEpoch;
+
+    if (
+      localIntent !== intentSeq &&
+      displayMode === 'persisted' &&
+      commandChangedActive
+    ) {
+      // Closing the settings sheet can dismiss an existing preview while this
+      // activation is still in flight. If the dismiss finishes first, it paints
+      // the previous active package; the later successful command must then
+      // reconcile the DOM even though its local intent was superseded. A newer
+      // preview or activation retains ownership through the other display modes.
+      await syncDomToActive(activePackageId, {
+        animate: true,
+        reason: 'activate',
+      });
+    }
+
+    // 到这里持久化已经成功。后续 preview cleanup 失败不能把整次激活伪装成失败。
+    if (localIntent === intentSeq) {
+      previewingId = null;
+      pendingPreviewId = null;
+      displayMode = 'persisted';
+      try {
+        await deps.dismissPreview();
+      } catch (error) {
+        latestError = error instanceof Error ? error.message : String(error);
+      }
+      if (
+        localIntent === intentSeq &&
+        renderEpoch === renderEpochAfterCommandSnapshot
+      ) {
+        await syncDomToActive(activePackageId, {
+          animate: true,
+          reason: 'activate',
+        });
+      }
+    }
+    return snapshot;
+  }
+
+  function setActive(id: string | null): Promise<AppPreferences> {
+    const localIntent = ++intentSeq;
+    pendingPreviewId = null;
+    latestError = null;
+    displayMode = 'pending-persist';
+    renderEpoch += 1;
+
+    // Serialize local activations so every command uses the revision returned
+    // by the previous one. This guarantees that a rapid second click is the
+    // final persisted intent instead of failing CAS against the first click.
+    const operation = activationQueue.then(() =>
+      commitActiveIntent(id, localIntent)
+    );
+    activationQueue = operation.then(
+      () => undefined,
+      () => undefined
+    );
+    return operation;
   }
 
   /**
@@ -419,19 +696,85 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    *
    * # visualContract 一致性
    *
-   * preview 与 setActive 都走 `applyPackageOverrides`，内部调用 `applyVisualContract`
+   * preview 与 setActive 都走 `applyThemePackageDocument`，内部调用 `applyVisualContract`
    * 写入 `data-theme-family` / `data-theme-depth` 到 `<html>`。因此 Router 组件
    * （PlayToggleGlyph / VolumeCapsule）在预览与激活两种状态下读到的 `contract.family`
    * 一致，视觉表现严格对齐，不会出现"预览 terminal 但看到 glass"的错乱。
    */
   async function preview(id: string): Promise<ThemePackageDocument> {
     const localIntent = ++intentSeq;
-    const doc = await previewThemePackage(id);
-    if (localIntent === intentSeq) {
-      previewingId = id;
-      // 预览态同步全部 5 组 override（motion/shape/density/elevation/blur）+ visualContract，
-      // 让 GSAP + CSS + Router 立即反映主题包节奏与家族切换
-      applyPackageOverrides(doc);
+    pendingPreviewId = id;
+    latestError = null;
+    displayMode = 'preview';
+    const myRenderEpoch = ++renderEpoch;
+    let doc: ThemePackageDocument;
+    try {
+      doc = await deps.previewPackage(id);
+    } catch (error) {
+      if (localIntent === intentSeq) {
+        pendingPreviewId = null;
+        displayMode = previewingId ? 'preview' : 'persisted';
+        if (!previewingId) {
+          try {
+            // An older preview command may have registered after this newer
+            // request started. Since the newest preview failed, no backend
+            // preview should survive when there is no valid local preview.
+            await deps.dismissPreview();
+          } catch (cleanupError) {
+            if (localIntent === intentSeq) {
+              latestError =
+                cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError);
+            }
+          }
+          if (localIntent === intentSeq) {
+            await syncDomToActive(activePackageId, {
+              animate: true,
+              reason: 'activate',
+            });
+          }
+        }
+      }
+      throw error;
+    }
+    if (localIntent !== intentSeq) {
+      // A dismiss can reach the backend before this slower preview command
+      // registers its state. Clear once more after the stale response so
+      // closing the sheet cannot leave a server-side preview behind. Preserve
+      // a newer preview intent: its command owns the final backend state.
+      if (!hasCurrentPreviewIntent()) {
+        try {
+          await deps.dismissPreview();
+        } catch {
+          // This intent is already obsolete; the current operation owns any
+          // user-visible error and reconciliation state.
+        }
+      }
+      return doc;
+    }
+    pendingPreviewId = null;
+    if (activePackageId === id) {
+      previewingId = null;
+      displayMode = 'persisted';
+      if (myRenderEpoch === renderEpoch) {
+        await renderDocument(doc, {
+          animate: true,
+          reason: 'activate',
+        });
+      }
+      try {
+        await deps.dismissPreview();
+      } catch (error) {
+        latestError = error instanceof Error ? error.message : String(error);
+      }
+      return doc;
+    }
+    previewingId = id;
+    // 预览态同步全部 5 组 override（motion/shape/density/elevation/blur）+ visualContract，
+    // 让 GSAP + CSS + Router 立即反映主题包节奏与家族切换
+    if (myRenderEpoch === renderEpoch) {
+      await renderDocument(doc, { animate: true, reason: 'preview' });
     }
     return doc;
   }
@@ -445,18 +788,50 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    */
   async function dismissPreview(): Promise<void> {
     const localIntent = ++intentSeq;
-    await dismissThemePreview();
+    cancelThemePackageTransition();
+    pendingPreviewId = null;
+    latestError = null;
+    const myRenderEpoch = ++renderEpoch;
+    // Invalidate local preview state before awaiting IPC.  Closing the settings
+    // sheet must be enough to stop a late preview response from repainting DOM.
+    previewingId = null;
+    displayMode = 'persisted';
+    let dismissError: unknown = null;
+    try {
+      await deps.dismissPreview();
+    } catch (error) {
+      dismissError = error;
+      latestError = error instanceof Error ? error.message : String(error);
+    }
     if (localIntent === intentSeq) {
-      previewingId = null;
       // 退出预览：如果 activePackageId 存在则恢复其覆盖，否则彻底清空
       if (activePackageId) {
-        const doc = await inspectThemePackage(activePackageId).catch(
-          () => null
-        );
-        applyPackageOverrides(doc);
-      } else {
-        applyPackageOverrides(null);
+        let doc: ThemePackageDocument | null;
+        try {
+          doc = await deps.inspectPackage(activePackageId);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          latestError = `无法恢复主题包 ${activePackageId}: ${message}`;
+          doc = null;
+        }
+        if (localIntent === intentSeq && myRenderEpoch === renderEpoch) {
+          await renderDocument(doc, {
+            animate: true,
+            reason: 'dismiss-preview',
+          });
+        }
+      } else if (myRenderEpoch === renderEpoch) {
+        await renderDocument(null, {
+          animate: true,
+          reason: 'dismiss-preview',
+        });
       }
+    }
+    if (dismissError !== null && localIntent === intentSeq) {
+      throw dismissError instanceof Error
+        ? dismissError
+        : new Error(String(dismissError));
     }
   }
 
@@ -464,8 +839,18 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    * 从文件路径导入并安装主题包，刷新列表。
    */
   async function importFromFile(path: string): Promise<ThemePackageSummary> {
-    const summary = await installThemePackageFromFile(path);
+    const localIntent = ++intentSeq;
+    pendingPreviewId = null;
+    latestError = null;
+    if (displayMode === 'preview' && previewingId === null) {
+      displayMode = 'persisted';
+      renderEpoch += 1;
+      void syncDomToActive(activePackageId);
+    }
+    const install = deps.installFromFile ?? installThemePackageFromFile;
+    const summary = await install(path);
     await refreshList();
+    await reapplyInstalledPackage(summary.id, localIntent);
     return summary;
   }
 
@@ -475,16 +860,48 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    * 后端做 SSRF 校验 + sanitize；前端仅负责传入原始 URL 与刷新态。
    */
   async function importFromUrl(url: string): Promise<ThemePackageSummary> {
-    const summary = await installThemePackageFromUrl(url);
+    const localIntent = ++intentSeq;
+    pendingPreviewId = null;
+    latestError = null;
+    if (displayMode === 'preview' && previewingId === null) {
+      displayMode = 'persisted';
+      renderEpoch += 1;
+      void syncDomToActive(activePackageId);
+    }
+    const install = deps.installFromUrl ?? installThemePackageFromUrl;
+    const summary = await install(url);
     await refreshList();
+    await reapplyInstalledPackage(summary.id, localIntent);
     return summary;
+  }
+
+  /** Re-read an overwritten document so active/preview DOM never keeps stale data. */
+  async function reapplyInstalledPackage(
+    id: string,
+    localIntent: number
+  ): Promise<void> {
+    if (localIntent !== intentSeq) return;
+    const isPreviewing = displayMode === 'preview' && previewingId === id;
+    const isActive = displayMode === 'persisted' && activePackageId === id;
+    if (!isPreviewing && !isActive) return;
+    try {
+      const doc = await deps.inspectPackage(id);
+      if (localIntent !== intentSeq) return;
+      const stillPreviewing = displayMode === 'preview' && previewingId === id;
+      const stillActive = displayMode === 'persisted' && activePackageId === id;
+      if (!stillPreviewing && !stillActive) return;
+      await renderDocument(doc);
+    } catch (error) {
+      latestError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   /**
    * 检查指定主题包的完整文档。
    */
   async function inspect(id: string): Promise<ThemePackageDocument | null> {
-    return inspectThemePackage(id);
+    return deps.inspectPackage(id);
   }
 
   /**
@@ -492,58 +909,98 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
    * 后端在卸载激活包时会广播 preferences_snapshot 事件，reducer 自动接收。
    */
   async function uninstall(id: string): Promise<void> {
-    await uninstallThemePackage(id);
-    await refreshList();
+    const localIntent = ++intentSeq;
+    pendingPreviewId = null;
+    latestError = null;
+    const wasPreviewing = previewingId === id;
+    const wasActive = activePackageId === id;
+    const preservedPreviewId =
+      previewingId !== null && previewingId !== id ? previewingId : null;
+    displayMode = 'pending-persist';
+    renderEpoch += 1;
+    const uninstallPackage = deps.uninstallPackage ?? uninstallThemePackage;
+    try {
+      await uninstallPackage(id);
+      if (localIntent !== intentSeq) return;
+      // The backend clears its in-memory preview state as part of uninstall;
+      // clear the local state before refreshing so no stale badge/DOM survives.
+      if (wasPreviewing) {
+        previewingId = null;
+        displayMode = 'persisted';
+        if (activePackageId) {
+          await syncDomToActive(activePackageId);
+        } else {
+          await renderDocument(null);
+        }
+        if (localIntent !== intentSeq) return;
+        try {
+          // Keep this explicit for older backends and for a failed in-flight
+          // preview command; the service operation is intentionally idempotent.
+          await deps.dismissPreview();
+        } catch (error) {
+          latestError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      displayMode =
+        preservedPreviewId !== null && previewingId === preservedPreviewId
+          ? 'preview'
+          : 'persisted';
+      await refreshList();
+      await hydrate();
+      if (localIntent !== intentSeq) return;
+      // `hydrate()` may receive the same revision that was already accepted
+      // while the uninstall was pending.  Reconcile explicitly even when the
+      // removed package was neither active nor previewed, because another
+      // window may have changed the active package during this operation.
+      if (displayMode === 'persisted') {
+        if (activePackageId) {
+          await syncDomToActive(activePackageId);
+        } else {
+          await renderDocument(null);
+        }
+      }
+    } catch (error) {
+      if (localIntent === intentSeq) {
+        displayMode = previewingId ? 'preview' : 'persisted';
+        latestError = error instanceof Error ? error.message : String(error);
+        // `uninstall_theme_package` persists an active-reference rollback
+        // before attempting the filesystem move.  If that move fails, its
+        // snapshot is still authoritative even though the command rejects;
+        // refresh it before returning so the old package document cannot stay
+        // painted after activePackageId has already been cleared.
+        if (!previewingId) {
+          const failureMessage = latestError;
+          if (wasActive) await hydrate();
+          if (localIntent === intentSeq) {
+            if (activePackageId) {
+              await syncDomToActive(
+                activePackageId,
+                wasActive
+                  ? { animate: false }
+                  : { animate: true, reason: 'activate' }
+              );
+            } else {
+              await renderDocument(
+                null,
+                wasActive
+                  ? { animate: false }
+                  : { animate: true, reason: 'activate' }
+              );
+            }
+            latestError = failureMessage;
+          }
+        }
+      }
+      throw error;
+    }
   }
 
   /**
    * 导出指定主题包原始 JSON 到本地路径。
    */
   async function exportPackage(id: string, outputPath: string): Promise<void> {
-    return exportThemePackage(id, outputPath);
-  }
-
-  /**
-   * 启动 preferences_snapshot 事件订阅，并返回释放函数。
-   *
-   * 幂等：重复调用会先释放旧订阅再建立新订阅。
-   *
-   * # Pending-listen 竞态防护
-   *
-   * `deps.listen` 是异步的：await 期间用户可能通过 stopSubscription 关闭订阅。
-   * 用 `subscriptionEpoch` 计数器捕获入口时刻的纪元号，await 完成后比对：
-   * - 纪元一致：正常写入 unlistenSnapshot
-   * - 纪元过期：说明 stop 已发生，主动 unlisten 刚 resolve 的 fn 后返回
-   *
-   * 避免"start 起飞、stop 到达、listen resolve、订阅泄漏"的场景。
-   */
-  async function startSubscription(): Promise<void> {
-    if (unlistenSnapshot) {
-      unlistenSnapshot();
-      unlistenSnapshot = null;
-    }
-    const myEpoch = ++subscriptionEpoch;
-    const unlisten = await deps.listen<AppPreferences>(
-      'preferences_snapshot',
-      (event) => {
-        applySnapshot(event.payload, 'event');
-      }
-    );
-    if (myEpoch !== subscriptionEpoch) {
-      // stopSubscription 已经发生（epoch 递增过），释放刚 resolve 的 fn 后放弃
-      unlisten();
-      return;
-    }
-    unlistenSnapshot = unlisten;
-  }
-
-  function stopSubscription(): void {
-    // 递增 epoch 使 in-flight start 的 continuation 作废
-    subscriptionEpoch += 1;
-    if (unlistenSnapshot) {
-      unlistenSnapshot();
-      unlistenSnapshot = null;
-    }
+    const exportTheme = deps.exportPackage ?? exportThemePackage;
+    return exportTheme(id, outputPath);
   }
 
   return {
@@ -574,8 +1031,8 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
     inspect,
     uninstall,
     exportPackage,
-    startSubscription,
-    stopSubscription,
+    applyPreferencesSnapshot: (snapshot: AppPreferences) =>
+      applySnapshot(snapshot, 'event'),
     // Testing hooks
     _applySnapshot: applySnapshot,
     _getIntentSeq: () => intentSeq,
@@ -584,3 +1041,22 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
 }
 
 export type ThemePackageManager = ReturnType<typeof createThemePackageManager>;
+
+let sharedThemePackageManager: ThemePackageManager | null = null;
+
+/** 主窗口唯一的主题包管理器；设置抽屉与 app runtime 共享同一订阅和预览态。 */
+export function getThemePackageManager(): ThemePackageManager {
+  sharedThemePackageManager ??= createThemePackageManager({
+    getPreferences,
+    listPackages: listThemePackages,
+    inspectPackage: inspectThemePackage,
+    setActivePackage: setActiveThemePackage,
+    previewPackage: previewThemePackage,
+    dismissPreview: dismissThemePreview,
+    installFromFile: installThemePackageFromFile,
+    installFromUrl: installThemePackageFromUrl,
+    uninstallPackage: uninstallThemePackage,
+    exportPackage: exportThemePackage,
+  });
+  return sharedThemePackageManager;
+}

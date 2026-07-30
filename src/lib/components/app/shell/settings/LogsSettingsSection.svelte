@@ -117,7 +117,7 @@
     gap: 4px;
     border: 1px solid var(--sheet-border);
     border-radius: 7px;
-    background: color-mix(in srgb, var(--bg-primary) 52%, transparent);
+    background: var(--sheet-control-bg);
     padding: 8px 10px;
   }
   .settings-log-meta {

@@ -12,7 +12,7 @@ import {
   open as openDialog,
   save as saveDialog,
 } from '@tauri-apps/plugin-dialog';
-import type { ColorScheme, RepeatMode } from '$lib/types';
+import type { AppPreferences, ColorScheme, RepeatMode } from '$lib/types';
 import {
   exportPreferences,
   importPreferences,
@@ -64,6 +64,10 @@ export interface MenuCommandDeps {
   };
   settingsController: {
     state: { colorScheme: ColorScheme };
+    applyPreferencesSnapshot: (
+      preferences: AppPreferences,
+      options?: { force?: boolean }
+    ) => void;
   };
   collectionController: {
     readonly selectedCollectionId: string | null;
@@ -155,7 +159,8 @@ async function handle(id: string, deps: MenuCommandDeps): Promise<void> {
         filters: [{ name: 'TOML', extensions: ['toml'] }],
       });
       if (typeof path !== 'string') return;
-      await importPreferences(path);
+      const preferences = await importPreferences(path);
+      settingsController.applyPreferencesSnapshot(preferences, { force: true });
       notifyInfo(m.menu_preferences_imported());
       return;
     }

@@ -55,13 +55,13 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
   - `tag-editor/`：标签编辑器（TagEditorView、TagEditorPanel、TagEditorConflict\* 等）
   - `shell/`：应用壳层（TopToolbar、AppSideSheets、SettingsSheet、DownloadTasksSheet）
 - **主题包系统**（Phase 0-3 已落地）：
-  - `src-tauri/src/theme_packages/`：service / store / sanitizer / downloader / types，主题包三态磁盘管理（committed / stage / pending-delete）+ SSRF 白名单 + CSS 黑名单 + 真实 SHA-256 sidecar
+  - `src-tauri/src/theme_packages/`：builtin / service / store / sanitizer / downloader / types，五套编译期内置主题包 + 三态磁盘管理（committed / stage / pending-delete）+ SSRF 白名单 + CSS 黑名单 + 真实 SHA-256 sidecar
   - `src-tauri/src/commands/theme_packages.rs`：9 条 IPC command（list / inspect / install-file / install-url / uninstall / set-active / preview / dismiss / export）
   - `src-tauri/src/preferences.rs`：v1 → v2 schema migration（追加 `active_package_id` + `revision` CAS 字段）
   - `src/lib/themeTokens.ts` / `src/lib/themePresets.ts`：`deriveGlobalTokensFromSlots` 派生函数 + SYSTEM_LIGHT/DARK_SLOTS
   - `src/lib/design/gsap.ts`：`applyMotionOverride` / `applyShapeOverride` / `applyDensityOverride` / `applyElevationOverride` / `applyBlurOverride` 五组运行时 token 覆盖入口
-  - `src/lib/features/shell/themePackageManager.svelte.ts`：主题包状态机 + preferences_snapshot 订阅 + CAS 循环 + 悬挂 activePackageId 自愈
-  - `src/lib/features/shell/visualContract.svelte.ts`：family × depth 状态 + resolve + `data-theme-family` / `data-theme-depth` HTML 属性写入
+  - `src/lib/features/shell/themePackageManager.svelte.ts` / `themePackageRuntime.svelte.ts`：共享主题包状态机 + App Theme slots/variant 响应态 + preferences_snapshot 订阅 + CAS 循环 + 悬挂 activePackageId 自愈
+  - `src/lib/features/shell/visualContract.svelte.ts`：family × depth 状态 + resolve + `data-theme-*` / `data-ark-*` HTML 属性写入
   - `src/lib/features/player/controllers/`：`playToggleController` / `volumeCapsuleController` 承担业务逻辑，view 层选择 family-specific animator
   - `src/lib/components/app/player/glass/` / `material/`：primitive 视觉族拆分（PlayToggleGlyph、VolumeCapsule 走 Router 分发；WaveGlassPanel 仅 glass 使用）
 
@@ -94,11 +94,16 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
   - **blur**：`--blur-sm/md/lg/xl`（`backdrop-filter` 半径）
   - **motion**：`--motion-fast/base/slow/page` 等（已由 gsap.ts MOTION 常量镜像同步）
   - 新组件的样式默认从这些变量开始；非标准尺寸（如 7px / 22px）需组件专属时可保留硬编码，但需注释理由
+- **悬浮 chrome 契约**：任何"漂浮"在内容之上的容器（TopToolbar 胶囊、悬浮工具栏、玻璃卡片……）**禁止**使用 Tailwind 的 `bg-white/*` / `border-white/*` / `text-white` / `shadow-[…rgba(…)]` 一类硬编码颜色，也不要用 `rounded-full` / `backdrop-blur-xl` 一类硬编码 Tailwind 尺寸类。要求：
+  - 背景/边框/阴影统一走 `--toolbar-surface` / `--toolbar-highlight` / `--toolbar-shadow`（或语义相近的 `--surface-*` token），它们在 `:root.light` / `:root.dark` 各有一份，跟随 `effectiveScheme` 变化
+  - 圆角/模糊走 `var(--shape-pill)` / `var(--blur-lg)` 等 token，让主题包 `shape` / `blur` 覆盖生效
+  - icon 颜色走 `var(--text-primary)` / `var(--icon-*)`；chrome 背景与 icon 颜色必须绑定到同一 scheme 轴，避免"深色主题包 + 白底胶囊 → 白 icon 消失"的失效外观
+  - 如果需要 chrome 只在某个 family 下变形，用 `:root[data-theme-family='xxx']` 域覆盖 token，而不是给组件写 family 分支
 - **视觉族切换**（Phase 3 已落地）：新增 primitive 若需支持 family × depth 差异，两种模式二选一：
   - **DOM 拆分**：视觉本质不同（如 iOS spring vs Material fade），在 `src/lib/components/app/player/{glass,material}/` 建对应 view；Router 组件保留原路径读 `getVisualContract().family` 分发；业务逻辑收敛到 `src/lib/features/player/controllers/` 由 view 共享
   - **CSS 域覆盖**：DOM 结构 / 交互 family-无关，只有 chrome（背景 / shadow / blur）差异，在 `src/app.css` 用 `:root[data-theme-family='material']` / `[data-theme-family='terminal']` 域选择器覆盖
   - 详细决策矩阵与家族切换视觉状态重置契约见 `docs/reference/frontend-guide.md` §9.3
-- **主题包 opt-out flag**：`theme_packages_v1` localStorage 仅控制设置页 UI 显隐（`localStorage['theme_packages_v1'] === '0'` 才隐藏），**后端 IPC 与 preferences v2 schema 始终生效**。灰度运维清单见 `docs/reference/frontend-guide.md` §9.4
+- **主题包库折叠状态**：`theme_packages_v1` localStorage 仅控制设置页主题包详情的展开/收起（`'0'` 为收起），恢复入口始终可见，且不会清除激活/预览状态；**后端 IPC、preferences v2 schema 与启动主题 hydration 始终生效**。兼容说明见 `docs/reference/frontend-guide.md` §9.4
 
 ### 后端与文档
 

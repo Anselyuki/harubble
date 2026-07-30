@@ -146,6 +146,7 @@ describe('theme CSS variables', () => {
     expect(variables['--accent-readable-foreground']).toMatch(/^#[0-9A-F]{6}$/);
     expect(variables['--theme-surface']).toBe('#D1D6DB');
     expect(variables['--theme-surface-rgb']).toBe('209, 214, 219');
+    expect(variables['--theme-accent']).toBe('#FFE47A');
     expect(variables['--theme-text-primary']).toBe('#4A5056');
     expect(variables['--theme-text-secondary']).toBe('#596066');
     expect(variables['--theme-tint']).toBe('#899CB0');
@@ -158,6 +159,7 @@ describe('theme CSS variables', () => {
 
     const root = document.documentElement;
     expect(root.style.getPropertyValue('--accent')).toBe('#FFE47A');
+    expect(root.style.getPropertyValue('--theme-accent')).toBe('#FFE47A');
     expect(root.style.getPropertyValue('--theme-surface')).toBe('#D1D6DB');
     expect(root.style.getPropertyValue('--theme-tint')).toBe('#899CB0');
     expect(root.style.getPropertyValue('--album-accent')).toBe('');
@@ -186,6 +188,7 @@ describe('theme CSS variables', () => {
 
     const root = document.documentElement;
     expect(root.style.getPropertyValue('--accent')).toBe('#FFE47A');
+    expect(root.style.getPropertyValue('--theme-accent')).toBe('#FFE47A');
     expect(root.style.getPropertyValue('--theme-surface')).toBe('#D1D6DB');
     expect(root.style.getPropertyValue('--album-accent')).toBe('#112233');
     expect(root.style.getPropertyValue('--album-accent-rgb')).toBe(

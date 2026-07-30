@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * mock 掉 $lib/design/gsap 的 gsap.delayedCall，用手动 fire 队列替换真实的定时器。
  * 测试可以通过 fireDelayedCalls() 触发所有排队的 delayedCall 回调。
  */
-const delayedCallQueue: Array<{ cb: () => void; delay: number }> = [];
+const delayedCallQueue: { cb: () => void; delay: number }[] = [];
 
 function fireDelayedCalls(): void {
   const q = delayedCallQueue.splice(0);
@@ -60,10 +60,10 @@ import type { PlayToggleGlyph } from '$lib/features/player/playToggleGlyph';
 
 function makeFakeAnimator(): GlyphAnimator & {
   events: string[];
-  pendingCollapses: Array<() => void>;
+  pendingCollapses: (() => void)[];
 } {
   const events: string[] = [];
-  const pendingCollapses: Array<() => void> = [];
+  const pendingCollapses: (() => void)[] = [];
   return {
     events,
     pendingCollapses,

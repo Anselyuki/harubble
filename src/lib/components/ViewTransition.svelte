@@ -93,6 +93,9 @@
 
       // 把冻结快照作为绝对定位的出场层挂到容器中。
       snapshot.classList.add('view-slot', 'view-slot--outgoing');
+      // 快照只用于视觉出场，不能把旧页面的控件重新带回 Tab 顺序。
+      snapshot.setAttribute('inert', '');
+      snapshot.setAttribute('aria-hidden', 'true');
       container.appendChild(snapshot);
       frozenNode = snapshot;
 

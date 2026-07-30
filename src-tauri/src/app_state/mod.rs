@@ -653,18 +653,6 @@ impl AppState {
         result
     }
 
-    pub(crate) async fn persist_preferences(&self, prefs: AppPreferences) -> Result<(), String> {
-        let _guard = self.prefs.preferences_write_lock.lock().await;
-        let locale = prefs.locale;
-        let store = self.preferences_store();
-        let prefs_to_save = prefs.clone();
-        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
-            .await
-            .map_err(|error| error.to_string())??;
-        self.set_preferences(prefs);
-        Ok(())
-    }
-
     pub(crate) async fn update_preferences<F>(&self, update: F) -> Result<AppPreferences, String>
     where
         F: FnOnce(&mut AppPreferences),
@@ -680,6 +668,61 @@ impl AppState {
             .map_err(|error| error.to_string())??;
         self.set_preferences(prefs.clone());
         Ok(prefs)
+    }
+
+    /// 在偏好写锁内执行一个可拒绝的更新。
+    ///
+    /// 回调返回错误时不会落盘，适用于需要把 CAS 校验、主题包存在性检查与
+    /// 偏好写入放进同一临界区的命令。
+    pub(crate) async fn try_update_preferences<F, T, E>(
+        &self,
+        update: F,
+    ) -> Result<Result<(AppPreferences, T), E>, String>
+    where
+        F: FnOnce(&mut AppPreferences) -> Result<T, E>,
+    {
+        let _guard = self.prefs.preferences_write_lock.lock().await;
+        let mut prefs = self.preferences();
+        let output = match update(&mut prefs) {
+            Ok(output) => output,
+            Err(error) => return Ok(Err(error)),
+        };
+        let locale = prefs.locale;
+        let store = self.preferences_store();
+        let prefs_to_save = prefs.clone();
+        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
+            .await
+            .map_err(|error| error.to_string())??;
+        self.set_preferences(prefs.clone());
+        Ok(Ok((prefs, output)))
+    }
+
+    /// 先持久化偏好，再在同一把写锁内执行关联副作用。
+    ///
+    /// 副作用失败时偏好快照仍然有效并随结果返回，调用方可广播已发生的偏好变化。
+    /// 这用于卸载主题包：宁可保留一个已停用的包，也不能先删包后因偏好保存失败
+    /// 留下悬挂的 activePackageId。
+    pub(crate) async fn update_preferences_then<F, T, A>(
+        &self,
+        update: F,
+        after_persist: A,
+    ) -> Result<(AppPreferences, T, Result<(), String>), String>
+    where
+        F: FnOnce(&mut AppPreferences) -> T,
+        A: FnOnce() -> Result<(), String>,
+    {
+        let _guard = self.prefs.preferences_write_lock.lock().await;
+        let mut prefs = self.preferences();
+        let output = update(&mut prefs);
+        let locale = prefs.locale;
+        let store = self.preferences_store();
+        let prefs_to_save = prefs.clone();
+        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
+            .await
+            .map_err(|error| error.to_string())??;
+        self.set_preferences(prefs.clone());
+        let after_result = after_persist();
+        Ok((prefs, output, after_result))
     }
 
     pub(crate) fn persist_download_snapshot(&self, snapshot: &DownloadManagerSnapshot) {

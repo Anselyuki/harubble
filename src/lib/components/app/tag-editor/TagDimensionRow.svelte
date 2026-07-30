@@ -48,13 +48,16 @@
     }
   }
 
-  function handleChipEnter(e: MouseEvent) {
+  function handleChipEnter(e: Event) {
+    if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches)
+      return;
     const wrapper = e.currentTarget as HTMLElement;
     const btn = wrapper.querySelector<HTMLElement>('.chip-delete');
     if (!btn) return;
     gsap.killTweensOf(btn);
     gsap.to(btn, {
-      width: 14,
+      width: 40,
+      minWidth: 40,
       opacity: 1,
       marginLeft: 2,
       duration: getMotionDuration(MOTION.FAST),
@@ -62,13 +65,16 @@
     });
   }
 
-  function handleChipLeave(e: MouseEvent) {
+  function handleChipLeave(e: Event) {
+    if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches)
+      return;
     const wrapper = e.currentTarget as HTMLElement;
     const btn = wrapper.querySelector<HTMLElement>('.chip-delete');
     if (!btn) return;
     gsap.killTweensOf(btn);
     gsap.to(btn, {
       width: 0,
+      minWidth: 0,
       opacity: 0,
       marginLeft: 0,
       duration: getMotionDuration(MOTION.MICRO),
@@ -134,6 +140,11 @@
           role="listitem"
           onmouseenter={handleChipEnter}
           onmouseleave={handleChipLeave}
+          onfocusin={handleChipEnter}
+          onfocusout={(e) => {
+            const next = (e as FocusEvent).relatedTarget as Node | null;
+            if (!next || !e.currentTarget.contains(next)) handleChipLeave(e);
+          }}
           ondragstart={(e) => handleDragStart(e, idx)}
           ondragover={(e) => handleDragOver(e, idx)}
           ondragleave={handleDragLeave}
@@ -209,10 +220,12 @@
   }
 
   .chip-delete {
-    width: 0;
-    opacity: 0;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    opacity: 1;
     overflow: hidden;
-    margin-left: 0;
+    margin-left: 2px;
     border: none;
     background: none;
     color: var(--text-tertiary);
@@ -228,6 +241,28 @@
 
   .chip-delete:hover {
     color: var(--color-danger, #ef4444);
+  }
+
+  .chip-delete:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .chip-delete {
+      width: 0;
+      min-width: 0;
+      opacity: 0;
+      margin-left: 0;
+    }
+
+    .chip-wrapper:hover .chip-delete,
+    .chip-wrapper:focus-within .chip-delete {
+      width: 40px;
+      min-width: 40px;
+      opacity: 1;
+      margin-left: 2px;
+    }
   }
 
   .value-chip {

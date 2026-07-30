@@ -1,11 +1,17 @@
 import type { AlbumDetail, ThemePalette } from '$lib/types';
 import { extractImageTheme, getImageSrc } from '$lib/api';
 import {
+  deriveGlobalTokensFromSlots,
   resolveAppThemeTokenSet,
   applyAppThemeTokenSet,
   applyContextThemePalette,
 } from '$lib/themeTokens';
 import { resolveThemeColors } from '$lib/themePresets';
+import {
+  getThemePackageRuntime,
+  resolveThemePackageColors,
+} from '$lib/features/shell/themePackageRuntime.svelte';
+import { applyThemePackageCssVariables } from '$lib/features/shell/themePackageManager.svelte';
 import { getPreferredAlbumArtworkUrl } from '$lib/features/library/selectors';
 import { preloadImage } from '$lib/features/library/helpers';
 
@@ -30,6 +36,7 @@ export function createThemeManager(deps: ThemeManagerDeps) {
   let selectedAlbumArtworkUrl = $state<string | null>(null);
   let warmingUrl: string | null = null;
   let warmingPromise: Promise<string> | null = null;
+  const themePackageRuntime = getThemePackageRuntime();
 
   const resolvedThemeColors = $derived.by(() => {
     const theme = deps.getSettingsTheme();
@@ -123,11 +130,27 @@ export function createThemeManager(deps: ThemeManagerDeps) {
   });
 
   $effect(() => {
-    const { dynamicAlbumAccent } = deps.getSettingsTheme();
-    const tokens = resolveAppThemeTokenSet(
-      resolvedThemeColors,
+    applyThemePackageCssVariables(
+      themePackageRuntime.document,
       effectiveScheme
     );
+  });
+
+  $effect(() => {
+    const { dynamicAlbumAccent } = deps.getSettingsTheme();
+    const packageDocument = themePackageRuntime.document;
+    const appThemeColors = packageDocument
+      ? resolveThemePackageColors(
+          deps.getSettingsTheme(),
+          packageDocument,
+          effectiveScheme
+        )
+      : resolvedThemeColors;
+    // 主题包必须无条件消费自身 slots；普通 preset 继续遵循现有灰度开关，避免
+    // 在未激活 package 时改变 legacy token 派生行为。
+    const tokens = packageDocument
+      ? deriveGlobalTokensFromSlots(appThemeColors, effectiveScheme)
+      : resolveAppThemeTokenSet(appThemeColors, effectiveScheme);
 
     const useAlbumPalette =
       dynamicAlbumAccent &&

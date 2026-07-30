@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   calcExpandDirection,
   calcCardPosition,
+  clampCardPosition,
   measureBubbleTargetSize,
 } from './popoverBubble';
 
@@ -142,6 +143,28 @@ describe('popoverBubble', () => {
       expect(result).toEqual({ width: 300, height: 260 });
       expect(el.style.width).toBe('');
       expect(el.style.height).toBe('');
+    });
+  });
+
+  describe('clampCardPosition', () => {
+    it('keeps all card edges inside the viewport safe margin', () => {
+      expect(
+        clampCardPosition(
+          { top: -20, left: 1200 },
+          { width: 220, height: 320 },
+          viewport
+        )
+      ).toEqual({ top: 16, left: 1044 });
+    });
+
+    it('uses the safe margin when the card is larger than the viewport', () => {
+      expect(
+        clampCardPosition(
+          { top: 100, left: 100 },
+          { width: 400, height: 400 },
+          { width: 300, height: 300 }
+        )
+      ).toEqual({ top: 16, left: 16 });
     });
   });
 });

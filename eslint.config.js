@@ -20,6 +20,7 @@ const typeAwareParserOptions = {
       'tests/e2e/*.ts',
       'tests/e2e/visual/*.ts',
     ],
+    maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 16,
   },
   tsconfigRootDir: import.meta.dirname,
 };

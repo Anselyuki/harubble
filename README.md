@@ -12,9 +12,10 @@ Harubble 是面向 [塞壬唱片](https://monster-siren.hypergryph.com/) 的桌�
 
 - **专辑目录 · 全库检索 · 桌面播放**：完整的塞壬唱片曲库浏览、下载与本地库管理。
 - **Mini Player**：独立小窗口跨屏播放，快捷键控制，主主题实时同步。
-- **主题包系统**：导入 `.json` 主题包切换整体视觉，覆盖配色 / 动效 / 圆角 / 密度 /
-  阴影 / 模糊 / 视觉族（glass / material / terminal）。设置页 → 主题包库导入本地
-  文件或粘贴 URL 安装（自动做 SSRF 校验与 CSS sanitize）。
+- **主题包系统**：内置五套 Ark UI inspired 原创主题包（Industrial Cyan / Field
+  Signal / Astral Archive / Co-op Pop / Studio Lime），也可导入 `.json` 覆盖配色 /
+  动效 / 圆角 / 密度 / 阴影 / 模糊 / 视觉族。设置页 → 主题包库支持本地文件或 URL
+  安装（自动做 SSRF 校验与 CSS sanitize）。
 - **国际化**：内建简中 / 英文 / 日文 UI 语言切换。
 
 > 名字来自《明日方舟》角色 **遥**（Haruka）和她漂浮在空中的透明泡泡（Bubble）。Haru 是 Haruka 的简写。

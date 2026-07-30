@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ark UI built-in family fixture</title>
+    <link rel="stylesheet" href="/src/app.css" />
+    <style>
+      body {
+        min-width: 0;
+      }
+
+      .qa-shell {
+        --sidebar-width: 220px;
+      }
+
+      .qa-sidebar-content {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        min-height: 100%;
+        flex-direction: column;
+        gap: 10px;
+        padding: 28px 18px;
+      }
+
+      .qa-brand {
+        margin-bottom: 24px;
+        font-family: var(--font-display);
+        font-size: 22px;
+        font-weight: 800;
+      }
+
+      .qa-sidebar-content button,
+      .qa-toolbar-button {
+        min-height: 40px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+      }
+
+      .qa-sidebar-content button {
+        padding: 0 12px;
+        text-align: left;
+      }
+
+      .qa-main {
+        min-height: 0;
+      }
+
+      .qa-content {
+        display: grid;
+        align-content: start;
+        gap: 20px;
+        padding-top: 92px;
+      }
+
+      .qa-heading {
+        max-width: 720px;
+      }
+
+      .qa-kicker {
+        margin-bottom: 8px;
+        color: var(--accent);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .qa-title {
+        margin: 0;
+        color: var(--text-primary);
+        font-family: var(--font-display);
+        font-size: 34px;
+        line-height: 1.08;
+      }
+
+      .qa-subtitle {
+        margin-top: 10px;
+        color: var(--text-secondary);
+        line-height: 1.55;
+      }
+
+      .qa-toolbar-button {
+        width: 42px;
+        padding: 0;
+      }
+
+      .qa-stage-copy {
+        position: absolute;
+        inset: auto 24px 24px;
+        z-index: 3;
+        max-width: 560px;
+        color: white;
+        text-shadow: 0 1px 12px rgba(0, 0, 0, 0.52);
+      }
+
+      .qa-stage-copy strong {
+        display: block;
+        font-family: var(--font-display);
+        font-size: 30px;
+      }
+
+      .qa-stage-copy span {
+        display: block;
+        margin-top: 6px;
+        color: rgba(255, 255, 255, 0.8);
+      }
+
+      .qa-stage-media {
+        background:
+          linear-gradient(
+            118deg,
+            rgba(var(--album-accent-rgb), 0.78),
+            transparent 56%
+          ),
+          linear-gradient(24deg, var(--bg-secondary), var(--bg-tertiary));
+      }
+
+      .qa-panel-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .qa-panel {
+        min-height: 108px;
+        padding: 16px;
+      }
+
+      .qa-panel span {
+        display: block;
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+
+      .qa-panel strong {
+        display: block;
+        margin-top: 18px;
+        color: var(--text-primary);
+        font-family: var(--font-display);
+        font-size: 20px;
+      }
+
+      .qa-field-catalog,
+      .qa-field-player {
+        display: none;
+      }
+
+      :root[data-ark-theme='endfield'][data-ark-depth='complex']
+        .qa-content
+        > .album-stage,
+      :root[data-ark-theme='endfield'][data-ark-depth='complex']
+        .qa-content
+        > .qa-panel-grid {
+        display: none;
+      }
+
+      :root[data-ark-theme='endfield'][data-ark-depth='complex']
+        .qa-field-catalog {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        padding-bottom: 96px;
+      }
+
+      .qa-field-card {
+        --qa-context: #00b8a9;
+        position: relative;
+        min-width: 0;
+        border: 1px solid var(--ark-field-rule-soft);
+        border-bottom: 5px solid var(--qa-context);
+        background: var(--ark-field-panel-solid);
+        overflow: hidden;
+      }
+
+      .qa-field-card:nth-child(2) {
+        --qa-context: #ff6b35;
+      }
+
+      .qa-field-card:nth-child(3) {
+        --qa-context: #7a72db;
+      }
+
+      .qa-field-card:nth-child(4) {
+        --qa-context: #e73d68;
+      }
+
+      .qa-field-card:nth-child(5) {
+        --qa-context: #4a90e2;
+      }
+
+      .qa-field-card:nth-child(6) {
+        --qa-context: #72a44d;
+      }
+
+      .qa-field-art {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        background-color: #e8e8e3;
+        background-image:
+          linear-gradient(
+            132deg,
+            transparent 0 46%,
+            var(--qa-context) 46% 48%,
+            transparent 48%
+          ),
+          linear-gradient(28deg, #191919 0 24%, transparent 24%),
+          linear-gradient(
+            118deg,
+            rgba(25, 25, 25, 0.06) 25%,
+            transparent 25% 72%,
+            rgba(25, 25, 25, 0.1) 72%
+          );
+      }
+
+      .qa-field-art::before {
+        content: '';
+        position: absolute;
+        width: 58%;
+        aspect-ratio: 1;
+        right: 7%;
+        top: 12%;
+        border: 1px solid rgba(25, 25, 25, 0.42);
+        background:
+          linear-gradient(
+            90deg,
+            transparent 48%,
+            rgba(25, 25, 25, 0.16) 48% 52%,
+            transparent 52%
+          ),
+          linear-gradient(
+            transparent 48%,
+            rgba(25, 25, 25, 0.16) 48% 52%,
+            transparent 52%
+          );
+        transform: rotate(8deg);
+      }
+
+      .qa-field-art::after {
+        content: '';
+        position: absolute;
+        right: 14%;
+        bottom: 0;
+        width: 32%;
+        height: 72%;
+        clip-path: polygon(38% 0, 74% 9%, 100% 42%, 82% 100%, 12% 100%, 0 34%);
+        background: color-mix(in srgb, var(--qa-context) 78%, #191919);
+        box-shadow: -32px 18px 0 rgba(25, 25, 25, 0.18);
+      }
+
+      .qa-field-card-meta {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: end;
+        min-height: 58px;
+        padding: 9px 10px 8px;
+      }
+
+      .qa-field-card-meta strong,
+      .qa-field-card-meta span {
+        min-width: 0;
+      }
+
+      .qa-field-card-meta strong {
+        display: block;
+        overflow: hidden;
+        color: var(--text-primary);
+        font-family: var(--font-display);
+        font-size: 14px;
+        line-height: 1.1;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .qa-field-card-meta span {
+        display: block;
+        margin-top: 4px;
+        overflow: hidden;
+        color: var(--text-secondary);
+        font-size: 10px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .qa-field-card-index {
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      :root[data-ark-theme='endfield'][data-ark-depth='complex']
+        .qa-field-player {
+        position: sticky;
+        bottom: 16px;
+        z-index: 8;
+        display: grid;
+        grid-template-columns: 52px minmax(0, 1fr) minmax(180px, 34%) auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 68px;
+        padding: 8px 10px;
+        border-top: 5px solid var(--qa-context, #00b8a9);
+        background: var(--ark-field-dock);
+        color: var(--ark-field-paper);
+      }
+
+      .qa-field-player-cover {
+        width: 52px;
+        height: 52px;
+        border: 1px solid rgba(247, 247, 244, 0.24);
+        background:
+          linear-gradient(135deg, #00b8a9 0 38%, transparent 38%),
+          linear-gradient(45deg, #e8e8e3 0 54%, #191919 54%);
+      }
+
+      .qa-field-player-meta {
+        min-width: 0;
+      }
+
+      .qa-field-player-meta strong,
+      .qa-field-player-meta span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .qa-field-player-meta strong {
+        font-family: var(--font-display);
+        font-size: 13px;
+      }
+
+      .qa-field-player-meta span {
+        margin-top: 4px;
+        color: rgba(247, 247, 244, 0.58);
+        font-size: 10px;
+      }
+
+      .qa-field-player-progress {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .qa-field-player-progress::before {
+        content: '';
+        height: 5px;
+        background: linear-gradient(
+          90deg,
+          #00b8a9 0 58%,
+          rgba(247, 247, 244, 0.2) 58%
+        );
+      }
+
+      .qa-field-player-progress span {
+        color: rgba(247, 247, 244, 0.58);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .qa-field-player-controls {
+        display: flex;
+        gap: 1px;
+        padding: 1px;
+        background: rgba(247, 247, 244, 0.18);
+      }
+
+      .qa-field-player-controls button {
+        width: 40px;
+        height: 40px;
+        border: 0;
+        border-radius: 0;
+        background: #2f2f2d;
+        color: var(--ark-field-paper);
+        font: inherit;
+      }
+
+      .qa-field-player-controls .qa-field-play {
+        background: var(--ark-field-signal);
+        color: var(--ark-field-ink);
+      }
+
+      :where(button, [href], [tabindex]):focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      @media (max-width: 720px), (orientation: portrait) {
+        .qa-shell {
+          --sidebar-width: 74px;
+        }
+
+        .qa-sidebar-content {
+          align-items: center;
+          padding-inline: 8px;
+        }
+
+        .qa-brand {
+          font-size: 0;
+        }
+
+        .qa-brand::after {
+          content: 'H';
+          font-size: 22px;
+        }
+
+        .qa-sidebar-content button {
+          width: 42px;
+          padding: 0;
+          overflow: hidden;
+          font-size: 0;
+          text-align: center;
+        }
+
+        .qa-sidebar-content button::first-letter {
+          font-size: 13px;
+        }
+
+        .qa-content {
+          padding: 82px 16px 24px;
+        }
+
+        .qa-title {
+          font-size: 28px;
+        }
+
+        .qa-panel-grid {
+          grid-template-columns: 1fr;
+        }
+
+        :root[data-ark-theme='endfield'][data-ark-depth='complex']
+          .qa-field-catalog {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+          padding-bottom: 0;
+        }
+
+        :root[data-ark-theme='endfield'][data-ark-depth='complex']
+          .qa-field-card:nth-child(n + 5) {
+          display: none;
+        }
+
+        :root[data-ark-theme='endfield'][data-ark-depth='complex']
+          .qa-field-art {
+          aspect-ratio: 16 / 9;
+        }
+
+        .qa-field-card-meta {
+          grid-template-columns: minmax(0, 1fr);
+          min-height: 68px;
+        }
+
+        .qa-field-card-index {
+          display: none;
+        }
+
+        :root[data-ark-theme='endfield'][data-ark-depth='complex']
+          .qa-field-player {
+          position: relative;
+          grid-template-columns: 44px minmax(0, 1fr) auto;
+          gap: 8px;
+          bottom: auto;
+          min-height: 60px;
+          padding: 7px;
+        }
+
+        .qa-field-player-cover {
+          width: 44px;
+          height: 44px;
+        }
+
+        .qa-field-player-progress {
+          display: none;
+        }
+
+        .qa-field-player-controls button:not(.qa-field-play) {
+          display: none;
+        }
+
+        .qa-stage-copy {
+          inset: auto 16px 16px;
+        }
+
+        .qa-stage-copy strong {
+          font-size: 24px;
+        }
+      }
+
+      @media (max-height: 680px) and (min-width: 721px) {
+        :root[data-ark-theme='endfield'][data-ark-depth='complex']
+          .qa-field-catalog {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          padding-bottom: 0;
+        }
+
+        :root[data-ark-theme='endfield'][data-ark-depth='complex']
+          .qa-field-card:nth-child(n + 4) {
+          display: none;
+        }
+
+        :root[data-ark-theme='endfield'][data-ark-depth='complex']
+          .qa-field-player {
+          position: relative;
+          bottom: auto;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-shell qa-shell">
+      <aside class="sidebar">
+        <nav class="qa-sidebar-content" aria-label="Primary">
+          <div class="qa-brand">HARUBBLE</div>
+          <button class="sidebar-item-button active" type="button">
+            Library
+          </button>
+          <button class="sidebar-item-button" type="button">Search</button>
+          <button class="sidebar-item-button" type="button">Collections</button>
+        </nav>
+      </aside>
+
+      <section class="main-region qa-main">
+        <div class="top-actions">
+          <div class="top-toolbar" aria-label="View controls">
+            <div class="mode-switch">
+              <button class="mode-option" type="button" aria-pressed="true">
+                Overview
+              </button>
+              <button class="mode-option" type="button" aria-pressed="false">
+                Tracks
+              </button>
+            </div>
+            <button
+              class="toolbar-icon-btn qa-toolbar-button"
+              type="button"
+              aria-label="More"
+            >
+              ...
+            </button>
+          </div>
+        </div>
+
+        <div class="content qa-content">
+          <header class="qa-heading">
+            <p class="qa-kicker" id="family-contract">Built-in theme</p>
+            <h1 class="qa-title" id="family-name">Theme family</h1>
+            <p class="qa-subtitle">
+              Original Harubble shell treatment with App Theme colors kept
+              separate from album context.
+            </p>
+          </header>
+
+          <section class="album-stage" aria-label="Album stage">
+            <div class="album-stage-frame">
+              <div class="album-stage-media qa-stage-media">
+                <div class="album-stage-media-scrim"></div>
+                <div class="album-stage-media-border"></div>
+                <div class="qa-stage-copy">
+                  <strong>Signal Archive</strong>
+                  <span
+                    >Selected album context remains the owner of the stage
+                    accent.</span
+                  >
+                </div>
+              </div>
+              <div class="album-stage-divider"></div>
+            </div>
+          </section>
+
+          <section class="qa-panel-grid" aria-label="Library status">
+            <article class="sheet-section qa-panel">
+              <span>Now playing</span><strong>Operation Basepoint</strong>
+            </article>
+            <article class="sheet-section qa-panel">
+              <span>Collection</span><strong>24 releases</strong>
+            </article>
+            <article class="sheet-section qa-panel">
+              <span>Output</span><strong>96 kHz / 24 bit</strong>
+            </article>
+          </section>
+
+          <section class="qa-field-catalog" aria-label="Signal archive catalog">
+            <article class="qa-field-card">
+              <div class="qa-field-art" aria-hidden="true"></div>
+              <div class="qa-field-card-meta">
+                <div>
+                  <strong>Signal Archive</strong><span>Field Recordings</span>
+                </div>
+                <div class="qa-field-card-index">01 / 06</div>
+              </div>
+            </article>
+            <article class="qa-field-card">
+              <div class="qa-field-art" aria-hidden="true"></div>
+              <div class="qa-field-card-meta">
+                <div>
+                  <strong>Parallel Works</strong><span>Assembly Notes</span>
+                </div>
+                <div class="qa-field-card-index">02 / 06</div>
+              </div>
+            </article>
+            <article class="qa-field-card">
+              <div class="qa-field-art" aria-hidden="true"></div>
+              <div class="qa-field-card-meta">
+                <div><strong>Northbound</strong><span>Transit Log</span></div>
+                <div class="qa-field-card-index">03 / 06</div>
+              </div>
+            </article>
+            <article class="qa-field-card">
+              <div class="qa-field-art" aria-hidden="true"></div>
+              <div class="qa-field-card-meta">
+                <div>
+                  <strong>Residual Light</strong><span>Night Operations</span>
+                </div>
+                <div class="qa-field-card-index">04 / 06</div>
+              </div>
+            </article>
+            <article class="qa-field-card">
+              <div class="qa-field-art" aria-hidden="true"></div>
+              <div class="qa-field-card-meta">
+                <div>
+                  <strong>Relay Point</strong><span>Remote Session</span>
+                </div>
+                <div class="qa-field-card-index">05 / 06</div>
+              </div>
+            </article>
+            <article class="qa-field-card">
+              <div class="qa-field-art" aria-hidden="true"></div>
+              <div class="qa-field-card-meta">
+                <div>
+                  <strong>Second Horizon</strong><span>Return Sequence</span>
+                </div>
+                <div class="qa-field-card-index">06 / 06</div>
+              </div>
+            </article>
+          </section>
+
+          <section class="qa-field-player" aria-label="Now playing">
+            <div class="qa-field-player-cover" aria-hidden="true"></div>
+            <div class="qa-field-player-meta">
+              <strong>Operation Basepoint</strong>
+              <span>Field Signal Unit</span>
+            </div>
+            <div class="qa-field-player-progress">
+              <span>03:42 / 06:18</span>
+            </div>
+            <div
+              class="qa-field-player-controls"
+              aria-label="Playback controls"
+            >
+              <button type="button" aria-label="Previous">&#9664;</button>
+              <button class="qa-field-play" type="button" aria-label="Play">
+                &#9654;
+              </button>
+              <button type="button" aria-label="Next">&#9654;</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        applyAppThemeTokenSet,
+        applyContextThemePalette,
+        deriveGlobalTokensFromSlots,
+      } from '/src/lib/themeTokens.ts';
+
+      const family =
+        new URLSearchParams(window.location.search).get('family') ?? 'ark';
+      const allowed = new Set([
+        'ark',
+        'endfield',
+        'exa',
+        'popucom',
+        'corporate',
+      ]);
+      const resolvedFamily = allowed.has(family) ? family : 'ark';
+      const labels = {
+        ark: 'Industrial Cyan',
+        endfield: 'Field Signal',
+        exa: 'Astral Archive',
+        popucom: 'Co-op Pop',
+        corporate: 'Studio Lime',
+      };
+      const scheme =
+        new URLSearchParams(window.location.search).get('scheme') === 'light'
+          ? 'light'
+          : 'dark';
+
+      const response = await fetch(
+        `/src/lib/theme-packages/builtins/ark-ui-${resolvedFamily}.json`
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to load ${resolvedFamily} package`);
+      }
+      const packageDocument = await response.json();
+      const slots = {
+        ...packageDocument.slots,
+        ...packageDocument.variants[scheme],
+      };
+      const tokens = deriveGlobalTokensFromSlots(slots, scheme);
+
+      const depth = packageDocument.visualContract?.depth ?? 'moderate';
+      document.documentElement.dataset.arkTheme = resolvedFamily;
+      document.documentElement.dataset.arkDepth = depth;
+      document.documentElement.dataset.themeFamily = resolvedFamily;
+      document.documentElement.dataset.themeDepth = depth;
+      document.documentElement.classList.add(scheme);
+      document.documentElement.style.colorScheme = scheme;
+
+      for (const [key, value] of Object.entries(packageDocument.shape ?? {})) {
+        document.documentElement.style.setProperty(
+          `--shape-${key}`,
+          `${value}px`
+        );
+      }
+      for (const [key, value] of Object.entries(
+        packageDocument.density ?? {}
+      )) {
+        document.documentElement.style.setProperty(
+          `--density-${key}`,
+          `${value}px`
+        );
+      }
+      for (const [key, value] of Object.entries(
+        packageDocument.elevation ?? {}
+      )) {
+        document.documentElement.style.setProperty(`--elevation-${key}`, value);
+      }
+      for (const [key, value] of Object.entries(packageDocument.blur ?? {})) {
+        document.documentElement.style.setProperty(
+          `--blur-${key}`,
+          `${value}px`
+        );
+      }
+      const cssVariables = {
+        ...(packageDocument.cssVariables ?? {}),
+        ...(packageDocument.cssVariableVariants?.[scheme] ?? {}),
+      };
+      for (const [key, value] of Object.entries(cssVariables)) {
+        document.documentElement.style.setProperty(key, value);
+      }
+      const fontVariableMap = {
+        body: '--font-body',
+        display: '--font-display',
+        mono: '--font-mono',
+      };
+      for (const [key, value] of Object.entries(
+        packageDocument.fontFamily ?? {}
+      )) {
+        document.documentElement.style.setProperty(fontVariableMap[key], value);
+      }
+
+      applyAppThemeTokenSet(tokens, { animate: false });
+      applyContextThemePalette(null, tokens, scheme, { animate: false });
+      document.getElementById('family-name').textContent =
+        labels[resolvedFamily];
+      document.getElementById('family-contract').textContent =
+        `Built-in theme / ${depth}`;
+      document.title = `${labels[resolvedFamily]} theme fixture`;
+      window.__ARK_UI_FIXTURE_READY__ = true;
+    </script>
+  </body>
+</html>

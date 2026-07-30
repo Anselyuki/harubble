@@ -134,7 +134,7 @@
   .dimension-chip.active {
     background: var(--accent, rgb(250, 45, 72));
     border-color: var(--accent, rgb(250, 45, 72));
-    color: #fff;
+    color: var(--accent-readable-foreground);
   }
 
   .group-list {

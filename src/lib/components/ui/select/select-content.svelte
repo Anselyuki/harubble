@@ -29,7 +29,7 @@
   const openCtx = getContext<{ value: boolean } | undefined>('select-open');
   const open = $derived(openCtx?.value ?? true);
 
-  let mounted = $state(true);
+  let mounted = $state(openCtx?.value ?? true);
 
   $effect(() => {
     if (open) mounted = true;
@@ -76,8 +76,9 @@
       {preventScroll}
       data-slot="select-content"
       class={cn(
-        'bg-popover text-popover-foreground ring-foreground/10 min-w-36 rounded-lg shadow-md ring-1 relative isolate z-[200] overflow-x-hidden overflow-y-auto',
-        className
+        'bg-popover text-popover-foreground ring-foreground/10 min-w-36 rounded-lg shadow-md ring-1 relative isolate z-[var(--z-popover)] overflow-x-hidden overflow-y-auto',
+        className,
+        !open && '!pointer-events-none'
       )}
       {...restProps}
     >

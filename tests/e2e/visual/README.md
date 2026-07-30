@@ -24,6 +24,7 @@ bun run test:e2e:visual
   - 不涉及 Tauri IPC 交互
   - 不依赖真实业务数据
   - 独立 HTML 测试夹具（`fixtures/theme-fixture.html`）
+- `ark-ui-builtins.spec.ts`：五套内置 family 的真实 `src/app.css` 壳层回归，覆盖桌面与窄屏、运行时错误和水平溢出。
 
 ## 三层承诺
 

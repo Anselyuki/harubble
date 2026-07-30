@@ -9,6 +9,7 @@ import type {
   AppErrorEvent,
   LibraryIndexState,
   AlbumCatalogRefreshedEvent,
+  AppPreferences,
 } from '$lib/types';
 
 /**
@@ -30,7 +31,7 @@ export interface AppEventMap {
   'album-catalog-refreshed': AlbumCatalogRefreshedEvent;
   'homepage-belong-ready': void;
   'app-menu-command': { id: string };
-  preferences_snapshot: import('./types').AppPreferences;
+  preferences_snapshot: AppPreferences;
 }
 
 export type AppEventName = keyof AppEventMap;

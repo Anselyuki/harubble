@@ -227,6 +227,8 @@ export interface ThemeTokenSet {
   textPrimary: string;
   textSecondary: string;
   textTertiary: string;
+  tint: string;
+  tintRgb: string;
   border: string;
   ring: string;
   destructive: string;
@@ -337,11 +339,23 @@ export interface ThemePackageFontFamily {
 }
 
 /**
+ * 主题包自定义 CSS 变量的昼夜覆盖。
+ *
+ * 每个模式仅需声明相对顶层 `cssVariables` 变化的变量；运行时会先应用基础变量，
+ * 再合并当前 effective scheme 的覆盖。缺失该字段的旧主题包保持原有行为。
+ */
+export interface ThemePackageCssVariableVariants {
+  light?: Record<string, string>;
+  dark?: Record<string, string>;
+}
+
+/**
  * 主题包 visualContract 声明（Phase 3）。
  *
  * `family`：视觉语言族。当前 app 版本支持集在 SUPPORTED_THEME_FAMILIES 常量里；
  * 不在支持集内的值会 fallback 到 `glass`。
- * `depth`：视觉深度。同上，fallback 到 `balanced`。
+ * `depth`：视觉深度。同上；同时兼容 legacy 三档与 Ark UI 四档，未知值
+ * fallback 到 `balanced`。
  */
 export interface ThemePackageVisualContract {
   family?: string;
@@ -363,6 +377,8 @@ export interface ThemePackageDocument {
   fontFamily?: ThemePackageFontFamily;
   /** Phase 4：自定义 CSS 变量，key 必须以 `--theme-custom-` 开头。 */
   cssVariables?: Record<string, string>;
+  /** 自定义 CSS 变量的稀疏昼夜覆盖。 */
+  cssVariableVariants?: ThemePackageCssVariableVariants;
   warnings?: string[];
 }
 
@@ -373,6 +389,7 @@ export interface ThemePackageSummary {
   status: ThemePackageStatus;
   builtin?: boolean;
   sha256?: string | null;
+  warnings?: string[];
 }
 
 export type OutputFormat = 'flac' | 'wav' | 'mp3';
@@ -554,6 +571,7 @@ export interface PlaybackEndedEvent {
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface AppPreferences {
+  schemaVersion: number;
   outputFormat: OutputFormat;
   outputDir: string;
   downloadLyrics: boolean;
@@ -782,11 +800,23 @@ export type TagEditorError =
 
 // ── Preferences ──────────────────────────────────────────────────────────────
 
-export type PreferencesErrorCode = 'notFound' | 'io' | 'internal';
+export type PreferencesErrorCode =
+  | 'notFound'
+  | 'io'
+  | 'revisionMismatch'
+  | 'internal';
 
 export type PreferencesError =
   | { code: 'notFound' }
   | { code: 'io'; detail: string }
+  | {
+      code: 'revisionMismatch';
+      detail: {
+        currentRevision: number;
+        expectedRevision: number;
+        message: string;
+      };
+    }
   | { code: 'internal'; detail: string };
 
 // ── Logging ───────────────────────────────────────────────────────────────────
