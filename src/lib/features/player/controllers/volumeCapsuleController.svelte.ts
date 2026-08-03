@@ -44,7 +44,9 @@ export interface VolumeCapsuleController {
   handleSliderCommit(): void;
   handleSliderDown(): void;
   handleSliderUp(): void;
+  handleSliderCancel(): void;
   handleFocusOut(event: FocusEvent): void;
+  handleFocusIn(): void;
   handleMouseLeave(): void;
   handleMouseEnter(): void;
   handleIconClick(): void;
@@ -62,18 +64,36 @@ export function createVolumeCapsuleController(
   opts: VolumeCapsuleControllerOpts
 ): VolumeCapsuleController {
   const animator = opts.animator;
-  let state: CapsuleState = CapsuleState.Closed;
-  let isDragging = false;
-  let sliderPreview: number | null = null;
+  let state = $state<CapsuleState>(CapsuleState.Closed);
+  let isDragging = $state(false);
+  let sliderPreview = $state<number | null>(null);
   let focusSliderOnOpen = false;
+  let animationGeneration = 0;
 
   function send(event: CapsuleEvent): void {
     state = transition(state, event);
   }
 
   const collapseTimer = createCollapseTimer(COLLAPSE_DELAY_MS, () => {
+    const wrapper = opts.getWrapperEl();
+    if (
+      isDragging ||
+      (wrapper &&
+        (wrapper.matches(':hover') || wrapper.contains(document.activeElement)))
+    ) {
+      return;
+    }
     opts.onclose();
   });
+
+  function handleOpenIntent(): void {
+    collapseTimer.cancel();
+    if (!opts.getOpen()) {
+      // Hover and focus reveal the control without moving focus themselves.
+      focusSliderOnOpen = false;
+      opts.onopen();
+    }
+  }
 
   return {
     get isDragging() {
@@ -86,19 +106,32 @@ export function createVolumeCapsuleController(
       return sliderPreview;
     },
     syncOpen() {
-      if (opts.getOpen() && state === CapsuleState.Closed) {
+      const targetOpen = opts.getOpen();
+      if (
+        targetOpen &&
+        (state === CapsuleState.Closed || state === CapsuleState.Collapsing)
+      ) {
         send('OPEN');
+        const generation = ++animationGeneration;
         animator.expand(() => {
+          if (generation !== animationGeneration || !opts.getOpen()) return;
           send('EXPANDED');
           if (focusSliderOnOpen) {
             focusSliderOnOpen = false;
             opts.focusSlider();
           }
         });
-      } else if (!opts.getOpen() && state === CapsuleState.Open) {
+      } else if (
+        !targetOpen &&
+        (state === CapsuleState.Open || state === CapsuleState.Expanding)
+      ) {
         focusSliderOnOpen = false;
         send('CLOSE');
-        animator.collapse(() => send('COLLAPSED'));
+        const generation = ++animationGeneration;
+        animator.collapse(() => {
+          if (generation !== animationGeneration || opts.getOpen()) return;
+          send('COLLAPSED');
+        });
       }
     },
     handleSliderInput(pos: number) {
@@ -114,6 +147,11 @@ export function createVolumeCapsuleController(
     },
     handleSliderUp() {
       isDragging = false;
+      sliderPreview = null;
+    },
+    handleSliderCancel() {
+      isDragging = false;
+      sliderPreview = null;
     },
 
     handleFocusOut(event: FocusEvent) {
@@ -121,27 +159,22 @@ export function createVolumeCapsuleController(
       if (!wrapper) return;
       const related = event.relatedTarget as Node | null;
       if (related && wrapper.contains(related)) return;
-      if (state === CapsuleState.Open) collapseTimer.schedule();
+      if (opts.getOpen()) collapseTimer.schedule();
     },
+    handleFocusIn: handleOpenIntent,
     handleMouseLeave() {
       if (isDragging) return;
-      if (state === CapsuleState.Open) collapseTimer.schedule();
+      if (opts.getOpen()) collapseTimer.schedule();
     },
-    handleMouseEnter() {
-      collapseTimer.cancel();
-      // 用 prop 值（getOpen）而不是内部 state：在 Expanding 阶段 state≠Open 但父组件
-      // 已收到 open=true，避免重复触发 onopen。与原始 view 严格一致。
-      if (!opts.getOpen()) {
-        // Hover reveals the capsule visually but must not steal focus from the
-        // control the user is currently using.
-        focusSliderOnOpen = false;
-        opts.onopen();
-      }
-    },
+    handleMouseEnter: handleOpenIntent,
     handleIconClick() {
       if (opts.getOpen()) {
-        focusSliderOnOpen = false;
-        opts.focusSlider();
+        if (state === CapsuleState.Open) {
+          focusSliderOnOpen = false;
+          opts.focusSlider();
+        } else {
+          focusSliderOnOpen = true;
+        }
       } else {
         focusSliderOnOpen = true;
         opts.onopen();
@@ -150,18 +183,37 @@ export function createVolumeCapsuleController(
     installGlobalPointerListeners() {
       // 与原始 glass/material view 严格一致：拖到胶囊外松开时，只要指针不 hover
       // 就 schedule collapse。不检查 state（原始行为无条件 schedule）。
-      function handleGlobalPointerUp() {
+      function finishGlobalPointerSession() {
         isDragging = false;
+        sliderPreview = null;
         const wrapper = opts.getWrapperEl();
         if (wrapper && !wrapper.matches(':hover')) {
           collapseTimer.schedule();
         }
       }
+      function handleGlobalPointerUp() {
+        finishGlobalPointerSession();
+      }
+      function handleGlobalPointerCancel() {
+        finishGlobalPointerSession();
+      }
+      function handleWindowBlur() {
+        finishGlobalPointerSession();
+      }
       document.addEventListener('pointerup', handleGlobalPointerUp);
-      return () =>
+      document.addEventListener('pointercancel', handleGlobalPointerCancel);
+      window.addEventListener('blur', handleWindowBlur);
+      return () => {
         document.removeEventListener('pointerup', handleGlobalPointerUp);
+        document.removeEventListener(
+          'pointercancel',
+          handleGlobalPointerCancel
+        );
+        window.removeEventListener('blur', handleWindowBlur);
+      };
     },
     destroy() {
+      animationGeneration += 1;
       focusSliderOnOpen = false;
       collapseTimer.destroy();
       animator.destroy();

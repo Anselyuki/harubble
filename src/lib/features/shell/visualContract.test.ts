@@ -8,10 +8,12 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  ARK_UI_THEME_FAMILIES,
   SUPPORTED_THEME_DEPTHS,
   SUPPORTED_THEME_FAMILIES,
   applyVisualContract,
   getVisualContract,
+  isArkUiThemeFamily,
   resolveVisualContract,
   usesStructuredControls,
 } from './visualContract.svelte';
@@ -128,6 +130,21 @@ describe('支持集常量结构稳定', () => {
     expect(usesStructuredControls('corporate')).toBe(true);
     expect(usesStructuredControls('exa')).toBe(false);
     expect(usesStructuredControls('popucom')).toBe(false);
+  });
+
+  it('五个内置 Ark UI family 使用穷举且可判别的独立控件分支', () => {
+    expect(ARK_UI_THEME_FAMILIES).toEqual([
+      'ark',
+      'endfield',
+      'exa',
+      'popucom',
+      'corporate',
+    ]);
+    for (const family of ARK_UI_THEME_FAMILIES) {
+      expect(isArkUiThemeFamily(family)).toBe(true);
+    }
+    expect(isArkUiThemeFamily('glass')).toBe(false);
+    expect(isArkUiThemeFamily('material')).toBe(false);
   });
 
   it('SUPPORTED_THEME_DEPTHS 同时兼容 legacy 与 Ark UI 四档深度', () => {

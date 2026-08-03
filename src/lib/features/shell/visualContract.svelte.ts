@@ -74,6 +74,22 @@ export const SUPPORTED_THEME_DEPTHS: readonly ThemeDepth[] = [
   'maximal',
 ];
 
+export const ARK_UI_THEME_FAMILIES = [
+  'ark',
+  'endfield',
+  'exa',
+  'popucom',
+  'corporate',
+] as const satisfies readonly ThemeFamily[];
+
+export type ArkUiThemeFamily = (typeof ARK_UI_THEME_FAMILIES)[number];
+
+export function isArkUiThemeFamily(
+  family: ThemeFamily
+): family is ArkUiThemeFamily {
+  return (ARK_UI_THEME_FAMILIES as readonly ThemeFamily[]).includes(family);
+}
+
 const STRUCTURED_CONTROL_FAMILIES: readonly ThemeFamily[] = [
   'material',
   'terminal',

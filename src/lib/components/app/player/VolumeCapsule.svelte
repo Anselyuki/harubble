@@ -1,18 +1,15 @@
 <script lang="ts">
   /**
-   * VolumeCapsule · Router 薄壳（Phase 3 Step 3.2）。
-   *
-   * 根据 `getVisualContract().family` 分发到 glass / material view。
-   * 业务逻辑（state 机、collapse timer）通过共享 helper（volume-capsule-state /
-   * volume-capsule-timer）在两个 view 里保持一致；animator 由各 view 自选
-   * `createGlassCapsuleAnimator` / `createMaterialCapsuleAnimator`。
-   *
-   * 保留原路径让 Phase 3 重构对外看不见（"无缝"承诺）。
+   * VolumeCapsule router. The five built-in Ark UI families share one
+   * semantic view and HCI motion model; static CSS keeps their visual geometry
+   * distinct. Legacy families retain their existing glass/material views.
    */
   import {
     getVisualContract,
+    isArkUiThemeFamily,
     usesStructuredControls,
   } from '$lib/features/shell/visualContract.svelte';
+  import FamilyVolumeCapsuleView from './family/FamilyVolumeCapsuleView.svelte';
   import GlassVolumeCapsuleView from './glass/GlassVolumeCapsuleView.svelte';
   import MaterialVolumeCapsuleView from './material/MaterialVolumeCapsuleView.svelte';
 
@@ -40,7 +37,18 @@
   const contract = getVisualContract();
 </script>
 
-{#if usesStructuredControls(contract.family)}
+{#if isArkUiThemeFamily(contract.family)}
+  <FamilyVolumeCapsuleView
+    family={contract.family}
+    {volume}
+    {muted}
+    {open}
+    {onopen}
+    {onclose}
+    {onVolumeChange}
+    {onToggleMute}
+  />
+{:else if usesStructuredControls(contract.family)}
   <MaterialVolumeCapsuleView
     {volume}
     {muted}

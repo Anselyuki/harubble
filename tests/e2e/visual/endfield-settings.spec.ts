@@ -14,6 +14,7 @@ for (const scheme of ['light', 'dark'] as const) {
     const fixture = page.getByTestId('endfield-settings-fixture');
     await expect(fixture).toHaveAttribute('data-scheme', scheme);
     await expect(page.getByText('Field Signal', { exact: true })).toBeVisible();
+    await expect(page.getByText(/theme\.revision/i)).toHaveCount(0);
     await expect(page.getByTestId('endfield-button-contract')).toBeVisible();
 
     const sharedButtonMetrics = await page.evaluate(() => {

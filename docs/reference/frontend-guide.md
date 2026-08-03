@@ -252,7 +252,7 @@ CSS 变量：
 
 这两个档只允许在受控例外 ① 覆盖的循环装饰动画中通过 CSS `animation` 引用，不参与 GSAP 时间线。
 
-少数经权衡的有意特例不并入令牌：如音量胶囊「展开 400ms / 收缩 799ms」的非对称节奏、列表 stagger 的起步 `delay` 与气泡内容的错位 `delay`（这些是编排偏移而非元素时长）。这类点保留就地数值，但须在调用处以注释说明为何是特例。
+少数经权衡的有意特例不并入主题包令牌：Ark UI 音量胶囊是一个局部 `minimal` depth 的直接操控，五个 family 固定共享 `180ms` reveal / `120ms` close，不随主题包 motion override 改变交互节奏；列表 stagger 的起步 `delay` 与气泡内容的错位 `delay` 仍属于编排偏移而非元素时长。这类点保留就地数值，但须在调用处以注释说明为何是特例。
 
 #### 转场原语
 
@@ -381,20 +381,22 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 
 ### 9.2 家族切换契约（重要）
 
-**家族运行时切换会重置组件的瞬时视觉状态**，具体表现：
+**家族运行时切换应保留语义 DOM 与交互连续性**，具体契约：
 
-- `PlayToggleGlyph`、`VolumeCapsule` 使用 `{#if}{:else}` 分发到 glass / structured-control 子 view。`material / terminal / ark / endfield / corporate` 使用硬边实现，`glass / exa / popucom` 使用胶囊实现。切换两类 view 时旧 view 被 unmount，触发 `controller.destroy()` / `animator.destroy()`，新 view 从初始态（Closed / play）mount。
-- 用户在音量胶囊 open 状态下切主题包，胶囊会瞬间收起（不是 bug）。
-- `LyricsBubble`、`FullscreenPlayer` 家族切换用 CSS 域覆盖（`:root[data-theme-family='material']` 选择器），DOM 保留，不重置瞬时状态。
-
-**为什么不做状态迁移**：跨家族转移 open/pending/dragging 等瞬时态需要 Router 持有额外状态镜像，增加复杂度且家族切换本身是低频操作。可接受的取舍。
+- `PlayToggleGlyph` 保留 glass / structured-control 分发。`VolumeCapsule` 的 `ark / endfield / exa / popucom / corporate` 共享同一个 semantic view 和 HCI 交互模型；`glass`、`material / terminal` 仍沿用原 view。
+- Ark UI 音量胶囊的局部 depth 固定为 `minimal`：展开统一为 `180ms`，收起统一为 `120ms`；family 只通过静态 tokens、geometry 和 marker 表达身份，不改变动效通道、操作语义或自动收起规则。`prefers-reduced-motion` 下直接落到同一终态。
+- 音量图标按钮始终是稳定的 mute / unmute toggle，以 `aria-pressed` 表达状态；hover 或 focus-within 只负责 reveal，不改变按钮含义。整数百分比在轨道内常驻，slider value、progress fill 与 `aria-valuetext` 共享同一 position 并直接更新，不对精密操控值做补间。
+- reveal 由正常布局提供 `200px` 空间并推动左侧 controls，不得以绝对浮层覆盖相邻命中区；离开 hover / focus / dragging 后使用固定 `799ms` 操作宽限，这一 HCI 延迟不跟随 family motion token。粗指针环境常驻展开，父级同时预留 `200 × 40px`，slider 保持可聚焦和可直接触控。
+- 颜色所有权保持分层：App Theme 负责胶囊结构、family marker 与 focus signal；album Context Theme 只负责 progress 和 thumb，不反向覆盖 App Theme 结构色。
+- 五个 Ark UI family 之间切换时不使用 keyed remount；同一 DOM、当前焦点和 open 状态原位保留，CSS 只更新 family 的静态视觉契约，不重放 reveal。
+- `LyricsBubble`、`FullscreenPlayer` 家族切换继续使用 CSS 域覆盖（如 `:root[data-theme-family='material']` 选择器），DOM 保留，不重置瞬时状态。
 
 ### 9.3 添加新 primitive 的判断
 
 判断某个 primitive 需要"DOM 拆分"（router + glass/material view）还是"CSS 域覆盖"：
 
-- **DOM 拆分**：有 family 特有的 tween 曲线 / 显隐层数 / 关键交互（如 WaveGlassPanel、iOS spring 与 Material fade 的动画本质不同）
-- **CSS 域覆盖**：DOM 结构和交互 family-无关，只有 chrome（背景、shadow、blur）差异
+- **DOM 拆分**：语义结构、信息层级或关键交互真正不同（如 glass 的 `WaveGlassPanel` 与 structured-control view）；仅 easing、边框或 marker 不足以构成拆分理由。
+- **CSS 域覆盖**：DOM 结构和交互 family-无关，差异仅位于 tokens / geometry / marker / chrome（背景、shadow、blur）。五个 Ark UI `VolumeCapsule` family 属于这一类。
 
 不确定时优先 CSS 域覆盖，成本更低、不引入运行时状态重置。
 

@@ -7,8 +7,10 @@
  * 且核心方法（expand/collapse/showBadge/hideBadge/destroy）都能被调用而不抛错。
  * 具体 GSAP tween 参数不作 pixel-perfect 断言（那属于视觉回归的范畴）。
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { applyMotionOverride, gsap } from '$lib/design/gsap';
 import {
+  createArkCapsuleAnimator,
   createGlassCapsuleAnimator,
   createMaterialCapsuleAnimator,
   type CapsuleAnimator,
@@ -110,3 +112,74 @@ function testContractFor(
 
 testContractFor(createGlassCapsuleAnimator, 'glass');
 testContractFor(createMaterialCapsuleAnimator, 'material');
+testContractFor(createArkCapsuleAnimator, 'ark-ui');
+
+afterEach(() => {
+  applyMotionOverride(null);
+});
+
+describe('Ark UI HCI motion model', () => {
+  it('uses one short reveal without translation, scale, clip, or rotation tweens', () => {
+    const refs = makeRefs();
+    const anim = createArkCapsuleAnimator(() => refs);
+
+    anim.expand(() => {});
+    const [tween] = gsap.getTweensOf(refs.track);
+    expect(tween).toBeDefined();
+    expect(tween.duration()).toBe(0.18);
+    expect(tween.vars.width).toBe(200);
+    expect(tween.vars.opacity).toBe(1);
+    expect(tween.vars.x).toBeUndefined();
+    expect(tween.vars.y).toBeUndefined();
+    expect(tween.vars.scale).toBeUndefined();
+    expect(tween.vars.scaleX).toBeUndefined();
+    expect(tween.vars.scaleY).toBeUndefined();
+    expect(tween.vars.rotation).toBeUndefined();
+    expect(tween.vars.clipPath).toBeUndefined();
+    anim.destroy();
+  });
+
+  it('uses a faster close and leaves the inline readout unanimated', () => {
+    const refs = makeRefs();
+    const anim = createArkCapsuleAnimator(() => refs);
+    anim.expand(() => {});
+    gsap.getTweensOf(refs.track)[0]?.progress(1);
+
+    anim.showBadge();
+    expect(gsap.getTweensOf(refs.badge)).toHaveLength(0);
+
+    anim.collapse(() => {});
+    const [tween] = gsap.getTweensOf(refs.track);
+    expect(tween.duration()).toBe(0.12);
+    expect(tween.vars.width).toBe(0);
+    expect(tween.vars.opacity).toBe(0);
+    anim.destroy();
+  });
+
+  it('interrupts the current reveal instead of stacking timelines', () => {
+    const refs = makeRefs();
+    const anim = createArkCapsuleAnimator(() => refs);
+    anim.expand(() => {});
+    gsap.getTweensOf(refs.track)[0]?.progress(0.5);
+
+    anim.collapse(() => {});
+    expect(gsap.getTweensOf(refs.track)).toHaveLength(1);
+    anim.expand(() => {});
+    expect(gsap.getTweensOf(refs.track)).toHaveLength(1);
+    anim.destroy();
+  });
+
+  it('keeps compact-control timing stable across package motion overrides', () => {
+    applyMotionOverride({ FAST: 640, MICRO: 420 });
+    const refs = makeRefs();
+    const anim = createArkCapsuleAnimator(() => refs);
+
+    anim.expand(() => {});
+    expect(gsap.getTweensOf(refs.track)[0]?.duration()).toBe(0.18);
+    gsap.getTweensOf(refs.track)[0]?.progress(1);
+
+    anim.collapse(() => {});
+    expect(gsap.getTweensOf(refs.track)[0]?.duration()).toBe(0.12);
+    anim.destroy();
+  });
+});

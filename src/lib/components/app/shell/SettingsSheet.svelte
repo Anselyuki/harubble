@@ -48,7 +48,6 @@
 
   type SettingsThemePackageManager = Pick<
     ThemePackageManager,
-    | 'currentRevision'
     | 'activePackageId'
     | 'previewingId'
     | 'installedPackages'

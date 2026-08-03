@@ -155,6 +155,17 @@ describe('ThemePackageLibrarySection built-in package actions', () => {
     expect(getByText('Industrial Cyan')).toBeInTheDocument();
   });
 
+  it('does not expose the internal theme revision', () => {
+    const { queryByText } = render(ThemePackageLibrarySection, {
+      props: {
+        sectionTitle: 'Theme packages',
+        sectionDescription: 'Manage themes',
+      },
+    });
+
+    expect(queryByText(/theme\.revision/i)).not.toBeInTheDocument();
+  });
+
   it('keeps preview and activation available for built-in packages', async () => {
     const { getAllByTestId } = render(ThemePackageLibrarySection, {
       props: {

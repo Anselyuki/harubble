@@ -24,7 +24,6 @@
   import { localeState } from '$lib/i18n';
 
   interface ThemePackageLibraryManager {
-    readonly currentRevision: number;
     readonly activePackageId: string | null;
     readonly previewingId: string | null;
     readonly installedPackages: ThemePackageSummary[];
@@ -505,12 +504,6 @@
         <li class="package-empty">{labels.empty}</li>
       {/each}
     </ul>
-
-    <footer class="section-footer">
-      <span class="revision-badge">
-        theme.revision: <code>{manager.currentRevision}</code>
-      </span>
-    </footer>
   </div>
 </section>
 
@@ -792,20 +785,5 @@
     border: 1px dashed var(--sheet-border, var(--border));
     border-radius: var(--shape-md);
     font-size: 0.875rem;
-  }
-  .section-footer {
-    display: flex;
-    justify-content: flex-end;
-  }
-  .revision-badge {
-    font-size: 0.75rem;
-    color: var(--text-tertiary);
-  }
-  .revision-badge code {
-    font-family: var(--font-mono);
-    background-color: var(--sheet-control-bg, var(--bg-tertiary));
-    padding: 2px 6px;
-    border-radius: var(--shape-xs);
-    margin-left: 4px;
   }
 </style>

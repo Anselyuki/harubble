@@ -25,6 +25,7 @@
     getMotionDuration,
     killTweens,
     MOTION,
+    shouldSkipMotion,
   } from '$lib/design/gsap';
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
   interface Song {
@@ -438,16 +439,19 @@
       return {};
     }
 
-    const collapsedWidth = 88;
+    const minimumCollapsedWidth = 88;
     const maxExpandedWidth = 286;
     let hoverOpen = false;
     let focusOpen = false;
+    let collapsedWidth = minimumCollapsedWidth;
     let expandedWidth = maxExpandedWidth;
     let sourceCollapsedWidth = collapsedWidth;
     let sourceExpandedWidth = collapsedWidth;
     let sourceExtraWidth = 0;
     let detailsWidth = 0;
     let frame = 0;
+    let remeasureFrame = 0;
+    const narrowDisclosureQuery = window.matchMedia('(max-width: 360px)');
 
     const measureExpandedWidth = () => {
       const previousDetailsWidth = details.style.width;
@@ -459,6 +463,7 @@
       details.style.width = 'max-content';
       readout.style.width = 'max-content';
       const sourceStyle = getComputedStyle(sourcePill);
+      const readoutStyle = getComputedStyle(readout);
       const sourceHorizontalChrome =
         Number.parseFloat(sourceStyle.paddingLeft) +
         Number.parseFloat(sourceStyle.paddingRight) +
@@ -467,8 +472,18 @@
       sourceCollapsedWidth = Math.ceil(
         sourceCore.getBoundingClientRect().width + sourceHorizontalChrome
       );
-      sourceExpandedWidth = Math.ceil(sourcePill.getBoundingClientRect().width);
-      sourceExtraWidth = Math.ceil(
+      collapsedWidth = Math.max(
+        minimumCollapsedWidth,
+        Math.ceil(
+          sourceCollapsedWidth +
+            Number.parseFloat(readoutStyle.paddingLeft) +
+            Number.parseFloat(readoutStyle.paddingRight)
+        )
+      );
+      const fullSourceExpandedWidth = Math.ceil(
+        sourcePill.getBoundingClientRect().width
+      );
+      const fullSourceExtraWidth = Math.ceil(
         sourceExtraClip.getBoundingClientRect().width
       );
       detailsWidth = Math.ceil(details.getBoundingClientRect().width);
@@ -476,8 +491,26 @@
       const shellBorder =
         Number.parseFloat(shellStyle.borderLeftWidth) +
         Number.parseFloat(shellStyle.borderRightWidth);
+      let measuredExpandedWidth = Math.ceil(readout.scrollWidth + shellBorder);
+      sourceExpandedWidth = fullSourceExpandedWidth;
+      sourceExtraWidth = fullSourceExtraWidth;
+
+      if (
+        measuredExpandedWidth > maxExpandedWidth &&
+        fullSourceExtraWidth > 0
+      ) {
+        // The output endpoint is the comparison target. When the inline path is
+        // tight, leave source channel/bitrate detail to the click disclosure.
+        sourcePill.style.width = `${sourceCollapsedWidth}px`;
+        sourceExtraClip.style.width = '0px';
+        sourceExpandedWidth = sourceCollapsedWidth;
+        sourceExtraWidth = 0;
+        detailsWidth = Math.ceil(details.getBoundingClientRect().width);
+        measuredExpandedWidth = Math.ceil(readout.scrollWidth + shellBorder);
+      }
+
       expandedWidth = clamp(
-        Math.ceil(readout.scrollWidth + shellBorder),
+        measuredExpandedWidth,
         collapsedWidth,
         maxExpandedWidth
       );
@@ -489,27 +522,23 @@
       sourceExtraClip.style.width = previousSourceExtraWidth;
       details.style.width = previousDetailsWidth;
       readout.style.width = previousReadoutWidth;
-      gsap.set(readout, { width: expandedWidth });
     };
 
-    const applyState = (open: boolean, animate: boolean) => {
-      measureExpandedWidth();
+    const applyState = (
+      open: boolean,
+      animate: boolean,
+      shouldMeasure = true
+    ) => {
+      if (shouldMeasure) measureExpandedWidth();
       killTweens(node);
       killTweens(readout);
       killTweens(details);
       killTweens(sourcePill);
       killTweens(sourceExtraClip);
       const duration = animate ? getMotionDuration(MOTION.BASE * 2) : 0;
-      const hiddenWidth = Math.max(expandedWidth - collapsedWidth, 0);
       const ease = open ? 'ios-spring' : 'ios';
       gsap.to(node, {
         width: open ? expandedWidth : collapsedWidth,
-        duration,
-        ease,
-      });
-      gsap.to(readout, {
-        x: open ? 0 : hiddenWidth,
-        force3D: true,
         duration,
         ease,
       });
@@ -526,8 +555,19 @@
       gsap.to(details, { width: open ? detailsWidth : 0, duration, ease });
     };
 
+    const shouldExpand = () =>
+      (!formatPopoverOpen || !narrowDisclosureQuery.matches) &&
+      (hoverOpen || focusOpen);
     const updateState = (animate = true) => {
-      applyState(hoverOpen || focusOpen, animate);
+      applyState(shouldExpand(), animate);
+    };
+    const scheduleRemeasure = () => {
+      if (remeasureFrame) return;
+      remeasureFrame = requestAnimationFrame(() => {
+        remeasureFrame = 0;
+        measureExpandedWidth();
+        applyState(shouldExpand(), false, false);
+      });
     };
     const handleEnter = () => {
       hoverOpen = true;
@@ -536,10 +576,6 @@
     const handleLeave = () => {
       hoverOpen = false;
       focusOpen = readout.matches(':focus-visible');
-      if (formatPopoverOpen && !focusOpen) {
-        closeFormatPopover();
-        return;
-      }
       updateState(true);
     };
     const handleFocusIn = () => {
@@ -548,40 +584,65 @@
     };
     const handleFocusOut = () => {
       focusOpen = false;
-      if (formatPopoverOpen) {
-        closeFormatPopover();
-        return;
-      }
       updateState(true);
     };
     const handlePopoverClosed = () => {
       updateState(true);
+    };
+    const handlePopoverOpened = () => {
+      updateState(true);
+    };
+    const handleDisclosureBreakpointChange = () => {
+      updateState(false);
     };
 
     gsap.set(node, { width: collapsedWidth });
     gsap.set(details, { width: 0 });
     gsap.set(sourcePill, { width: collapsedWidth });
     gsap.set(sourceExtraClip, { width: 0 });
-    gsap.set(readout, {
-      width: maxExpandedWidth,
-      x: maxExpandedWidth - collapsedWidth,
-      force3D: true,
-    });
+    gsap.set(readout, { clearProps: 'width,transform' });
     frame = requestAnimationFrame(() => updateState(false));
     node.addEventListener('pointerenter', handleEnter);
     node.addEventListener('pointerleave', handleLeave);
     node.addEventListener('focusin', handleFocusIn);
     node.addEventListener('focusout', handleFocusOut);
+    node.addEventListener('format-popover-opened', handlePopoverOpened);
     node.addEventListener('format-popover-closed', handlePopoverClosed);
+    narrowDisclosureQuery.addEventListener(
+      'change',
+      handleDisclosureBreakpointChange
+    );
+    const contentObserver = new MutationObserver(scheduleRemeasure);
+    contentObserver.observe(readout, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    const contentResizeObserver = new ResizeObserver(scheduleRemeasure);
+    contentResizeObserver.observe(sourceCore);
+    const themeObserver = new MutationObserver(scheduleRemeasure);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'data-ark-theme', 'data-ark-depth'],
+    });
 
     return {
       destroy() {
         cancelAnimationFrame(frame);
+        cancelAnimationFrame(remeasureFrame);
+        contentObserver.disconnect();
+        contentResizeObserver.disconnect();
+        themeObserver.disconnect();
         node.removeEventListener('pointerenter', handleEnter);
         node.removeEventListener('pointerleave', handleLeave);
         node.removeEventListener('focusin', handleFocusIn);
         node.removeEventListener('focusout', handleFocusOut);
+        node.removeEventListener('format-popover-opened', handlePopoverOpened);
         node.removeEventListener('format-popover-closed', handlePopoverClosed);
+        narrowDisclosureQuery.removeEventListener(
+          'change',
+          handleDisclosureBreakpointChange
+        );
         killTweens(node);
         killTweens(readout);
         killTweens(details);
@@ -598,6 +659,7 @@
     } else {
       formatPopoverOpen = true;
       formatPopoverVisible = true;
+      formatReadoutShellRef?.dispatchEvent(new Event('format-popover-opened'));
     }
   }
 
@@ -614,6 +676,10 @@
       finishFormatPopoverClose();
       return;
     }
+    if (shouldSkipMotion()) {
+      finishFormatPopoverClose();
+      return;
+    }
     formatPopoverClosing = true;
     const body = formatPopoverEl.querySelector<HTMLElement>(
       '.format-popover-body'
@@ -623,34 +689,30 @@
     const timeline = gsap.timeline({
       onComplete: finishFormatPopoverClose,
     });
+    gsap.set(formatPopoverEl, { clipPath: 'inset(0% 0 0 0)' });
+    timeline.to(
+      formatPopoverEl,
+      {
+        opacity: 0,
+        y: 6,
+        clipPath: 'inset(100% 0 0 0)',
+        duration: getMotionDuration(MOTION.BASE_OUT),
+        ease: 'ios-in',
+      },
+      0
+    );
     if (body) {
       timeline.to(
         body,
         {
           opacity: 0,
-          y: 8,
+          y: 4,
           duration: getMotionDuration(MOTION.MICRO),
           ease: 'ios-in',
         },
         0
       );
     }
-    timeline
-      .to(
-        formatPopoverEl,
-        {
-          height: 36,
-          duration: getMotionDuration(MOTION.SLOW_OUT),
-          ease: 'ios',
-        },
-        0
-      )
-      .to(formatPopoverEl, {
-        opacity: 0,
-        scaleX: 0.68,
-        duration: getMotionDuration(MOTION.MICRO),
-        ease: 'ios-in',
-      });
   }
 
   $effect(() => {
@@ -670,44 +732,58 @@
       );
       popover.style.right = `${anchorRect.right - left - popoverWidth}px`;
     };
-    gsap.set(popover, { height: 'auto', x: 0, scaleX: 1 });
-    const expandedHeight = popover.scrollHeight;
     positionPopover();
     killTweens(popover);
     if (body) killTweens(body);
-    gsap.set(popover, {
-      height: 36,
-      opacity: 0,
-      scaleX: 0.68,
-    });
-    if (body) gsap.set(body, { opacity: 0, y: 8 });
-    const timeline = gsap.timeline({ onUpdate: positionPopover });
-    timeline
-      .to(popover, {
+
+    if (shouldSkipMotion()) {
+      gsap.set(popover, {
+        clearProps: 'height,scaleX',
+        clipPath: 'none',
         opacity: 1,
-        scaleX: 1,
-        duration: getMotionDuration(MOTION.FAST),
-        ease: 'ios-out',
-      })
-      .to(popover, {
-        height: expandedHeight,
-        duration: getMotionDuration(MOTION.SLOW),
-        ease: 'ios-spring',
-        onComplete: () => {
-          gsap.set(popover, { height: 'auto' });
-          positionPopover();
-        },
+        x: 0,
+        y: 0,
       });
+      if (body) gsap.set(body, { opacity: 1, y: 0 });
+      const anchorObserver = new ResizeObserver(positionPopover);
+      if (formatReadoutShellRef) anchorObserver.observe(formatReadoutShellRef);
+      window.addEventListener('resize', positionPopover);
+      return () => {
+        anchorObserver.disconnect();
+        window.removeEventListener('resize', positionPopover);
+      };
+    }
+
+    gsap.set(popover, {
+      clearProps: 'height,scaleX',
+      clipPath: 'inset(100% 0 0 0)',
+      opacity: 0,
+      x: 0,
+      y: 6,
+    });
+    if (body) gsap.set(body, { opacity: 0, y: 4 });
+    const timeline = gsap.timeline({ onUpdate: positionPopover });
+    timeline.to(popover, {
+      clipPath: 'inset(0% 0 0 0)',
+      opacity: 1,
+      y: 0,
+      duration: getMotionDuration(MOTION.BASE),
+      ease: 'ios-out',
+      onComplete: () => {
+        gsap.set(popover, { clearProps: 'clipPath' });
+        positionPopover();
+      },
+    });
     if (body) {
       timeline.to(
         body,
         {
           opacity: 1,
           y: 0,
-          duration: getMotionDuration(MOTION.BASE),
+          duration: getMotionDuration(MOTION.FAST),
           ease: 'ios-out',
         },
-        `-=${getMotionDuration(MOTION.BASE)}`
+        0.04
       );
     }
     const anchorObserver = new ResizeObserver(positionPopover);
@@ -740,6 +816,14 @@
       document.removeEventListener('pointerdown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
+  });
+
+  $effect(() => {
+    if (compactFormatLabel && sourceFormatLabel && outputFormatLabel) return;
+    if (!formatPopoverOpen && !formatPopoverVisible && !formatPopoverClosing) {
+      return;
+    }
+    finishFormatPopoverClose();
   });
 
   $effect(() => {
@@ -1000,7 +1084,7 @@
               id="player-format-details"
               class="format-popover-content"
               bind:this={formatPopoverEl}
-              role="dialog"
+              role="region"
               aria-label={m.player_format_popover_title()}
             >
               <div class="format-popover-body">
@@ -1255,6 +1339,7 @@
 
       <div
         class="volume-group"
+        class:volume-expanded={capsuleOpen}
         role="group"
         aria-label={m.player_aria_volume()}
       >
@@ -1772,23 +1857,21 @@
     position: relative;
     z-index: 2;
     width: 88px;
-    height: 28px;
+    height: 40px;
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     justify-content: flex-start;
     overflow: hidden;
-    contain: paint;
+    overflow: clip;
   }
 
   .format-readout {
-    position: absolute;
-    top: 0;
-    right: 0;
     appearance: none;
+    flex: 0 0 auto;
     min-width: 0;
-    height: 28px;
-    width: 286px;
+    height: 40px;
+    width: 100%;
     padding: 0 6px;
     display: inline-flex;
     align-items: center;
@@ -1802,9 +1885,7 @@
     white-space: nowrap;
     background: transparent;
     cursor: default;
-    transform: translate3d(198px, 0, 0);
-    backface-visibility: hidden;
-    will-change: transform;
+    transform: none;
   }
 
   .format-readout:focus-visible {
@@ -1859,7 +1940,7 @@
 
   .format-source-extra {
     flex: 0 0 auto;
-    color: rgba(128, 128, 128, 0.72);
+    color: inherit;
   }
 
   .format-pill-output {
@@ -1889,9 +1970,413 @@
 
   .format-arrow {
     flex: 0 0 auto;
-    color: rgba(128, 128, 128, 0.5);
-    font-size: 9px;
+    color: var(--format-pill-color, var(--text-secondary));
+    font-size: 10px;
+    font-weight: 700;
     line-height: 1;
+  }
+
+  :global(:root[data-ark-theme]) .format-readout-anchor {
+    --format-family-signal: var(--theme-accent);
+    --format-family-signal-alt: var(
+      --theme-custom-signal-alt,
+      var(--format-family-signal)
+    );
+    --format-pill-background: color-mix(
+      in srgb,
+      var(--bg-primary) 92%,
+      transparent
+    );
+    --format-pill-output-background: color-mix(
+      in srgb,
+      var(--bg-primary) 86%,
+      transparent
+    );
+    --format-pill-border: 1px solid
+      color-mix(in srgb, var(--icon-default) 24%, transparent);
+    --format-pill-radius: var(--shape-sm);
+    --format-pill-shadow: none;
+    --format-pill-color: var(--icon-default, var(--text-secondary));
+    --format-pill-font: var(--font-mono);
+    --format-pill-weight: 700;
+    --format-pill-gap: 4px;
+    --format-pill-padding: 0 5px 0 4px;
+    --format-readout-padding-inline: 4px;
+    --format-marker-width: 7px;
+    --format-marker-height: 7px;
+    --format-marker-radius: var(--shape-circle);
+    --format-marker-background: var(--format-family-signal);
+    --format-marker-output-background: var(--format-family-signal-alt);
+    --format-marker-border: 0;
+    --format-marker-shadow: none;
+    --format-marker-clip: none;
+    --format-marker-transform: none;
+    --format-popover-surface: var(
+      --theme-custom-panel,
+      color-mix(in srgb, var(--theme-surface) 94%, transparent)
+    );
+    --format-popover-ink: var(--theme-text-primary, var(--text-primary));
+    --format-popover-muted: var(--theme-text-secondary, var(--text-secondary));
+    --format-popover-divider: var(--theme-custom-rule, var(--border));
+    --format-popover-border: 1px solid var(--format-popover-divider);
+    --format-popover-radius: var(--shape-md, 8px);
+    --format-popover-shadow: none;
+    --format-popover-backdrop: none;
+    --format-popover-header-font: var(--font-display);
+    --format-popover-header-weight: 700;
+    --format-popover-header-marker-width: 8px;
+    --format-popover-header-marker-height: 12px;
+    --format-popover-header-marker-top: 3px;
+    --format-popover-header-marker-background: var(--format-family-signal);
+    --format-popover-header-marker-border: 0;
+    --format-popover-header-marker-radius: 0;
+    --format-popover-header-marker-clip: none;
+    --format-popover-header-indent: 14px;
+    --format-popover-header-rule-height: 1px;
+    --format-popover-header-rule: linear-gradient(
+      90deg,
+      var(--format-family-signal) 0 24px,
+      var(--format-popover-divider) 24px
+    );
+    --format-popover-badge-background: transparent;
+    --format-popover-badge-border: 1px solid var(--format-popover-divider);
+    --format-popover-badge-radius: var(--shape-xs, 2px);
+    --format-popover-badge-shadow: none;
+    --format-popover-badge-color: var(--format-popover-ink);
+    --format-popover-badge-font: var(--font-body);
+    --format-popover-badge-weight: 700;
+    --format-popover-badge-padding: 4px 7px;
+    --format-popover-badge-gap: 6px;
+    --format-popover-badge-marker-width: 2px;
+    --format-popover-badge-marker-height: 8px;
+    --format-popover-badge-marker-background: var(--format-family-signal);
+    --format-popover-badge-marker-border: 0;
+    --format-popover-badge-marker-radius: 0;
+    --format-popover-badge-marker-clip: none;
+    --format-popover-output-marker-background: var(--format-family-signal);
+    --format-popover-processing-background: transparent;
+    --format-popover-flag-color: var(--format-popover-ink);
+  }
+
+  :global(:root[data-ark-theme]) .format-readout {
+    padding-inline: var(--format-readout-padding-inline);
+    gap: var(--format-pill-gap);
+  }
+
+  :global(:root[data-ark-theme]) .format-pill {
+    box-sizing: border-box;
+    padding: var(--format-pill-padding);
+    gap: var(--format-pill-gap);
+    border: var(--format-pill-border);
+    border-radius: var(--format-pill-radius);
+    background: var(--format-pill-background);
+    box-shadow: var(--format-pill-shadow);
+    color: var(--format-pill-color);
+    font-family: var(--format-pill-font);
+    font-weight: var(--format-pill-weight);
+    letter-spacing: 0;
+  }
+
+  :global(:root[data-ark-theme]) .format-pill-source-core {
+    gap: var(--format-pill-gap);
+  }
+
+  :global(:root[data-ark-theme]) .format-pill-output {
+    background: var(--format-pill-output-background);
+  }
+
+  :global(:root[data-ark-theme]) .format-swatch {
+    position: relative;
+    width: var(--format-marker-width);
+    height: var(--format-marker-height);
+    border: var(--format-marker-border);
+    border-radius: var(--format-marker-radius);
+    background: var(--format-marker-background);
+    box-shadow: var(--format-marker-shadow);
+    clip-path: var(--format-marker-clip);
+    transform: var(--format-marker-transform);
+  }
+
+  :global(:root[data-ark-theme]) .format-swatch-output {
+    background: var(--format-marker-output-background);
+    opacity: 0.7;
+  }
+
+  :global(:root[data-ark-theme]) .format-readout:focus-visible {
+    outline: none;
+  }
+
+  :global(:root[data-ark-theme])
+    .format-readout-shell:has(.format-readout:focus-visible)::after {
+    content: '';
+    position: absolute;
+    inset: 6px 1px;
+    z-index: 3;
+    box-sizing: border-box;
+    border: 2px solid var(--format-family-signal);
+    border-radius: var(--format-pill-radius);
+    pointer-events: none;
+  }
+
+  :global(:root[data-ark-theme='ark']) .format-readout-anchor {
+    --format-pill-background: color-mix(
+      in srgb,
+      var(--bg-primary) 90%,
+      var(--format-family-signal) 10%
+    );
+    --format-pill-output-background: color-mix(
+      in srgb,
+      var(--bg-primary) 93%,
+      var(--format-family-signal-alt) 7%
+    );
+    --format-pill-border: 1px solid
+      color-mix(in srgb, var(--format-family-signal) 42%, var(--border));
+    --format-pill-radius: 0;
+    --format-pill-shadow: inset 2px 0 0 var(--format-family-signal);
+    --format-marker-width: 2px;
+    --format-marker-height: 10px;
+    --format-marker-radius: 0;
+    --format-marker-shadow: 4px 0 0
+      color-mix(in srgb, var(--format-family-signal) 34%, transparent);
+    --format-popover-border: 1px solid
+      color-mix(
+        in srgb,
+        var(--format-family-signal) 58%,
+        var(--format-popover-divider)
+      );
+    --format-popover-radius: 0;
+    --format-popover-header-font: var(--font-mono);
+    --format-popover-header-marker-width: 2px;
+    --format-popover-header-marker-height: 14px;
+    --format-popover-header-marker-top: 2px;
+    --format-popover-header-indent: 10px;
+    --format-popover-badge-radius: 0;
+    --format-popover-badge-font: var(--font-mono);
+  }
+
+  :global(:root[data-ark-theme='endfield']) .format-readout-anchor {
+    --format-pill-background: var(
+      --ark-field-dock-raised,
+      color-mix(in srgb, var(--bg-primary) 88%, transparent)
+    );
+    --format-pill-output-background: var(
+      --ark-field-dock-raised,
+      color-mix(in srgb, var(--surface) 88%, transparent)
+    );
+    --format-pill-border: 1px solid
+      color-mix(in srgb, var(--icon-default) 34%, transparent);
+    --format-pill-radius: var(--shape-sm, 2px);
+    --format-marker-width: 8px;
+    --format-marker-height: 12px;
+    --format-marker-radius: 0;
+    --format-marker-clip: polygon(0 0, 100% 0, 55% 100%, 0 100%);
+    --format-popover-radius: var(--shape-sm, 2px);
+    --format-popover-shadow: 4px 4px 0
+      color-mix(in srgb, var(--format-family-signal) 14%, transparent);
+    --format-popover-header-weight: 800;
+    --format-popover-header-marker-width: 9px;
+    --format-popover-header-marker-height: 14px;
+    --format-popover-header-marker-top: 2px;
+    --format-popover-header-marker-clip: polygon(0 0, 100% 0, 58% 100%, 0 100%);
+    --format-popover-header-indent: 15px;
+    --format-popover-header-rule: linear-gradient(
+      90deg,
+      var(--format-family-signal) 0 40px,
+      var(--format-popover-divider) 40px
+    );
+    --format-popover-badge-background: color-mix(
+      in srgb,
+      var(--format-family-signal) 7%,
+      transparent
+    );
+    --format-popover-badge-radius: 0;
+    --format-popover-badge-marker-width: 7px;
+    --format-popover-badge-marker-height: 10px;
+    --format-popover-badge-marker-clip: polygon(0 0, 100% 0, 58% 100%, 0 100%);
+    --format-popover-output-marker-background: var(
+      --theme-custom-signal-alt,
+      var(--format-family-signal)
+    );
+    --format-popover-processing-background: color-mix(
+      in srgb,
+      var(--format-family-signal) 4%,
+      transparent
+    );
+  }
+
+  :global(:root[data-ark-theme='exa']) .format-readout-anchor {
+    --format-pill-background: color-mix(
+      in srgb,
+      var(--bg-primary) 91%,
+      var(--format-family-signal) 9%
+    );
+    --format-pill-output-background: color-mix(
+      in srgb,
+      var(--bg-primary) 92%,
+      var(--format-family-signal-alt) 8%
+    );
+    --format-pill-border: 1px solid
+      color-mix(in srgb, var(--format-family-signal) 78%, var(--border));
+    --format-pill-radius: var(--shape-pill);
+    --format-pill-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--format-family-signal) 18%, transparent);
+    --format-marker-width: 10px;
+    --format-marker-height: 10px;
+    --format-marker-radius: var(--shape-circle);
+    --format-marker-background: transparent;
+    --format-marker-output-background: transparent;
+    --format-marker-border: 2px solid var(--format-family-signal);
+    --format-marker-transform: rotate(-24deg);
+    --format-popover-border: 1px solid
+      color-mix(
+        in srgb,
+        var(--format-family-signal) 54%,
+        var(--format-popover-divider)
+      );
+    --format-popover-radius: 0 14px 0 14px;
+    --format-popover-shadow: 0 12px 32px rgba(8, 9, 20, 0.24);
+    --format-popover-backdrop: blur(14px) saturate(1.08);
+    --format-popover-header-font: ui-serif, Georgia, Cambria, serif;
+    --format-popover-header-weight: 650;
+    --format-popover-header-marker-width: 10px;
+    --format-popover-header-marker-height: 10px;
+    --format-popover-header-marker-top: 4px;
+    --format-popover-header-marker-background: transparent;
+    --format-popover-header-marker-border: 2px solid var(--format-family-signal);
+    --format-popover-header-marker-radius: var(--shape-circle);
+    --format-popover-header-indent: 18px;
+    --format-popover-header-rule: linear-gradient(
+      90deg,
+      var(--format-popover-divider),
+      color-mix(
+        in srgb,
+        var(--format-family-signal) 62%,
+        var(--format-popover-divider)
+      ),
+      var(--format-popover-divider)
+    );
+    --format-popover-badge-border: 1px solid
+      color-mix(
+        in srgb,
+        var(--format-family-signal) 48%,
+        var(--format-popover-divider)
+      );
+    --format-popover-badge-radius: var(--shape-pill);
+    --format-popover-badge-marker-width: 6px;
+    --format-popover-badge-marker-height: 6px;
+    --format-popover-badge-marker-background: transparent;
+    --format-popover-badge-marker-border: 1px solid var(--format-family-signal);
+    --format-popover-badge-marker-radius: var(--shape-circle);
+  }
+
+  :global(:root[data-ark-theme='exa']) .format-swatch::after {
+    content: '';
+    position: absolute;
+    right: -3px;
+    top: 0;
+    width: 4px;
+    height: 4px;
+    border-radius: var(--shape-circle);
+    background: var(--format-family-signal-alt);
+    box-shadow: 0 0 0 1px var(--surface, var(--bg-primary));
+  }
+
+  :global(:root[data-ark-theme='popucom']) .format-readout-anchor {
+    --format-pill-background: color-mix(
+      in srgb,
+      var(--bg-primary) 90%,
+      var(--format-family-signal) 10%
+    );
+    --format-pill-output-background: color-mix(
+      in srgb,
+      var(--bg-primary) 90%,
+      var(--format-family-signal-alt) 10%
+    );
+    --format-pill-border: 2px solid var(--icon-default);
+    --format-pill-radius: var(--shape-pill);
+    --format-pill-shadow: 2px 2px 0
+      var(--theme-custom-action-alt, var(--format-family-signal-alt));
+    --format-pill-weight: 750;
+    --format-marker-width: 9px;
+    --format-marker-height: 9px;
+    --format-marker-radius: var(--shape-circle);
+    --format-marker-background: var(
+      --theme-custom-action-alt,
+      var(--format-family-signal)
+    );
+    --format-marker-border: 2px solid var(--icon-default);
+    --format-marker-shadow: 1px 1px 0 var(--icon-default);
+    --format-popover-border: 2px solid var(--format-popover-ink);
+    --format-popover-radius: 16px;
+    --format-popover-shadow: 3px 3px 0
+      var(--theme-custom-signal-alt, var(--format-family-signal));
+    --format-popover-header-weight: 800;
+    --format-popover-header-marker-width: 10px;
+    --format-popover-header-marker-height: 10px;
+    --format-popover-header-marker-top: 4px;
+    --format-popover-header-marker-background: var(
+      --theme-custom-action-alt,
+      var(--format-family-signal)
+    );
+    --format-popover-header-marker-border: 2px solid var(--format-popover-ink);
+    --format-popover-header-marker-radius: var(--shape-circle);
+    --format-popover-header-indent: 17px;
+    --format-popover-header-rule-height: 2px;
+    --format-popover-badge-background: color-mix(
+      in srgb,
+      var(--format-family-signal) 18%,
+      transparent
+    );
+    --format-popover-badge-border: 2px solid var(--format-popover-ink);
+    --format-popover-badge-radius: var(--shape-pill);
+    --format-popover-badge-shadow: 1.5px 1.5px 0
+      var(--theme-custom-action-alt, var(--format-family-signal));
+    --format-popover-badge-weight: 800;
+    --format-popover-badge-marker-width: 6px;
+    --format-popover-badge-marker-height: 6px;
+    --format-popover-badge-marker-background: var(
+      --theme-custom-signal-alt,
+      var(--format-family-signal)
+    );
+    --format-popover-badge-marker-border: 1px solid var(--format-popover-ink);
+    --format-popover-badge-marker-radius: var(--shape-circle);
+    --format-popover-processing-background: color-mix(
+      in srgb,
+      var(--theme-custom-action-alt, var(--format-family-signal)) 7%,
+      transparent
+    );
+  }
+
+  :global(:root[data-ark-theme='corporate']) .format-readout-anchor {
+    --format-pill-background: color-mix(
+      in srgb,
+      var(--bg-primary) 94%,
+      transparent
+    );
+    --format-pill-output-background: color-mix(
+      in srgb,
+      var(--bg-primary) 88%,
+      transparent
+    );
+    --format-pill-border: 1px solid
+      color-mix(in srgb, var(--icon-default) 46%, transparent);
+    --format-pill-radius: 0;
+    --format-marker-width: 10px;
+    --format-marker-height: 2px;
+    --format-marker-radius: 0;
+    --format-popover-radius: 0;
+    --format-popover-header-weight: 750;
+    --format-popover-header-marker-width: 24px;
+    --format-popover-header-marker-height: 2px;
+    --format-popover-header-marker-top: 8px;
+    --format-popover-header-indent: 32px;
+    --format-popover-badge-background: transparent;
+    --format-popover-badge-border: 0;
+    --format-popover-badge-radius: 0;
+    --format-popover-badge-font: var(--font-display);
+    --format-popover-badge-padding: 4px 0;
+    --format-popover-badge-marker-width: 8px;
+    --format-popover-badge-marker-height: 2px;
   }
 
   .format-popover-content {
@@ -1899,100 +2384,169 @@
     bottom: -4px;
     right: -8px;
     z-index: 1;
-    width: max-content;
-    min-width: min(
-      calc(var(--format-readout-expanded-width, 286px) + 16px),
-      calc(100vw - 24px)
-    );
+    box-sizing: border-box;
+    width: min(320px, calc(100vw - 24px));
+    min-width: 0;
     max-width: calc(100vw - 24px);
-    max-height: 60vh;
-    overflow-x: hidden;
+    max-height: min(80vh, calc(100vh - 24px));
+    overflow-x: auto;
     overflow-y: auto;
-    scrollbar-width: none;
+    scrollbar-width: thin;
+    scrollbar-color: var(--format-popover-divider, var(--border)) transparent;
     padding: 0;
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
-    border: 1px solid rgba(128, 128, 128, 0.14);
-    box-shadow:
-      0 8px 32px rgba(15, 23, 42, 0.12),
-      0 2px 8px rgba(15, 23, 42, 0.06);
-    backdrop-filter: blur(24px) saturate(1.15);
-    -webkit-backdrop-filter: blur(24px) saturate(1.15);
+    color: var(--format-popover-ink, var(--text-primary));
+    border: var(--format-popover-border, 1px solid rgba(128, 128, 128, 0.14));
+    border-radius: var(--format-popover-radius, 18px);
+    background: var(
+      --format-popover-surface,
+      color-mix(in srgb, var(--bg-primary) 94%, transparent)
+    );
+    box-shadow: var(--format-popover-shadow, 0 8px 32px rgba(15, 23, 42, 0.12));
+    backdrop-filter: var(--format-popover-backdrop, blur(24px) saturate(1.15));
+    -webkit-backdrop-filter: var(
+      --format-popover-backdrop,
+      blur(24px) saturate(1.15)
+    );
     transform-origin: bottom right;
     opacity: 0;
+    will-change: opacity, transform, clip-path;
   }
 
   .format-popover-content::-webkit-scrollbar {
-    width: 0;
-    height: 0;
+    width: 4px;
+    height: 4px;
+  }
+
+  .format-popover-content::-webkit-scrollbar-thumb {
+    border-radius: var(--format-popover-radius, 2px);
+    background: var(--format-popover-divider, var(--border));
   }
 
   .format-popover-body {
     min-height: 0;
-    padding: 10px 12px 40px;
+    padding: 12px 13px 42px;
   }
 
   .format-popover-header {
-    font-size: 12px;
-    font-weight: 650;
-    color: var(--text-primary);
-    margin-bottom: 8px;
-    padding: 0 1px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 18px;
+    margin-bottom: 10px;
+    padding: 0 0 8px var(--format-popover-header-indent, 1px);
+    color: var(--format-popover-ink, var(--text-primary));
+    font-family: var(--format-popover-header-font, var(--font-body));
+    font-size: 13px;
+    font-weight: var(--format-popover-header-weight, 650);
+    line-height: 1.35;
+    letter-spacing: 0;
+  }
+
+  .format-popover-header::before {
+    content: '';
+    position: absolute;
+    top: var(--format-popover-header-marker-top, 0);
+    left: 0;
+    box-sizing: border-box;
+    width: var(--format-popover-header-marker-width, 0);
+    height: var(--format-popover-header-marker-height, 0);
+    border: var(--format-popover-header-marker-border, 0);
+    border-radius: var(--format-popover-header-marker-radius, 0);
+    background: var(--format-popover-header-marker-background, transparent);
+    clip-path: var(--format-popover-header-marker-clip, none);
+  }
+
+  .format-popover-header::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: var(--format-popover-header-rule-height, 0);
+    background: var(--format-popover-header-rule, transparent);
   }
 
   .format-popover-columns {
     display: grid;
-    grid-template-columns: max-content max-content;
-    gap: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 12px;
   }
 
   .format-popover-column {
     min-width: 0;
-    padding: 0 9px 1px 1px;
+    padding: 0 10px 1px 0;
   }
 
   .format-popover-column + .format-popover-column {
-    padding: 0 1px 1px 10px;
-    border-left: 1px solid rgba(128, 128, 128, 0.12);
+    padding: 0 0 1px 11px;
+    border-left: 1px solid
+      var(--format-popover-divider, rgba(128, 128, 128, 0.12));
   }
 
   .format-popover-section-heading {
     display: flex;
     align-items: center;
-    min-height: 20px;
+    min-height: 24px;
     margin-bottom: 6px;
   }
 
   .format-popover-rows {
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 4px;
   }
 
   .format-popover-section-badge,
   .format-popover-section-badge-accent {
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 1;
-    padding: 3px 7px;
-    border-radius: var(--shape-pill);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--format-popover-badge-gap, 0);
+    box-sizing: border-box;
     flex-shrink: 0;
+    padding: var(--format-popover-badge-padding, 3px 7px);
+    border: var(--format-popover-badge-border, 0);
+    border-radius: var(--format-popover-badge-radius, var(--shape-pill));
+    background: var(
+      --format-popover-badge-background,
+      rgba(128, 128, 128, 0.12)
+    );
+    box-shadow: var(--format-popover-badge-shadow, none);
+    color: var(--format-popover-badge-color, var(--text-secondary));
+    font-family: var(--format-popover-badge-font, var(--font-body));
+    font-size: 11px;
+    font-weight: var(--format-popover-badge-weight, 600);
+    line-height: 1.15;
+    letter-spacing: 0;
   }
 
-  .format-popover-section-badge {
-    background: rgba(128, 128, 128, 0.12);
-    color: var(--text-secondary);
+  .format-popover-section-badge::before,
+  .format-popover-section-badge-accent::before {
+    content: '';
+    box-sizing: border-box;
+    width: var(--format-popover-badge-marker-width, 0);
+    height: var(--format-popover-badge-marker-height, 0);
+    flex: 0 0 auto;
+    border: var(--format-popover-badge-marker-border, 0);
+    border-radius: var(--format-popover-badge-marker-radius, 0);
+    background: var(--format-popover-badge-marker-background, transparent);
+    clip-path: var(--format-popover-badge-marker-clip, none);
   }
 
-  .format-popover-section-badge-accent {
-    background: rgba(128, 128, 128, 0.08);
-    color: var(--text-secondary);
+  .format-popover-column
+    + .format-popover-column
+    .format-popover-section-badge::before {
+    background: var(
+      --format-popover-output-marker-background,
+      var(--format-popover-badge-marker-background, transparent)
+    );
   }
 
   .format-popover-processing {
-    margin-top: 8px;
-    padding: 8px 1px 0;
-    border-top: 1px solid rgba(128, 128, 128, 0.1);
+    margin-top: 10px;
+    padding: 9px 8px 8px;
+    border-top: 1px solid
+      var(--format-popover-divider, rgba(128, 128, 128, 0.1));
+    background: var(--format-popover-processing-background, transparent);
   }
 
   .format-popover-processing .format-popover-section-heading {
@@ -2001,29 +2555,33 @@
 
   .format-popover-processing-rows {
     display: grid;
-    grid-template-columns: max-content max-content;
-    gap: 5px 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 16px;
   }
 
   .format-popover-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
     gap: 8px;
     align-items: baseline;
-    justify-content: space-between;
     min-width: 0;
+    min-height: 24px;
   }
 
   .format-popover-label {
-    flex-shrink: 0;
-    font-size: 11px;
+    min-width: 0;
+    color: var(--format-popover-muted, var(--text-secondary));
+    font-size: 12px;
     font-weight: 600;
-    color: var(--text-secondary);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
   }
 
   .format-popover-value {
     min-width: 0;
-    font-size: 11px;
-    color: var(--text-primary);
+    max-width: 100%;
+    color: var(--format-popover-ink, var(--text-primary));
+    font-size: 12px;
     font-family: var(--font-mono);
     line-height: 1.4;
     text-align: right;
@@ -2031,8 +2589,40 @@
   }
 
   .format-popover-flag {
-    color: rgba(128, 128, 128, 0.7);
-    font-weight: 600;
+    color: var(--format-popover-flag-color, var(--text-primary));
+    font-weight: 700;
+  }
+
+  @media (max-width: 360px) {
+    .format-popover-content {
+      bottom: calc(100% + 4px);
+      max-height: calc(100vh - 24px);
+    }
+
+    .format-popover-body {
+      padding-bottom: 12px;
+    }
+
+    .format-popover-columns,
+    .format-popover-processing-rows {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .format-popover-columns {
+      row-gap: 10px;
+    }
+
+    .format-popover-column,
+    .format-popover-column + .format-popover-column {
+      padding: 0;
+    }
+
+    .format-popover-column + .format-popover-column {
+      padding-top: 10px;
+      border-top: 1px solid
+        var(--format-popover-divider, rgba(128, 128, 128, 0.12));
+      border-left: 0;
+    }
   }
 
   .lyrics-toggle-anchor {
@@ -2189,5 +2779,68 @@
     height: var(--control-button-size, 34px);
     flex-shrink: 0;
     margin-right: 2px;
+  }
+
+  .volume-group:has(:global(.volume-hover-zone--ark-ui)) {
+    transition: width 120ms cubic-bezier(0.42, 0, 1, 1);
+  }
+
+  .volume-group.volume-expanded:has(:global(.volume-hover-zone--ark-ui)) {
+    width: 200px;
+    height: 40px;
+    transition-duration: 180ms;
+    transition-timing-function: cubic-bezier(0, 0, 0.58, 1);
+  }
+
+  .volume-group:has(:global(.volume-hover-zone--ark-ui .capsule-slider:focus)) {
+    width: 200px;
+    height: 40px;
+    transition: none;
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    .volume-group:has(:global(.volume-hover-zone--ark-ui)) {
+      width: 200px;
+      height: 40px;
+      transition: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .volume-group:has(:global(.volume-hover-zone--ark-ui)),
+    .right-controls:has(:global(.volume-hover-zone--ark-ui)) {
+      transition: none;
+    }
+  }
+
+  @media (max-width: 500px) {
+    .right-controls:has(:global(.volume-hover-zone--ark-ui)) {
+      justify-content: flex-end;
+    }
+  }
+
+  @media (min-width: 501px) and (max-width: 900px) {
+    .right-controls:has(:global(.volume-hover-zone--ark-ui)) {
+      transition: transform 120ms cubic-bezier(0.42, 0, 1, 1);
+    }
+
+    .right-controls:has(
+      .volume-group.volume-expanded :global(.volume-hover-zone--ark-ui)
+    ) {
+      transform: translateX(
+        calc((var(--control-button-size, 34px) - 200px) / 2)
+      );
+      transition-duration: 180ms;
+      transition-timing-function: cubic-bezier(0, 0, 0.58, 1);
+    }
+
+    .right-controls:has(
+      :global(.volume-hover-zone--ark-ui .capsule-slider:focus)
+    ) {
+      transform: translateX(
+        calc((var(--control-button-size, 34px) - 200px) / 2)
+      );
+      transition: none;
+    }
   }
 </style>
