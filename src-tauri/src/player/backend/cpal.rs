@@ -301,6 +301,7 @@ impl PlaybackBackend for CpalBackend {
         metrics_handler: AudioMetricsHandler,
         underrun_handler: AudioUnderrunHandler,
     ) -> Result<()> {
+        #[cfg(not(target_os = "macos"))]
         self.stop()?;
 
         let host = cpal::default_host();
@@ -356,6 +357,17 @@ impl PlaybackBackend for CpalBackend {
             sample_format => anyhow::bail!("Unsupported output sample format {sample_format}"),
         };
 
+        stream.play().context("Failed to start output stream")?;
+
+        // 旧流已被会话 stop flag 切到 equilibrium。等新流真正运行后再释放旧流，避免
+        // USB 音频设备在歌曲加载期间失去稳定的静音时钟。
+        let previous_stream = self.stream.replace(stream);
+        let previous_samples = self.samples.replace(samples);
+        if let Some(previous_samples) = previous_samples {
+            previous_samples.finish();
+        }
+        drop(previous_stream);
+
         spawn_stream_monitor(
             Arc::clone(&stop_flag),
             frames_rendered,
@@ -369,10 +381,18 @@ impl PlaybackBackend for CpalBackend {
             underrun_requested,
             underrun_handler,
         );
+        Ok(())
+    }
 
-        stream.play().context("Failed to start output stream")?;
-        self.stream = Some(stream);
-        self.samples = Some(samples);
+    fn quiesce_for_transition(&mut self) -> Result<()> {
+        if let Some(samples) = self.samples.take() {
+            samples.finish();
+        }
+        if let Some(stream) = &self.stream {
+            stream
+                .play()
+                .context("Failed to keep output stream active during playback transition")?;
+        }
         Ok(())
     }
 
@@ -687,8 +707,13 @@ fn write_output_data_with_metrics<T>(
 
     smoother.smooth_audio(output, status.written, channels);
 
-    for (target, sample) in data.iter_mut().zip(output.iter().copied()) {
-        let dithered = sample * gain + dither.next();
+    for (index, (target, sample)) in data.iter_mut().zip(output.iter().copied()).enumerate() {
+        let scaled = sample * gain;
+        let dithered = if index < status.written && gain > 0.0 {
+            scaled + dither.next()
+        } else {
+            scaled
+        };
         *target = T::from_sample(sanitize_output_sample(dithered));
     }
 
@@ -790,7 +815,7 @@ mod tests {
     use crate::player::backend::{OutputFormat, OutputSampleFormat};
     use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
     use cpal::{SampleFormat, SupportedBufferSize};
-    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
 
     fn config(
@@ -1008,6 +1033,123 @@ mod tests {
             let sample = dither.next();
             assert!((-lsb..=lsb).contains(&sample));
         }
+    }
+
+    #[test]
+    fn integer_output_does_not_dither_empty_initial_buffer() {
+        let samples = SampleBuffer::new();
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::new(2);
+        let mut dither = TpdfDither::new(output_dither_lsb(SampleFormat::I16));
+        let mut output = [1_i16; 256];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert!(output.iter().all(|sample| *sample == 0));
+        assert_eq!(frames_rendered.load(Ordering::Relaxed), 0);
+        assert!(underrun_requested.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn integer_output_keeps_stopped_transition_at_equilibrium() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25; 256]);
+        let stop_flag = AtomicBool::new(true);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::primed(2);
+        let mut dither = TpdfDither::new(output_dither_lsb(SampleFormat::I16));
+        let mut output = [1_i16; 256];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert!(output.iter().all(|sample| *sample == 0));
+        assert_eq!(frames_rendered.load(Ordering::Relaxed), 0);
+        assert!(!finish_fired.load(Ordering::SeqCst));
+        assert!(!underrun_requested.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn integer_output_keeps_muted_audio_at_equilibrium() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25; 256]);
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(0.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::new(2);
+        let mut dither = TpdfDither::new(output_dither_lsb(SampleFormat::I16));
+        let mut output = [1_i16; 256];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert!(output.iter().all(|sample| *sample == 0));
+        assert_eq!(frames_rendered.load(Ordering::Relaxed), 128);
+        assert!(!underrun_requested.load(Ordering::SeqCst));
     }
 
     #[test]

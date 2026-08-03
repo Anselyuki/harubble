@@ -18,7 +18,6 @@ use crate::downloader::{
     download_song_payload, write_payload_to_disk, DownloadCancelledError, DownloadProvenanceSeed,
     MetaOverride, WritePayload,
 };
-use anyhow::Error;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -348,7 +347,11 @@ impl InternalDownloadTask {
 }
 
 fn sanitized_error_details(error: &anyhow::Error) -> Option<String> {
-    let message = error.to_string();
+    let message = error
+        .chain()
+        .last()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| error.to_string());
     if message.is_empty() {
         return None;
     }
@@ -390,7 +393,7 @@ fn is_cancelled(cancellation_flag: Option<&Arc<AtomicBool>>) -> bool {
 }
 
 fn classify_error(e: anyhow::Error) -> DownloadErrorInfo {
-    let msg = e.to_string();
+    let msg = format!("{e:#}");
     let lower = msg.to_ascii_lowercase();
 
     if lower.contains("cancelled") || lower.contains("canceled") {
@@ -423,20 +426,30 @@ fn classify_error(e: anyhow::Error) -> DownloadErrorInfo {
         return make_error(DownloadErrorCode::Api, "API error", e, true);
     }
 
-    if lower.contains("decode") || lower.contains("encode") || lower.contains("flac") {
+    // Typed IO causes take precedence over codec keywords in surrounding context such as
+    // "Failed to write FLAC file". Metadata and lyric failures keep their explicit categories.
+    if e.downcast_ref::<std::io::Error>().is_some() {
+        return make_error(DownloadErrorCode::Io, "IO error", e, false);
+    }
+
+    if lower.contains("decode")
+        || lower.contains("encode")
+        || lower.contains("flac")
+        || lower.contains("wav sample")
+        || lower.contains("sample format")
+    {
         return make_error(DownloadErrorCode::Decode, "Decode/encode error", e, false);
     }
 
-    if is_io_error(&e, &lower) {
+    if looks_like_io_error(&lower) {
         return make_error(DownloadErrorCode::Io, "IO error", e, false);
     }
 
     make_error(DownloadErrorCode::Internal, "Internal error", e, false)
 }
 
-fn is_io_error(error: &Error, lower_message: &str) -> bool {
-    error.downcast_ref::<std::io::Error>().is_some()
-        || lower_message.contains("write")
+fn looks_like_io_error(lower_message: &str) -> bool {
+    lower_message.contains("write")
         || lower_message.contains("save audio")
         || lower_message.contains("sidecar")
         || lower_message.contains("failed to save")
@@ -475,6 +488,35 @@ mod tests {
         let error = classify_error(io_error.into());
 
         assert!(matches!(error.code, DownloadErrorCode::Io));
+        assert!(!error.retryable);
+    }
+
+    #[test]
+    fn classifies_flac_write_failures_from_underlying_io_type() {
+        let io_error =
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied");
+        let error = anyhow!(io_error)
+            .context("Failed to write FLAC file")
+            .context("Failed to save audio file for song");
+        let error = classify_error(error);
+
+        assert!(matches!(error.code, DownloadErrorCode::Io));
+        assert_eq!(error.details.as_deref(), Some("permission denied"));
+        assert!(!error.retryable);
+    }
+
+    #[test]
+    fn classifies_nested_wav_sample_errors_as_decode_errors() {
+        let error = anyhow!("The sample format differs from the destination format")
+            .context("Failed to read float WAV sample")
+            .context("Failed to save audio file for song");
+        let error = classify_error(error);
+
+        assert!(matches!(error.code, DownloadErrorCode::Decode));
+        assert_eq!(
+            error.details.as_deref(),
+            Some("The sample format differs from the destination format")
+        );
         assert!(!error.retryable);
     }
 }

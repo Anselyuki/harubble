@@ -117,6 +117,14 @@ pub trait PlaybackBackend: Send {
         underrun_handler: AudioUnderrunHandler,
     ) -> Result<()>;
 
+    /// 让当前输出进入会话切换期。
+    ///
+    /// 调用方会先停止旧会话；后端应停止消费旧样本，但尽可能保留设备输出流，持续
+    /// 写入数字静音，直到新流准备完成。无法保留流的后端可以退化为普通停止。
+    fn quiesce_for_transition(&mut self) -> Result<()> {
+        self.stop()
+    }
+
     /// 暂停播放。
     fn pause(&mut self) -> Result<()>;
 
