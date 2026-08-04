@@ -20,7 +20,10 @@ bun run tauri:dev
 bun run format:check
 bun run lint
 bun run check
+bun run test
 cargo test --workspace
+bunx playwright test --project=smoke
+bun run test:e2e:visual
 ```
 
 ```bash

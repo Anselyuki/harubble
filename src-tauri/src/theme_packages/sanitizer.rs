@@ -1,4 +1,4 @@
-//! 主题包字段级 sanitizer（Phase 1 遗留 · A）。
+//! 主题包字段级 sanitizer。
 //!
 //! # 模块职责
 //!
@@ -21,7 +21,7 @@
 use crate::theme_packages::types::ThemePackageDocument;
 use std::collections::BTreeMap;
 
-/// 主题包 slot 白名单（Phase 1 MVP 与 `ThemeColorSlots` 完全对齐）。
+/// 主题包 slot 白名单，与前端 `ThemeColorSlots` 完全对齐。
 const KNOWN_SLOTS: &[&str] = &[
     "accent",
     "surface",

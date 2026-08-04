@@ -615,7 +615,7 @@ export async function importPreferences(
 }
 
 // ---------------------------------------------------------------------------
-// Theme package commands (Phase 1 MVP)
+// Theme package commands (v1)
 // ---------------------------------------------------------------------------
 
 /**

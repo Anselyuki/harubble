@@ -16,7 +16,7 @@ Harubble 是面向 [塞壬唱片](https://monster-siren.hypergryph.com/) 的桌�
   Signal / Astral Archive / Co-op Pop / Studio Lime），也可导入 `.json` 覆盖配色 /
   动效 / 圆角 / 密度 / 阴影 / 模糊 / 视觉族。设置页 → 主题包库支持本地文件或 URL
   安装（自动做 SSRF 校验与 CSS sanitize）。
-- **国际化**：内建简中 / 英文 / 日文 UI 语言切换。
+- **国际化**：内建简中 / 英文 UI 语言切换。
 
 > 名字来自《明日方舟》角色 **遥**（Haruka）和她漂浮在空中的透明泡泡（Bubble）。Haru 是 Haruka 的简写。
 >

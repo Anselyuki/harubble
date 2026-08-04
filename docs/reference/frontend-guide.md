@@ -57,6 +57,7 @@ src/
    │  │  ├ search/                  # 搜索视图
    │  │  ├ album/                   # 专辑舞台与详情
    │  │  ├ collection/              # 合集面板与表单
+   │  │  ├ download/                # 下载历史等下载域对话框
    │  │  ├ player/                  # 播放 Dock / 歌词 / 音量 / 全屏播放器
    │  │  └ tag-editor/              # Tag 编辑器视图与对话框
    │  ├ AlbumCard.svelte / SongRow.svelte / MetadataPopover.svelte
@@ -72,9 +73,10 @@ src/
    │  ├ search/   controller + store
    │  ├ collection/ controller + resolvedSongs store
    │  ├ tagEditor/  controller + store + tagLibrary
-   │  └ shell/    appRuntime + appRuntimeBootstrap + store + settings + albumStageMotion
+   │  └ shell/    appRuntime + appRuntimeBootstrap + appRuntimeComposites
+   │              + store + settings + albumStageMotion + eventSequence + menuCommands
    │              + navigation / navigationManager / selectionManager
-   │              + themeManager / downloadBridge
+   │              + themeManager / themePackageManager / visualContract / downloadBridge
    │
    ├ contexts/                      # Svelte context 键 + setter/getter（强类型）
    ├ design/                        # gsap 适配层 + 侧栏动画器 + 侧栏 resize 手柄 + view-transition 原语 + actions + variants
@@ -97,24 +99,32 @@ src/
 | `tagEditor`  | Tag 双层编辑、三路合并、冲突解决                    | controller + store |
 | `shell`      | runtime 编排、面板/视图开关、toast、跨域协调        | controller + store |
 
-依赖方向（单向读）：
+依赖方向：
 
 ```text
-env → library → player → download → home / search / collection / tagEditor → shell
+shared types / api bridges / env
+              ↓
+library  player  download  home  search  collection  tagEditor
+              ↓
+shell runtime composition
 ```
 
-`shell` 聚合其他域的结果，不反向写入业务状态。所有 controller 通过 `features/shell/appRuntime.svelte.ts` 注入到组件树。
+业务 controller 彼此默认并列，通过构造参数接收所需能力；例如 Home 只读取 album catalog 的窄接口，不直接持有 Library 全域状态。`shell` 负责创建 controller、注入跨域回调并把结果映射到 context，不越过 controller 直接改业务内部状态。
+
+当前各业务域仍会复用 `features/shell/domainErrors.ts` 的错误格式化函数，这是已知的兼容例外，不代表允许业务域普遍依赖 shell。新增共享纯函数应放入独立基础模块，避免扩大这条反向依赖。
 
 ## 4. 运行时架构
 
 入口 `createAppRuntime()`（`features/shell/appRuntime.svelte.ts`）一次性：
 
 1. 创建并持有各域 controller / store
-2. 订阅 Tauri 事件（播放、下载、库存、偏好等）并分发给对应 controller
+2. 通过 `appRuntimeBootstrap` 订阅 Tauri 事件（播放、下载、库存、偏好等），并分发给对应 controller
 3. 通过 `shellStore.currentView` 切换视图（`AppView = 'home' | 'search' | 'overview' | 'library' | 'tagEditor' | 'collection'`）
 4. 协调搜索定位、播放队列、下载面板、设置面板等跨域交互
 
-`App.svelte` 仅作薄模板层：
+跨域回调组合集中在 `appRuntimeComposites.svelte.ts`，事件顺序防护集中在 `eventSequence.svelte.ts`，原生菜单命令分发集中在 `menuCommands.ts`。这些模块仍由 `createAppRuntime()` 统一装配，不在展示组件中另建全局状态源。
+
+`App.svelte` 是根装配与窗口级 shell 几何层，不持有业务域状态，但负责侧栏动画/resize、根级 overlay 和 runtime wiring：
 
 - `AppProviders` 把 runtime 注入 Svelte context（见下）
 - `ViewRouter` 根据 `runtime.currentView` 切换主区视图
@@ -141,7 +151,7 @@ env → library → player → download → home / search / collection / tagEdit
 - **UI 展示组件禁止直接调用 `invoke` / `listen`**
 - Rust command 注册统一维护在 `src-tauri/src/command_registry.rs`；新增或删除 command 时只修改这份注册表
 - `src-tauri/src/command_scheduling.rs` 的 `COMMAND_SPECS` 是 command 调度元数据来源，必须与注册表保持覆盖一致
-- 前端 command bridge 集中在 `lib/api.ts`、`lib/settingsApi.ts`、`lib/collectionApi.ts`
+- 前端 command bridge 以 `lib/api.ts` 为主入口，设置与合集域分别由 `lib/settingsApi.ts`、`lib/collectionApi.ts` 收窄；新增 bridge 必须保持域边界，并纳入 IPC 契约测试
 - `lib/appEvents.ts` 的 `AppEventMap` 统一维护事件名与载荷类型
 - 事件订阅集中在 `appRuntime.svelte.ts` / `appRuntimeBootstrap.svelte.ts`；`features/player/miniPlayerBridge.ts` 是迷你播放器独立窗口的受控例外
 - controller / shell / bridge 层承担 IPC 与事件转译
@@ -337,8 +347,32 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 
 ### 曲目点击
 
-- 默认：点击播放
-- 多选模式：点击切换选中状态
+- 默认：行内播放按钮是键盘与辅助技术的主操作；整行单击仅作为指针便利操作
+- 多选模式：显式选择按钮负责切换选中状态，使用 `aria-pressed` 暴露当前状态
+- 不给包含下载、合集等子按钮的整行容器添加 `role="button"`，避免嵌套交互语义
+
+### 破坏性操作
+
+- 清空收听历史、清空下载历史、删除合集和删除标签维度必须使用应用级 `AlertDialog` 二次确认，不调用浏览器原生 `confirm()` / `alert()`
+- 原生菜单与页面按钮必须汇合到同一个 request/confirm 入口，不能绕过确认或空状态反馈
+- 异步确认期间禁用确认与取消按钮，避免重复提交；对话框文案必须说明不会受影响的数据或任务
+
+### 排序与拖拽
+
+- 拖拽只是一种增强路径；合集歌曲和标签值必须同时提供可聚焦的拖拽手柄、方向键/Home/End 操作或独立上下移动按钮
+- 排序完成后用 `aria-live="polite"` 公布新位置；首尾不可移动操作保持禁用
+- 不能把 `draggable` 放在承载多个操作的整行容器上
+
+### 选择器、菜单与滚动
+
+- 二元/多选模式使用 `aria-pressed` 按钮组；只有实现完整焦点与面板关系时才使用 tabs/menu 语义
+- 普通操作列表使用原生列表和按钮，打开浮层后把焦点移到首个可用操作
+- 横向滚动区保留可见滚动条；仅在仍可沿目标方向滚动时消费纵向滚轮，首尾必须把滚动交还页面
+
+### 通知权限
+
+- 测试通知只能在权限已经是 `granted` 时发送
+- 未授权的原生菜单命令打开通知设置并给出反馈，不隐式弹出系统授权请求；授权只能由设置页中的明确用户操作触发
 
 ### 播放状态流
 

@@ -1,18 +1,20 @@
 //! 主题包（Theme Package）相关的 Tauri command。
 //!
-//! 本模块承担 Phase 1 主题包 MVP 的对外 IPC 边界。命令行为通过 `AppState::theme_packages()`
-//! accessor 委托给 [`crate::theme_packages::ThemePackageService`]，不直接持有 store 或
+//! 本模块承担主题包系统的对外 IPC 边界。命令行为通过 `AppState::theme_packages()`
+//! accessor 委托给内部 `ThemePackageService`，不直接持有 store 或
 //! 原始文件路径，遵循 `command_scheduling.rs` 的私有字段守卫约束。
 //!
-//! # 命令清单（Phase 1 MVP）
+//! # 命令清单
 //!
 //! - [`list_theme_packages`]：列出所有已安装主题包摘要
-//! - [`install_theme_package_from_file`]：从本地文件路径安装主题包
 //! - [`inspect_theme_package`]：读取指定主题包完整文档
+//! - [`install_theme_package_from_file`]：从本地文件路径安装主题包
+//! - [`install_theme_package_from_url`]：从经过 SSRF 校验的 URL 安装主题包
 //! - [`uninstall_theme_package`]：卸载主题包（搬到 pending-delete）
-//!
-//! 后续步骤（Phase 1 Step 1.c-1.e）将补齐 URL 抓取、CAS-based 激活、preview/dismiss
-//! 与导出命令。
+//! - [`set_active_theme_package`]：使用 preferences revision 执行 CAS 激活
+//! - [`preview_theme_package`]：预览主题包但不持久化激活状态
+//! - [`dismiss_theme_preview`]：结束预览并恢复已持久化主题
+//! - [`export_theme_package`]：导出已安装主题包
 
 use crate::app_state::AppState;
 use crate::preferences::AppPreferences;

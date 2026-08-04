@@ -5,7 +5,7 @@
 
 <script lang="ts">
   /**
-   * 主题包库 UI（Phase 1 Step 1.g，灰度阶段变更）。
+   * 主题包库 UI。
    *
    * 提供已安装主题包的列表、导入按钮和 preview/apply/dismiss/uninstall 交互。
    *

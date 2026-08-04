@@ -228,7 +228,8 @@ pub struct TagDimensionResolved {
 ///
 /// 1. 启动时调用 [`TagRegistryService::new`] 初始化（尝试从缓存加载）。
 /// 2. 在 Tauri command 中调用 `get_album_tags` / `get_song_tags` 获取已本地化的标签。
-/// 3. 后台拉取到新版本后调用 [`TagRegistryService::update`] 原子替换并持久化。
+/// 3. 后台拉取到新版本后先调用 [`TagRegistryService::persist_registry`] 持久化，
+///    成功后再调用 [`TagRegistryService::replace_in_memory`] 替换内存状态与索引。
 ///
 /// # 线程安全
 ///
@@ -237,7 +238,7 @@ pub struct TagDimensionResolved {
 /// # 错误处理
 ///
 /// - 缓存缺失或 schema 版本不兼容时，静默降级为空注册表（无任何 tag 数据）。
-/// - `update` 原子写入失败时返回 `Err`，但内存中的注册表状态已更新；调用方应记录日志后继续运行。
+/// - `persist_registry` 写入失败时返回 `Err`，调用方不得替换内存状态；持久化成功后再更新内存，保证磁盘与运行时顺序一致。
 #[derive(Clone)]
 pub(crate) struct TagRegistryService {
     registry: Arc<RwLock<TagRegistry>>,

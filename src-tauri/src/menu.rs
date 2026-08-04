@@ -32,7 +32,8 @@ static MENU_EVENT_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// 需要跟随播放器状态刷新勾选态的菜单项句柄。
 ///
 /// 每次调用 [`install`] 都会重建整个菜单，这些引用会随之更新；
-/// [`sync_playback_menu_state`] 从此处读取当前引用后调用 `set_checked`。
+/// [`crate::commands::menu::sync_playback_menu_state`] 从此处读取当前引用后调用
+/// `set_checked`。
 struct PlaybackMenuHandles {
     repeat_off: CheckMenuItem<Wry>,
     repeat_all: CheckMenuItem<Wry>,

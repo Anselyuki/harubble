@@ -6,24 +6,22 @@
 //!
 //! # 命令面
 //!
-//! Svelte 前端通过 `@tauri-apps/api/core::invoke` 调用下面这些命令：
+//! Svelte 前端通过 `@tauri-apps/api/core::invoke` 调用 Tauri command。完整注册表由
+//! `harubble::for_each_tauri_command!` 生成，不在二进制入口重复维护逐命令清单；实现按领域位于
+//! [`commands`] 的子模块：
 //!
-//! - 目录数据：[`commands::get_albums`]、[`commands::get_album_detail`]、
-//!   [`commands::get_song_detail`]、[`commands::get_song_lyrics`]
-//! - 播放控制：[`commands::play_song`]、[`commands::pause_playback`]、
-//!   [`commands::resume_playback`]、[`commands::seek_current_playback`]、
-//!   [`commands::play_next`]、[`commands::play_previous`]、
-//!   [`commands::get_player_state`]、
-//!   [`commands::set_playback_volume`]
-//! - 下载和工具：[`commands::get_default_output_dir`]、
-//!   [`commands::clear_audio_cache`]、[`commands::extract_image_theme`]
+//! - 目录与资源：[`commands::library`] / [`commands::album_catalog`]
+//! - 播放控制：[`commands::playback`]
+//! - 下载与缓存：[`commands::downloads`]
+//! - 偏好与通知：[`commands::preferences`]
+//! - 合集、首页、搜索与标签：[`commands::collection`] / [`commands::homepage`] /
+//!   [`commands::search`] / [`commands::tag_editor`]
 //!
 //! # 事件
 //!
-//! - [`player::events::PLAYER_STATE_CHANGED`] 会在播放状态、队列能力或音量
-//!   变化时发出完整的 [`player::PlayerState`] 快照。
-//! - [`player::events::PLAYER_PROGRESS`] 会在播放推进过程中持续发出完整的
-//!   [`player::PlayerState`] 快照。
+//! - `player-state-changed` 会在播放状态、队列能力或音量变化时发出完整的
+//!   `PlayerState` 快照。
+//! - `player-progress` 会在播放推进过程中持续发出完整的 `PlayerState` 快照。
 //!
 //! # 生成 rustdoc
 //!

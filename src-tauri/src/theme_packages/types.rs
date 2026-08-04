@@ -9,8 +9,8 @@
 //!
 //! # 稳定性
 //!
-//! Phase 1 MVP 阶段，字段级契约尚未冻结；新增字段需带 `#[serde(default)]` 以
-//! 保证向后兼容。破坏性变更（重命名 / 移除字段）需伴随 `schemaVersion` bump。
+//! v1 字段契约已经发布。新增可选字段需带 `#[serde(default)]` 以保证向后兼容；
+//! 破坏性变更（重命名 / 移除字段）必须伴随 `schemaVersion` bump。
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

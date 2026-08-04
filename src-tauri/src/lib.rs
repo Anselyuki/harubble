@@ -72,7 +72,7 @@ mod theme_packages;
 /// 桌面应用菜单栏挂载入口。
 ///
 /// 在 `main.rs` 启动阶段或偏好中的 `locale` 变化后调用；从当前管理的 [`AppState`]
-/// 读取语言并按 Fluent i18n 渲染菜单。详见 [`menu`] 模块。
+/// 读取语言并按 Fluent i18n 渲染菜单。具体挂载逻辑位于内部 `menu` 模块。
 pub fn install_menu(app: &tauri::AppHandle<tauri::Wry>) -> tauri::Result<()> {
     use tauri::Manager;
     let locale = app

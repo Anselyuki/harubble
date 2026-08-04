@@ -17,8 +17,8 @@
 //!
 //! # 稳定性
 //!
-//! 当前处于 Phase 1 MVP 阶段，公开 API 尚未冻结。前端契约通过
-//! `src/lib/types.ts` 与 `ipc-contract.test.ts` 双向校验，禁止绕过。
+//! 主题包 v1 契约通过 `src/lib/types.ts` 与 `ipc-contract.test.ts` 双向校验。
+//! 新增或修改字段必须同步两端类型、sanitizer 与契约测试。
 
 #![allow(dead_code)]
 
@@ -29,7 +29,7 @@ pub(crate) mod service;
 pub(crate) mod store;
 pub(crate) mod types;
 
-// Phase 1 Step 1.c 起 command 层会消费这些类型；AppState 组合根 + Tauri command 边界均通过此处 re-export。
+// AppState 组合根与 Tauri command 边界均通过此处 re-export。
 
 pub(crate) use service::ThemePackageService;
 pub use types::{ThemePackageDocument, ThemePackageSummary};

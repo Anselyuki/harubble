@@ -11,11 +11,11 @@
 //! 由 `AppState::new` 在启动时初始化一次并 `Arc` 包装后长期持有；跨命令共享。
 //! 内部 `PackageStore` 已在 `new` 时完成 pending-delete 清扫和三态目录创建。
 //!
-//! # Phase 1 MVP 边界
+//! # 能力边界
 //!
-//! 当前提供的公开方法覆盖 list / install / uninstall / read 主链路。
-//! URL 抓取（`install_from_url`）、preview / dismiss、CAS 与事件广播由后续
-//! Step 1.c-1.e 依次接入，本模块仅承担持久化与校验的核心职责。
+//! 当前方法覆盖 list / inspect / install-file / install-url / uninstall / preview /
+//! dismiss / export。激活主题包的 preferences CAS 与跨窗口事件广播由 command 层
+//! 协调，本模块只承担主题包持久化、校验和进程内预览状态。
 
 use crate::theme_packages::builtin::{builtin_theme_package_source, load_builtin_theme_packages};
 use crate::theme_packages::sanitizer::{

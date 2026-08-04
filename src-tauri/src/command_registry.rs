@@ -160,7 +160,7 @@ macro_rules! for_each_tauri_command {
             (commands::tag_editor::export_tag_editor_registry, "export_tag_editor_registry", InteractiveUi, Interactive, Cooperative),
             (commands::tag_editor::import_tag_editor_registry, "import_tag_editor_registry", InteractiveUi, Interactive, Cooperative),
 
-            // ── ThemePackages (9 · Phase 1 MVP) ──────────────────────────────
+            // ── ThemePackages (9) ───────────────────────────────────────────
             (commands::theme_packages::list_theme_packages, "list_theme_packages", BackgroundIo, Interactive, Cooperative),
             (commands::theme_packages::inspect_theme_package, "inspect_theme_package", VisualAux, Visual, LatestWins),
             (commands::theme_packages::install_theme_package_from_file, "install_theme_package_from_file", BackgroundIo, Background, Cooperative),

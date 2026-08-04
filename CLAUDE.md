@@ -39,6 +39,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - `src-tauri/src/app_state/mod.rs`：后端共享状态组合，聚合播放器、下载、库存、偏好、日志与搜索服务。已拆分为 `api_clients` / `download_subsystem` / `preferences` / `playback` / `media_controls` 子模块
 - `src/App.svelte`：前端壳层入口，实例化 runtime，并装配侧栏、路由、播放器和侧边面板
 - `src/lib/features/shell/appRuntime.svelte.ts`：controller 初始化、Tauri 事件订阅与跨域状态协调
+- `src/lib/features/shell/appRuntimeBootstrap.svelte.ts` / `appRuntimeComposites.svelte.ts`：启动订阅与跨域回调组合
 - `src/lib/api.ts`：主 Tauri command bridge
 - `src/lib/settingsApi.ts`：设置面板专用 IPC bridge
 - `src/lib/collectionApi.ts`：合集专用 IPC bridge
@@ -52,6 +53,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
   - `search/`：全局搜索视图（SearchView、SearchBar、SearchRecentQueries、SearchRecentlyPlayed 等）
   - `album/`：专辑与库存（AlbumOverview、AlbumWorkspace、AlbumDetailPanel 等）
   - `collection/`：合集（CollectionDetailPanel、CollectionFormDialog、AddToCollectionMenu 等）
+  - `download/`：下载域对话框（ClearDownloadHistoryDialog 等）
   - `tag-editor/`：标签编辑器（TagEditorView、TagEditorPanel、TagEditorConflict\* 等）
   - `shell/`：应用壳层（TopToolbar、AppSideSheets、SettingsSheet、DownloadTasksSheet）
 - **主题包系统**（Phase 0-3 已落地）：
@@ -62,8 +64,8 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
   - `src/lib/design/gsap.ts`：`applyMotionOverride` / `applyShapeOverride` / `applyDensityOverride` / `applyElevationOverride` / `applyBlurOverride` 五组运行时 token 覆盖入口
   - `src/lib/features/shell/themePackageManager.svelte.ts` / `themePackageRuntime.svelte.ts`：共享主题包状态机 + App Theme slots/variant 响应态 + preferences_snapshot 订阅 + CAS 循环 + 悬挂 activePackageId 自愈
   - `src/lib/features/shell/visualContract.svelte.ts`：family × depth 状态 + resolve + `data-theme-*` / `data-ark-*` HTML 属性写入
-  - `src/lib/features/player/controllers/`：`playToggleController` / `volumeCapsuleController` 承担业务逻辑，view 层选择 family-specific animator
-  - `src/lib/components/app/player/glass/` / `material/`：primitive 视觉族拆分（PlayToggleGlyph、VolumeCapsule 走 Router 分发；WaveGlassPanel 仅 glass 使用）
+  - `src/lib/features/player/controllers/`：`playToggleController` / `volumeCapsuleController` 承担业务逻辑，view 只消费共享交互契约
+  - `src/lib/components/app/player/glass/` / `material/` / `family/`：legacy primitive 视觉族拆分与五个 Ark UI family 的共享语义 view；WaveGlassPanel 仅 glass 使用
 
 ## 真相来源
 
@@ -79,7 +81,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - 前端相关实现一律以 Svelte 5 为最高优先级；除非用户明确要求，否则不要为了延续旧习惯而主动回退到旧版写法或保守兼容模式
 - UI 展示组件不要直接调用 `invoke` / `listen`；统一走 bridge、controller 或具备明确边界的 shell 层
 - 组件的 `font-family` 统一通过 `--font-body` / `--font-display` / `--font-mono` CSS 变量引用，不直接硬编码字体名；字体方案详见 `docs/reference/frontend-guide.md` 的「字体方案」小节
-- 如果改了歌词、下载设置或播放器交互，同时检查 `src/App.svelte` 和 `src/lib/components/AudioPlayer.svelte` 的状态同步
+- 如果改了歌词、下载设置或播放器交互，同时检查 `src/App.svelte`、`src/lib/components/AudioPlayer.svelte`、`src/lib/components/app/player/PlayerTimeline.svelte` 与对应 controller/bridge 的状态同步
 - **动画编排**：所有前端动画统一使用 GSAP 控制，适配层位于 `src/lib/design/gsap.ts`；不要新增或使用 CSS transitions / animations、Svelte transition / animate、Web Animations API 或其他动画方案。仅有两个受控例外：① 无限循环 loading / 装饰动画可用 CSS keyframes，须复用 Motion\* 原语或 `app.css` 全局 keyframes（`motion-spin` / `motion-progress-slide`）并做 reduced-motion 降级；② hover / active 纯状态颜色反馈统一使用 `transition: var(--motion-hover)`。详见 `docs/reference/frontend-guide.md` 的「动效规则」小节
 - **动画曲线**：所有 GSAP 动画统一使用 iOS 风格的缓动曲线（已在 `src/lib/design/gsap.ts` 中注册为 CustomEase）：
   - `ios`：标准 ease-in-out（`0.25, 0.1, 0.25, 1.0`）

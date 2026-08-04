@@ -273,10 +273,10 @@ impl AppState {
         &self.album_catalog
     }
 
-    /// 返回主题包服务（列表 / 安装 / 卸载 / 检查）。
+    /// 返回主题包服务（列表、检查、安装、卸载、预览与导出）。
     ///
-    /// 适用于 Phase 1 `*_theme_package` 系列命令的入口访问；
-    /// 命令层通过该 accessor 使用，而非直接持有服务字段（配合私有字段守卫）。
+    /// `*_theme_package` 系列命令通过该 accessor 使用，而非直接持有服务字段
+    ///（配合私有字段守卫）。
     pub(crate) fn theme_packages(&self) -> &ThemePackageService {
         &self.theme_packages
     }

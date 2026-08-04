@@ -2,7 +2,7 @@
 //!
 //! 目前只提供播放器状态到勾选态的同步入口：前端在 `player.repeatMode` 或
 //! `player.shuffleEnabled` 变化时调用此命令，让循环模式与随机播放的勾选态
-//! 与 UI 保持一致。命令通过 [`crate::menu::sync_playback_state`] 操作已挂载
+//! 与 UI 保持一致。命令通过内部的 `crate::menu::sync_playback_state` 操作已挂载
 //! 菜单中的 `CheckMenuItem` 引用，因此在菜单尚未装载时是空操作。
 
 /// 把播放器当前状态同步到菜单勾选态。
