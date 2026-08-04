@@ -38,5 +38,8 @@ export default defineConfig({
   test: {
     setupFiles: ['./src/test-setup.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
+    // Theme transition suites exercise a document-global singleton; separate
+    // test files must not mutate that shared DOM state concurrently.
+    fileParallelism: false,
   },
 });
