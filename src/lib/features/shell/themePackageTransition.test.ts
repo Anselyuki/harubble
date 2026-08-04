@@ -39,10 +39,12 @@ describe('theme package transition', () => {
       document.querySelector('.theme-package-transition__signal')
     ).not.toBeNull();
 
-    await vi.waitFor(() => expect(commit).toHaveBeenCalledTimes(1));
-    expect(document.documentElement.dataset.themePackageTransition).toBe(
-      'reveal'
-    );
+    await vi.waitFor(() => {
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(document.documentElement.dataset.themePackageTransition).toBe(
+        'reveal'
+      );
+    });
 
     await finished;
     expect(document.querySelector('.theme-package-transition')).toBeNull();
