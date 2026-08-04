@@ -14,9 +14,12 @@
   import {
     clearAudioCache,
     getLogFileStatus,
+    getNotificationPermissionState,
     listLogRecords,
+    requestNotificationPermission,
     selectDirectory,
     sendTestNotification,
+    type NotificationPermissionState,
   } from '$lib/settingsApi';
   import type { Locale } from '$lib/i18n/types';
   import * as m from '$lib/paraglide/messages.js';
@@ -103,6 +106,12 @@
   }: Props = $props();
 
   let sheetBodyEl = $state<HTMLDivElement | null>(null);
+  let sectionNavEl = $state<HTMLElement | null>(null);
+  let activeSection = $state<SettingsSection>('preferences');
+  let navOverflowStart = $state(false);
+  let navOverflowEnd = $state(false);
+  let sectionScrollLock: SettingsSection | null = null;
+  let sectionScrollLockTimer: ReturnType<typeof setTimeout> | null = null;
   let previewBackdropRetracted = $state(false);
   const previewingThemePackage = $derived(
     Boolean(
@@ -131,6 +140,7 @@
         const anchor = body.querySelector<HTMLElement>(
           `[data-settings-section="${target}"]`
         );
+        lockActiveSection(target);
         anchor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     });
@@ -146,6 +156,11 @@
   let logViewerError = $state('');
   let logRequestSeq = 0;
   let isSendingTestNotification = $state(false);
+  let isRequestingNotificationPermission = $state(false);
+  let notificationPermissionState = $state<NotificationPermissionState | null>(
+    null
+  );
+  let notificationPermissionRequestSeq = 0;
   let isClearingAudioCache = $state(false);
   let lastLoadedWhileOpen = $state(false);
   let themeColorDrafts = $state<Partial<Record<ThemeColorSlot, string>>>({});
@@ -180,6 +195,17 @@
       outputDirSelect: m.settings_output_dir_select(),
       notificationTest: m.settings_notification_test(),
       notificationTestSending: m.settings_notification_test_sending(),
+      notificationPermissionLabel: m.settings_notification_permission_label(),
+      notificationPermissionGranted:
+        m.settings_notification_permission_granted(),
+      notificationPermissionDenied: m.settings_notification_permission_denied(),
+      notificationPermissionPrompt: m.settings_notification_permission_prompt(),
+      notificationPermissionLoading:
+        m.settings_notification_permission_loading(),
+      notificationPermissionRequest:
+        m.settings_notification_permission_request(),
+      notificationPermissionRequesting:
+        m.settings_notification_permission_requesting(),
       lyricsTitle: m.settings_lyrics_title(),
       lyricsDescription: m.settings_lyrics_description(),
       notifyDownloadTitle: m.settings_notify_download_title(),
@@ -241,6 +267,20 @@
   const currentLogLevelLabel = $derived(
     logLevelOptions.find((o) => o.value === logLevel)?.label ?? 'Error'
   );
+  const sectionLinks = $derived([
+    { id: 'preferences' as SettingsSection, label: labels.sectionPreferences },
+    { id: 'theme' as SettingsSection, label: labels.sectionTheme },
+    {
+      id: 'theme-packages' as SettingsSection,
+      label: labels.sectionThemePackages,
+    },
+    {
+      id: 'notifications' as SettingsSection,
+      label: labels.sectionNotifications,
+    },
+    { id: 'cache' as SettingsSection, label: labels.sectionCache },
+    { id: 'logs' as SettingsSection, label: labels.sectionLogs },
+  ]);
   const resolvedThemeColors = $derived(
     resolveThemeColors({
       presetId: themePresetId,
@@ -373,6 +413,72 @@
     previewBackdropRetracted = !previewBackdropRetracted;
   }
 
+  function scrollToSection(section: SettingsSection) {
+    lockActiveSection(section);
+    sheetBodyEl
+      ?.querySelector<HTMLElement>(`[data-settings-section="${section}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    sectionNavEl
+      ?.querySelector<HTMLElement>(`[data-section-link="${section}"]`)
+      ?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'nearest',
+      });
+  }
+
+  function lockActiveSection(section: SettingsSection) {
+    activeSection = section;
+    sectionScrollLock = section;
+    if (sectionScrollLockTimer !== null) {
+      clearTimeout(sectionScrollLockTimer);
+    }
+    sectionScrollLockTimer = setTimeout(() => {
+      sectionScrollLock = null;
+      sectionScrollLockTimer = null;
+    }, 800);
+  }
+
+  function updateNavOverflow() {
+    if (!sectionNavEl) return;
+    navOverflowStart = sectionNavEl.scrollLeft > 2;
+    navOverflowEnd =
+      sectionNavEl.scrollLeft + sectionNavEl.clientWidth <
+      sectionNavEl.scrollWidth - 2;
+  }
+
+  function syncActiveSectionFromScroll() {
+    if (!sheetBodyEl) return;
+    if (sectionScrollLock) {
+      activeSection = sectionScrollLock;
+      return;
+    }
+    const sections = Array.from(
+      sheetBodyEl.querySelectorAll<HTMLElement>('[data-settings-section]')
+    );
+    if (sections.length === 0) return;
+
+    const bodyTop = sheetBodyEl.getBoundingClientRect().top;
+    const atBottom =
+      sheetBodyEl.scrollTop + sheetBodyEl.clientHeight >=
+      sheetBodyEl.scrollHeight - 2;
+    const current = atBottom
+      ? sections.at(-1)
+      : ([...sections]
+          .reverse()
+          .find(
+            (section) => section.getBoundingClientRect().top <= bodyTop + 24
+          ) ?? sections[0]);
+    const next = current?.dataset.settingsSection as
+      | SettingsSection
+      | undefined;
+    if (!next || next === activeSection) return;
+    activeSection = next;
+    sectionNavEl
+      ?.querySelector<HTMLElement>(`[data-section-link="${next}"]`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
   async function refreshLogs(kind = logFileKind) {
     const requestSeq = ++logRequestSeq;
     logViewerLoading = true;
@@ -425,7 +531,8 @@
     }
   }
   async function handleSendTestNotification() {
-    if (isSendingTestNotification) return;
+    if (isSendingTestNotification || notificationPermissionState !== 'granted')
+      return;
     isSendingTestNotification = true;
     try {
       await sendTestNotification();
@@ -440,16 +547,57 @@
       isSendingTestNotification = false;
     }
   }
+  async function handleRequestNotificationPermission() {
+    if (isRequestingNotificationPermission) return;
+    isRequestingNotificationPermission = true;
+    try {
+      notificationPermissionState = await requestNotificationPermission();
+    } catch (error) {
+      notifyError(
+        m.settings_toast_notification_failed({
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
+    } finally {
+      isRequestingNotificationPermission = false;
+    }
+  }
+  function getNotificationPermissionLabel() {
+    switch (notificationPermissionState) {
+      case 'granted':
+        return labels.notificationPermissionGranted;
+      case 'denied':
+        return labels.notificationPermissionDenied;
+      case 'prompt':
+      case 'prompt-with-rationale':
+        return labels.notificationPermissionPrompt;
+      default:
+        return labels.notificationPermissionLoading;
+    }
+  }
   $effect(() => {
     if (!open) {
       lastLoadedWhileOpen = false;
       logRequestSeq += 1;
+      notificationPermissionRequestSeq += 1;
       logViewerLoading = false;
       return;
     }
     if (lastLoadedWhileOpen) return;
     lastLoadedWhileOpen = true;
     void refreshLogs(logFileKind);
+    const requestSeq = ++notificationPermissionRequestSeq;
+    void getNotificationPermissionState()
+      .then((state) => {
+        if (requestSeq === notificationPermissionRequestSeq) {
+          notificationPermissionState = state;
+        }
+      })
+      .catch(() => {
+        if (requestSeq === notificationPermissionRequestSeq) {
+          notificationPermissionState = null;
+        }
+      });
   });
   $effect(() => {
     const refreshToken = logRefreshToken;
@@ -465,6 +613,20 @@
     if ((!open || !previewingThemePackage) && previewBackdropRetracted) {
       previewBackdropRetracted = false;
     }
+  });
+  $effect(() => {
+    if (!open || !sectionNavEl) return;
+    updateNavOverflow();
+    const observer = new ResizeObserver(updateNavOverflow);
+    observer.observe(sectionNavEl);
+    return () => observer.disconnect();
+  });
+  $effect(() => {
+    return () => {
+      if (sectionScrollLockTimer !== null) {
+        clearTimeout(sectionScrollLockTimer);
+      }
+    };
   });
 </script>
 
@@ -523,7 +685,37 @@
           </Tooltip.Content>
         </Tooltip.Root>
       {/if}
-      <div class="sheet-body" bind:this={sheetBodyEl}>
+      <div
+        class="settings-section-nav-shell"
+        class:has-overflow-start={navOverflowStart}
+        class:has-overflow-end={navOverflowEnd}
+      >
+        <nav
+          class="settings-section-nav"
+          aria-label={labels.title}
+          bind:this={sectionNavEl}
+          onscroll={updateNavOverflow}
+        >
+          {#each sectionLinks as section (section.id)}
+            <button
+              type="button"
+              class:active={activeSection === section.id}
+              aria-current={activeSection === section.id
+                ? 'location'
+                : undefined}
+              data-section-link={section.id}
+              onclick={() => scrollToSection(section.id)}
+            >
+              {section.label}
+            </button>
+          {/each}
+        </nav>
+      </div>
+      <div
+        class="sheet-body"
+        bind:this={sheetBodyEl}
+        onscroll={syncActiveSectionFromScroll}
+      >
         <div data-settings-section="preferences">
           <PreferencesSettingsSection
             bind:locale
@@ -589,9 +781,15 @@
             bind:notifyOnDownloadComplete
             bind:notifyOnPlaybackChange
             {isSendingTestNotification}
+            {isRequestingNotificationPermission}
+            {notificationPermissionState}
             sectionTitle={labels.sectionNotifications}
             notificationTestLabel={labels.notificationTest}
             notificationTestSendingLabel={labels.notificationTestSending}
+            notificationPermissionLabel={labels.notificationPermissionLabel}
+            notificationPermissionStatus={getNotificationPermissionLabel()}
+            notificationPermissionRequestLabel={labels.notificationPermissionRequest}
+            notificationPermissionRequestingLabel={labels.notificationPermissionRequesting}
             lyricsTitle={labels.lyricsTitle}
             lyricsDescription={labels.lyricsDescription}
             notifyDownloadTitle={labels.notifyDownloadTitle}
@@ -599,6 +797,8 @@
             notifyPlaybackTitle={labels.notifyPlaybackTitle}
             notifyPlaybackDescription={labels.notifyPlaybackDescription}
             onSendTestNotification={() => void handleSendTestNotification()}
+            onRequestNotificationPermission={() =>
+              void handleRequestNotificationPermission()}
           />
         </div>
         <div data-settings-section="cache">
@@ -636,6 +836,77 @@
 </Sheet.Root>
 
 <style>
+  .settings-section-nav {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 8px 16px;
+    border-block: 1px solid var(--sheet-border, var(--border));
+    background: var(--sheet-control-bg, var(--bg-primary));
+    scrollbar-width: none;
+  }
+  .settings-section-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .sheet-body::-webkit-scrollbar {
+    display: none;
+  }
+  .settings-section-nav-shell {
+    position: relative;
+  }
+  .settings-section-nav-shell::before,
+  .settings-section-nav-shell::after {
+    content: '';
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    bottom: 0;
+    width: 18px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--motion-fast);
+  }
+  .settings-section-nav-shell::before {
+    left: 0;
+    background: linear-gradient(90deg, var(--surface-sheet), transparent);
+  }
+  .settings-section-nav-shell::after {
+    right: 0;
+    background: linear-gradient(270deg, var(--surface-sheet), transparent);
+  }
+  .settings-section-nav-shell.has-overflow-start::before,
+  .settings-section-nav-shell.has-overflow-end::after {
+    opacity: 1;
+  }
+  .sheet-body {
+    overflow-x: hidden;
+    scrollbar-width: none;
+  }
+  .settings-section-nav button {
+    min-height: 40px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: var(--shape-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .settings-section-nav button:hover,
+  .settings-section-nav button.active {
+    background: var(--hover-bg-elevated);
+    color: var(--text-primary);
+  }
+  .settings-section-nav button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .sheet-body > [data-settings-section] {
+    scroll-margin-top: 12px;
+  }
   :global(.settings-section) {
     gap: 12px;
   }

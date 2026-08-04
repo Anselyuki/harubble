@@ -208,7 +208,7 @@
     {/if}
 
     {#if !loadingDetail && !selectedAlbum}
-      <h1 class="page-title">{emptyLabels.title}</h1>
+      <h2 class="page-title">{emptyLabels.title}</h2>
       <p class="page-subtitle">{emptyLabels.hint}</p>
     {/if}
   </OverlayScrollbarsComponent>

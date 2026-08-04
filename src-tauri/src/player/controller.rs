@@ -179,13 +179,6 @@ impl AudioPlayer {
         })
     }
 
-    /// 返回底层 Tauri 应用句柄。
-    ///
-    /// 适用于需要向外部组件转交 `AppHandle`、发出事件或访问应用级状态的场景。
-    pub fn app_handle(&self) -> AppHandle {
-        self.app.clone()
-    }
-
     /// 绑定系统媒体控制事件处理器。
     pub fn bind_media_controls<F>(&self, handler: F) -> Result<()>
     where

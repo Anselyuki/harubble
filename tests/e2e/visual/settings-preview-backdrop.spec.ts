@@ -2,6 +2,13 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const FIXTURE_URL =
   'http://127.0.0.1:1421/tests/e2e/visual/fixtures/settings-preview-backdrop-fixture.html';
+const BUILT_IN_FAMILIES = [
+  'ark',
+  'endfield',
+  'exa',
+  'popucom',
+  'corporate',
+] as const;
 
 const VIEWPORTS = [
   { name: 'desktop', width: 1100, height: 760 },
@@ -116,6 +123,55 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
       )
     )
     .toBe(true);
+}
+
+for (const family of BUILT_IN_FAMILIES) {
+  test(`${family} settings tabs stay scrollable without a visible horizontal scrollbar`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 760 });
+    await page.goto(`${FIXTURE_URL}?family=${family}`);
+    await page.waitForFunction(
+      () =>
+        (
+          window as typeof window & {
+            __SETTINGS_PREVIEW_BACKDROP_FIXTURE_READY__?: boolean;
+          }
+        ).__SETTINGS_PREVIEW_BACKDROP_FIXTURE_READY__ === true
+    );
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-ark-theme',
+      family
+    );
+
+    const nav = page.locator('.settings-section-nav');
+    await expect(nav).toBeVisible();
+    const initialMetrics = await nav.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const webkitScrollbar = getComputedStyle(element, '::-webkit-scrollbar');
+      return {
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        scrollbarWidth: style.scrollbarWidth,
+        webkitScrollbarDisplay: webkitScrollbar.display,
+      };
+    });
+    expect(initialMetrics.scrollWidth).toBeGreaterThan(
+      initialMetrics.clientWidth
+    );
+    expect(initialMetrics.scrollbarWidth).toBe('none');
+    expect(initialMetrics.webkitScrollbarDisplay).toBe('none');
+
+    await nav.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    await expect
+      .poll(() => nav.evaluate((element) => element.scrollLeft))
+      .toBeGreaterThan(0);
+    await expect(nav.locator('[data-section-link="logs"]')).toBeInViewport();
+    await expectNoHorizontalOverflow(page);
+  });
 }
 
 for (const viewport of VIEWPORTS) {

@@ -7,7 +7,7 @@ use crate::app_state::AppState;
 use crate::local_inventory::spawn_inventory_scan;
 use crate::preferences::{AppPreferences, CURRENT_PREFERENCES_SCHEMA_VERSION};
 use std::path::{Path, PathBuf};
-use tauri::{Emitter, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_notification::NotificationExt;
 
 /// 偏好 command 层统一错误类型。
@@ -249,21 +249,31 @@ pub async fn import_preferences(
 /// 返回值为标准化后的权限状态字符串，如 `granted`、`denied` 或 `prompt`。
 /// 该接口反映的是当前系统权限快照；若用户刚在系统设置中修改权限，调用方应重新调用以获取最新状态。
 #[tauri::command]
-pub fn get_notification_permission_state(
-    state: State<'_, AppState>,
-) -> Result<String, PreferencesError> {
-    let app = state.player().app_handle();
+pub fn get_notification_permission_state(app: AppHandle) -> Result<String, PreferencesError> {
     let permission = app
         .notification()
         .permission_state()
         .map_err(|e| PreferencesError::Internal(format!("{e}")))?;
-    Ok(match permission {
+    Ok(notification_permission_label(permission).to_string())
+}
+
+/// 在用户明确操作后请求系统通知权限，并返回请求后的权限状态。
+#[tauri::command]
+pub fn request_notification_permission(app: AppHandle) -> Result<String, PreferencesError> {
+    let permission = app
+        .notification()
+        .request_permission()
+        .map_err(|e| PreferencesError::Internal(format!("{e}")))?;
+    Ok(notification_permission_label(permission).to_string())
+}
+
+fn notification_permission_label(permission: tauri::plugin::PermissionState) -> &'static str {
+    match permission {
         tauri::plugin::PermissionState::Granted => "granted",
         tauri::plugin::PermissionState::Denied => "denied",
         tauri::plugin::PermissionState::Prompt => "prompt",
         tauri::plugin::PermissionState::PromptWithRationale => "prompt-with-rationale",
     }
-    .to_string())
 }
 
 /// 发送一条测试通知，用于验证系统通知链路。
@@ -272,8 +282,7 @@ pub fn get_notification_permission_state(
 /// 成功时返回空值。
 /// 该接口会向系统真正发送一条可见通知，调用方应只在用户明确触发时调用，避免把测试通知当成静默探测手段。
 #[tauri::command]
-pub fn send_test_notification(state: State<'_, AppState>) -> Result<(), PreferencesError> {
-    let app = state.player().app_handle();
+pub fn send_test_notification(app: AppHandle) -> Result<(), PreferencesError> {
     crate::notification::notify_test(app).map_err(PreferencesError::Internal)
 }
 

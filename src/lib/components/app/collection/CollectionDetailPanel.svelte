@@ -14,6 +14,11 @@
     PlaybackQueueEntry,
   } from '$lib/types';
   import type { ResolvedSong } from '$lib/features/collection/resolvedSongs.svelte';
+  import GripVerticalIcon from '@lucide/svelte/icons/grip-vertical';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+  import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
+  import XIcon from '@lucide/svelte/icons/x';
+  import { getKeyboardReorderTarget, reorderItems } from './collectionReorder';
 
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
 
@@ -57,6 +62,7 @@
   );
 
   let dragSourceIndex = $state<number | null>(null);
+  let reorderAnnouncement = $state('');
 
   const isEditable = $derived.by(() => !props.collection?.isOfficial);
 
@@ -155,12 +161,45 @@
       return;
     }
 
-    const newOrder = [...allSongIds];
-    const [moved] = newOrder.splice(dragSourceIndex, 1);
-    newOrder.splice(targetIndex, 0, moved);
-
+    moveSong(dragSourceIndex, targetIndex);
     dragSourceIndex = null;
+  }
+
+  function moveSong(sourceIndex: number, targetIndex: number) {
+    if (
+      !props.collection ||
+      sourceIndex === targetIndex ||
+      sourceIndex < 0 ||
+      sourceIndex >= allSongIds.length ||
+      targetIndex < 0 ||
+      targetIndex >= allSongIds.length
+    )
+      return;
+
+    const newOrder = reorderItems(allSongIds, sourceIndex, targetIndex);
+    const songId = allSongIds[sourceIndex];
+    const songName =
+      props.resolvedSongs.find((song) => song.entry.cid === songId)?.entry
+        .name ?? songId;
+
     props.onReorderSongs(props.collection.id, newOrder);
+    reorderAnnouncement = m.collection_song_moved_position({
+      name: songName,
+      position: targetIndex + 1,
+      count: allSongIds.length,
+    });
+  }
+
+  function handleReorderKeydown(event: KeyboardEvent, index: number) {
+    const targetIndex = getKeyboardReorderTarget(
+      event.key,
+      index,
+      allSongIds.length
+    );
+    if (targetIndex === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    moveSong(index, targetIndex);
   }
 </script>
 
@@ -191,7 +230,7 @@
               >{m.collection_official_badge()}</span
             >
           {/if}
-          <h1 class="collection-hero-title">{collection.name}</h1>
+          <h2 class="collection-hero-title">{collection.name}</h2>
           {#if collection.description}
             <p class="collection-hero-description">
               {collection.description}
@@ -234,11 +273,13 @@
 
       <div class="collection-divider"></div>
 
-      <div class="song-list" bind:this={songListEl}>
+      <div class="song-list" bind:this={songListEl} role="list">
+        <span class="sr-only" aria-live="polite">{reorderAnnouncement}</span>
         {#if props.isResolvingSongs && props.resolvedSongs.length === 0}
           <div class="song-list-loading">{m.collection_songs_loading()}</div>
         {:else if props.resolvedSongs.length > 0}
           {#each props.resolvedSongs as rs, index (rs.entry.cid)}
+            {@const orderIndex = allSongIds.indexOf(rs.entry.cid)}
             {#if sectionStartMap.get(rs.entry.cid)}
               <div
                 class="section-header"
@@ -252,25 +293,61 @@
             <div
               class="collection-song-wrapper"
               class:is-drag-over={dragSourceIndex !== null &&
-                dragSourceIndex !== index}
-              draggable={isEditable ? 'true' : undefined}
+                dragSourceIndex !== orderIndex}
               role="listitem"
-              ondragstart={(e) => {
-                if (isEditable) handleDragStart(e, index);
-              }}
               ondragover={(e) => handleDragOver(e)}
-              ondrop={(e) => handleDrop(e, index)}
+              ondrop={(e) => handleDrop(e, orderIndex)}
               ondragend={() => {
                 dragSourceIndex = null;
               }}
             >
               {#if isEditable}
-                <button
-                  type="button"
-                  class="drag-handle"
-                  aria-hidden="true"
-                  tabindex={-1}>⠿</button
-                >
+                <div class="reorder-controls">
+                  <button
+                    type="button"
+                    class="drag-handle"
+                    draggable="true"
+                    aria-label={m.collection_song_reorder_handle_aria({
+                      name: rs.entry.name,
+                    })}
+                    ondragstart={(event) => handleDragStart(event, orderIndex)}
+                    ondragend={() => {
+                      dragSourceIndex = null;
+                    }}
+                    onkeydown={(event) =>
+                      handleReorderKeydown(event, orderIndex)}
+                  >
+                    <GripVerticalIcon />
+                  </button>
+                  <button
+                    type="button"
+                    class="move-song-btn"
+                    disabled={orderIndex === 0}
+                    aria-label={m.collection_song_move_up_aria({
+                      name: rs.entry.name,
+                    })}
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      moveSong(orderIndex, orderIndex - 1);
+                    }}
+                  >
+                    <ArrowUpIcon />
+                  </button>
+                  <button
+                    type="button"
+                    class="move-song-btn"
+                    disabled={orderIndex === allSongIds.length - 1}
+                    aria-label={m.collection_song_move_down_aria({
+                      name: rs.entry.name,
+                    })}
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      moveSong(orderIndex, orderIndex + 1);
+                    }}
+                  >
+                    <ArrowDownIcon />
+                  </button>
+                </div>
               {/if}
               <div class="collection-song-row-content">
                 <SongRow
@@ -307,7 +384,7 @@
                     props.onRemoveSongs(collection.id, [rs.entry.cid]);
                   }}
                 >
-                  ✕
+                  <XIcon />
                 </button>
               {/if}
             </div>
@@ -468,33 +545,65 @@
     border-radius: 14px;
   }
 
-  .collection-song-wrapper[draggable='true'] {
-    cursor: grab;
-  }
-
-  .collection-song-wrapper[draggable='true']:active {
-    cursor: grabbing;
-  }
-
   .collection-song-row-content {
     flex: 1;
     min-width: 0;
   }
 
-  .drag-handle {
+  .reorder-controls {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .drag-handle,
+  .move-song-btn {
     appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
     border: none;
     background: none;
-    font-size: 14px;
     color: var(--text-tertiary);
-    cursor: grab;
     user-select: none;
-    flex-shrink: 0;
-    padding: 4px;
+    padding: 0;
+    border-radius: var(--shape-sm);
+  }
+
+  .drag-handle {
+    cursor: grab;
   }
 
   .drag-handle:active {
     cursor: grabbing;
+  }
+
+  .drag-handle:hover,
+  .drag-handle:focus-visible,
+  .move-song-btn:hover:not(:disabled),
+  .move-song-btn:focus-visible {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  }
+
+  .move-song-btn {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .move-song-btn:disabled {
+    opacity: 0.3;
+  }
+
+  .collection-song-wrapper:hover .move-song-btn,
+  .collection-song-wrapper:focus-within .move-song-btn {
+    width: 40px;
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .remove-btn {
@@ -528,6 +637,12 @@
   }
 
   @media (hover: none), (pointer: coarse) {
+    .move-song-btn {
+      width: 40px;
+      opacity: 1;
+      pointer-events: auto;
+    }
+
     .remove-btn {
       opacity: 1;
       pointer-events: auto;

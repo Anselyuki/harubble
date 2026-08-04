@@ -45,7 +45,6 @@
 //!
 //! - 新增或删除 command 时，**只需修改本文件**，`main.rs` 与测试侧均会自动同步。
 //! - `record_song_heat` 此前曾在 `COMMAND_SPECS` 中遗漏，已在此处补全。
-//! - 条目总数：68 条。
 
 /// 回调宏：将完整的 Tauri command 列表传递给调用方宏 `$mac`。
 ///
@@ -104,12 +103,13 @@ macro_rules! for_each_tauri_command {
             // ── Menu (1) ─────────────────────────────────────────────────────
             (commands::menu::sync_playback_menu_state, "sync_playback_menu_state", VisualAux, Visual, LatestWins),
 
-            // ── Preferences (6) ──────────────────────────────────────────────
+            // ── Preferences ──────────────────────────────────────────────────
             (commands::preferences::get_preferences, "get_preferences", InteractiveUi, Interactive, Cooperative),
             (commands::preferences::set_preferences, "set_preferences", InteractiveUi, Interactive, Cooperative),
             (commands::preferences::export_preferences, "export_preferences", InteractiveUi, Interactive, Cooperative),
             (commands::preferences::import_preferences, "import_preferences", InteractiveUi, Interactive, Cooperative),
             (commands::preferences::get_notification_permission_state, "get_notification_permission_state", InteractiveUi, Interactive, Cooperative),
+            (commands::preferences::request_notification_permission, "request_notification_permission", InteractiveUi, Interactive, Cooperative),
             (commands::preferences::send_test_notification, "send_test_notification", InteractiveUi, Interactive, Cooperative),
 
             // ── LocalInventory (4) ───────────────────────────────────────────

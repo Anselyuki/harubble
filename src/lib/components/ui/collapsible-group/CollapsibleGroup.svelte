@@ -73,51 +73,43 @@
     if (empty) return;
     expanded = !expanded;
   }
-
-  function handleActionsClick(e: MouseEvent) {
-    e.stopPropagation();
-  }
-
-  function handleActionsKeydown(e: KeyboardEvent) {
-    e.stopPropagation();
-  }
 </script>
 
 <div class="collapsible-group">
   {#if icon}
-    <SidebarItemButton
-      element={actions ? 'div' : 'button'}
-      label={title}
-      {icon}
-      collapsed={false}
-      disabled={empty}
-      ariaExpanded={expanded}
-      onclick={toggle}
-    >
+    <div class="collapsible-group-header" class:is-empty={empty}>
+      <SidebarItemButton
+        label={title}
+        {icon}
+        collapsed={false}
+        disabled={empty}
+        ariaExpanded={expanded}
+        onclick={toggle}
+      >
+        <span
+          class="collapsible-group-chevron"
+          class:is-expanded={expanded}
+          class:is-disabled={empty}
+        >
+          <ChevronRightIcon size={12} />
+        </span>
+      </SidebarItemButton>
       {#if actions}
         <span
           class="collapsible-group-actions"
           role="toolbar"
-          tabindex={-1}
-          onclick={handleActionsClick}
-          onkeydown={handleActionsKeydown}
+          aria-label={title}
         >
           {@render actions()}
         </span>
       {/if}
-      <span
-        class="collapsible-group-chevron"
-        class:is-expanded={expanded}
-        class:is-disabled={empty}
-      >
-        <ChevronRightIcon size={12} />
-      </span>
-    </SidebarItemButton>
+    </div>
   {:else}
     <button
       type="button"
       class="collapsible-group-fallback-header"
       class:is-empty={empty}
+      disabled={empty}
       aria-expanded={expanded}
       onclick={toggle}
     >
@@ -143,6 +135,17 @@
     flex-direction: column;
   }
 
+  .collapsible-group-header {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .collapsible-group-header :global(.sidebar-item-button) {
+    min-width: 0;
+    flex: 1;
+  }
+
   .collapsible-group-fallback-header {
     appearance: none;
     border: none;
@@ -151,7 +154,7 @@
     align-items: center;
     gap: 0.5rem;
     width: 100%;
-    height: 36px;
+    height: 40px;
     padding: 0 0.75rem;
     border-radius: var(--shape-md);
     cursor: pointer;
@@ -181,8 +184,9 @@
     pointer-events: none;
   }
 
-  :global(.sidebar-item-button:hover) .collapsible-group-actions,
-  :global(.sidebar-item-button:focus-within) .collapsible-group-actions {
+  .collapsible-group-header:hover .collapsible-group-actions,
+  .collapsible-group-header:focus-within .collapsible-group-actions,
+  .collapsible-group-header.is-empty .collapsible-group-actions {
     opacity: 1;
     pointer-events: auto;
   }
@@ -209,10 +213,6 @@
 
   .collapsible-group-chevron.is-disabled {
     opacity: 0.3;
-  }
-
-  .collapsible-group-actions + .collapsible-group-chevron {
-    margin-left: 4px;
   }
 
   .collapsible-group-chevron.is-expanded {

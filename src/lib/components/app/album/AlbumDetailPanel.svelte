@@ -141,7 +141,7 @@
         {/each}
       </div>
       <div class="album-title-row">
-        <h1 class="album-hero-title">{props.album.name}</h1>
+        <h2 class="album-hero-title">{props.album.name}</h2>
         <MetadataPopover target={{ kind: 'album', album: props.album }} />
       </div>
       {#if props.album.artists && props.album.artists.length > 0}

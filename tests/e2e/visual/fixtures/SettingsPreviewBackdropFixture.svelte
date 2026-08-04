@@ -7,16 +7,28 @@
     applyContextThemePalette,
     deriveGlobalTokensFromSlots,
   } from '$lib/themeTokens';
-  import previewPackageJson from '$lib/theme-packages/builtins/ark-ui-ark.json';
+  import arkPackageJson from '$lib/theme-packages/builtins/ark-ui-ark.json';
+  import corporatePackageJson from '$lib/theme-packages/builtins/ark-ui-corporate.json';
+  import endfieldPackageJson from '$lib/theme-packages/builtins/ark-ui-endfield.json';
+  import exaPackageJson from '$lib/theme-packages/builtins/ark-ui-exa.json';
+  import popucomPackageJson from '$lib/theme-packages/builtins/ark-ui-popucom.json';
   import type {
     ThemeColorSlots,
     ThemePackageDocument,
     ThemePackageSummary,
   } from '$lib/types';
 
-  const previewPackage = previewPackageJson as unknown as ThemePackageDocument;
-  const samePackageState =
-    new URLSearchParams(window.location.search).get('same-package') === '1';
+  const params = new URLSearchParams(window.location.search);
+  const builtInPackages = {
+    ark: arkPackageJson,
+    corporate: corporatePackageJson,
+    endfield: endfieldPackageJson,
+    exa: exaPackageJson,
+    popucom: popucomPackageJson,
+  } as unknown as Record<string, ThemePackageDocument>;
+  const previewPackage =
+    builtInPackages[params.get('family') ?? 'ark'] ?? builtInPackages.ark!;
+  const samePackageState = params.get('same-package') === '1';
   const packages: ThemePackageSummary[] = [
     {
       id: 'ark-ui-endfield',

@@ -9,6 +9,9 @@
   import { createResolvedSongsStore } from '$lib/features/collection/resolvedSongs.svelte';
   import { getSongDetail, getAlbumDetail } from '$lib/api';
   import type { AppRuntime } from '$lib/features/shell/appRuntime.svelte';
+  import { tick } from 'svelte';
+  import * as m from '$lib/paraglide/messages.js';
+  import { localeState } from '$lib/i18n';
 
   interface Props {
     runtime: AppRuntime;
@@ -24,6 +27,45 @@
   $effect(() => {
     resolvedSongsStore.resolve(runtime.collectionController.selectedCollection);
   });
+
+  const viewTitle = $derived.by(() => {
+    void localeState.current;
+    switch (runtime.currentView) {
+      case 'home':
+        return m.shell_nav_home();
+      case 'search':
+        return m.shell_nav_search();
+      case 'overview':
+        return m.album_overview_all_title({ count: runtime.albums.length });
+      case 'library':
+        return runtime.selectedAlbum?.name ?? m.shell_nav_library();
+      case 'collection':
+        return (
+          runtime.collectionController.selectedCollection?.name ??
+          m.shell_nav_collections()
+        );
+      case 'tagEditor':
+        return m.shell_nav_tags();
+    }
+  });
+
+  let previousView: string | null = null;
+  $effect(() => {
+    const currentView = runtime.currentView;
+    if (previousView === null) {
+      previousView = currentView;
+      return;
+    }
+    if (currentView === previousView) return;
+    previousView = currentView;
+    void tick().then(() => {
+      const target =
+        currentView === 'search'
+          ? document.querySelector<HTMLElement>('[data-testid="search-input"]')
+          : document.querySelector<HTMLElement>('[data-view-heading]');
+      target?.focus({ preventScroll: true });
+    });
+  });
 </script>
 
 <ViewTransition
@@ -33,6 +75,7 @@
   onTransitionStart={runtime.handleTransitionStart}
   onTransitionEnd={runtime.handleTransitionEnd}
 >
+  <h1 class="sr-only" tabindex="-1" data-view-heading>{viewTitle}</h1>
   {#if runtime.currentView === 'home'}
     <HomeView {runtime} />
   {:else if runtime.currentView === 'search'}

@@ -34,7 +34,6 @@
         tagGroups: TagGroup[];
         selectedDimensionKey: string | null;
         selectDimension: (key: string) => void;
-        handleClearHistory: () => Promise<void>;
       };
       handleSelectAlbum: (album: Album) => void | Promise<void>;
       handlePlayCollectionSong: (
@@ -43,6 +42,7 @@
       ) => void | Promise<void>;
       prefersReducedMotion: boolean;
       loadingAlbumCid: string | null;
+      requestClearListeningHistory: () => void;
     };
   }
 
@@ -71,7 +71,7 @@
       groups={runtime.homeController.seriesGroups}
       belongReady={runtime.homeController.belongReady}
       reducedMotion={runtime.prefersReducedMotion}
-      onSelectSeries={() => {}}
+      onSelectAlbum={runtime.handleSelectAlbum}
     />
 
     <HomeTagGroups
@@ -106,7 +106,7 @@
           [queueEntry]
         );
       }}
-      onClear={runtime.homeController.handleClearHistory}
+      onClear={runtime.requestClearListeningHistory}
     />
 
     <HomeStatusDashboard

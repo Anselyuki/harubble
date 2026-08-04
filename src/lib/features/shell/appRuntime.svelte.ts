@@ -74,6 +74,7 @@ export function createAppRuntime() {
   let playerStateHydratedFromEvent = false;
   let albumStageElement = $state<HTMLElement | null>(null);
   let isRefreshing = $state(false);
+  let clearListeningHistoryDialogOpen = $state(false);
 
   const pendingScrollToSongCid = $derived(
     libraryController.pendingScrollToSongCid
@@ -157,6 +158,15 @@ export function createAppRuntime() {
     }
   }
 
+  function requestClearListeningHistory() {
+    clearListeningHistoryDialogOpen = true;
+  }
+
+  async function confirmClearListeningHistory() {
+    await homeController.handleClearHistory();
+    clearListeningHistoryDialogOpen = false;
+  }
+
   $effect(() => {
     albumStageMotionController.albumStageElement = albumStageElement;
   });
@@ -229,6 +239,7 @@ export function createAppRuntime() {
         toggleSidebar: () => shellStore.toggleSidebar(),
         navigateToTop: navigationManager.navigateToTop,
         goBack: navigationManager.goBack,
+        requestClearListeningHistory,
         get canGoBack() {
           return navigationManager.canGoBack;
         },
@@ -246,9 +257,6 @@ export function createAppRuntime() {
       tagEditorController: {
         importRegistry: tagEditorController.importRegistry,
         exportRegistry: tagEditorController.exportRegistry,
-      },
-      homeController: {
-        handleClearHistory: homeController.handleClearHistory,
       },
       downloadController: {
         handleClearDownloadHistory:
@@ -576,6 +584,12 @@ export function createAppRuntime() {
     get isRefreshing() {
       return isRefreshing;
     },
+    get clearListeningHistoryDialogOpen() {
+      return clearListeningHistoryDialogOpen;
+    },
+    set clearListeningHistoryDialogOpen(value: boolean) {
+      clearListeningHistoryDialogOpen = value;
+    },
     get currentSongDownloadState() {
       return playerController.currentSong
         ? downloadController.getSongDownloadState(
@@ -616,6 +630,8 @@ export function createAppRuntime() {
     handlePlay: navigationManager.handlePlay,
     handlePlayCollectionSong: navigationManager.handlePlayCollectionSong,
     handleRefresh,
+    requestClearListeningHistory,
+    confirmClearListeningHistory,
     handleContentWheel,
     handleToggleDownloads: downloadBridge.handleToggleDownloads,
     handleToggleSettings: downloadBridge.handleToggleSettings,

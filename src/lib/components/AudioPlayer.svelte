@@ -17,6 +17,8 @@
   import LyricsBubble from '$lib/components/app/player/LyricsBubble.svelte';
   import PlayToggleGlyph from '$lib/components/app/player/PlayToggleGlyph.svelte';
   import VolumeCapsule from '$lib/components/app/player/VolumeCapsule.svelte';
+  import PlayerTimeline from '$lib/components/app/player/PlayerTimeline.svelte';
+  import { createCollapseTimer } from '$lib/components/app/player/volume-capsule-timer';
   import type { LyricLine } from '$lib/features/player/lyrics';
   import type { PlaybackFormatState, RepeatMode } from '$lib/types';
   import { Repeat, Repeat1, Shuffle } from '@lucide/svelte';
@@ -28,6 +30,7 @@
     shouldSkipMotion,
   } from '$lib/design/gsap';
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
+  const FORMAT_POPOVER_CLOSE_DELAY_MS = 799;
   interface Song {
     cid: string;
     name: string;
@@ -279,6 +282,20 @@
   let formatPopoverClosing = $state(false);
   let formatPopoverEl: HTMLDivElement | undefined = $state();
   let formatReadoutShellRef = $state<HTMLElement | null>(null);
+  const formatPopoverCloseTimer = createCollapseTimer(
+    FORMAT_POPOVER_CLOSE_DELAY_MS,
+    () => {
+      const activeElement = document.activeElement;
+      const interactionActive =
+        document.hasFocus() &&
+        (formatReadoutShellRef?.matches(':hover') ||
+          formatPopoverEl?.matches(':hover') ||
+          (activeElement &&
+            (formatReadoutShellRef?.contains(activeElement) ||
+              formatPopoverEl?.contains(activeElement))));
+      if (!interactionActive) closeFormatPopover();
+    }
+  );
   const remainingLabel = $derived.by(() =>
     duration > 0 ? `-${formatTime(remainingProgress)}` : '0:00'
   );
@@ -571,19 +588,27 @@
     };
     const handleEnter = () => {
       hoverOpen = true;
+      formatPopoverCloseTimer.cancel();
       updateState(true);
     };
-    const handleLeave = () => {
+    const handleLeave = (event: PointerEvent) => {
       hoverOpen = false;
       focusOpen = readout.matches(':focus-visible');
+      if (!isFormatPopoverInteractionTarget(event.relatedTarget)) {
+        scheduleFormatPopoverClose();
+      }
       updateState(true);
     };
     const handleFocusIn = () => {
       focusOpen = readout.matches(':focus-visible');
+      formatPopoverCloseTimer.cancel();
       updateState(true);
     };
-    const handleFocusOut = () => {
+    const handleFocusOut = (event: FocusEvent) => {
       focusOpen = false;
+      if (!isFormatPopoverInteractionTarget(event.relatedTarget)) {
+        scheduleFormatPopoverClose();
+      }
       updateState(true);
     };
     const handlePopoverClosed = () => {
@@ -663,7 +688,30 @@
     }
   }
 
+  function isFormatPopoverInteractionTarget(target: EventTarget | null) {
+    return (
+      target instanceof Node &&
+      (formatReadoutShellRef?.contains(target) ||
+        formatPopoverEl?.contains(target))
+    );
+  }
+
+  function scheduleFormatPopoverClose() {
+    if (formatPopoverOpen && !formatPopoverClosing) {
+      formatPopoverCloseTimer.schedule();
+    }
+  }
+
+  function handleFormatPopoverPointerLeave(event: PointerEvent) {
+    if (isFormatPopoverInteractionTarget(event.relatedTarget)) {
+      formatPopoverCloseTimer.cancel();
+      return;
+    }
+    scheduleFormatPopoverClose();
+  }
+
   function finishFormatPopoverClose() {
+    formatPopoverCloseTimer.cancel();
     formatPopoverOpen = false;
     formatPopoverVisible = false;
     formatPopoverClosing = false;
@@ -671,6 +719,7 @@
   }
 
   function closeFormatPopover() {
+    formatPopoverCloseTimer.cancel();
     if (formatPopoverClosing) return;
     if (!formatPopoverEl) {
       finishFormatPopoverClose();
@@ -797,6 +846,10 @@
   });
 
   $effect(() => {
+    return () => formatPopoverCloseTimer.destroy();
+  });
+
+  $effect(() => {
     if (!formatPopoverOpen) return;
     function handleClickOutside(e: PointerEvent) {
       if (
@@ -866,23 +919,15 @@
     data-panel={detailPanel}
     data-dragging={draggingSeek ? 'true' : 'false'}
   >
-    <div class="timeline" role="group" aria-label={labels.ariaTimeline}>
-      <div class="progress-track">
-        <div class="track-bg" aria-hidden="true"></div>
-        <input
-          class="seek-slider"
-          type="range"
-          min="0"
-          max={safeDuration}
-          value={shownProgress}
-          step="0.1"
-          aria-label={labels.ariaSeek}
-          disabled={!canSeek}
-          oninput={handleSeekInput}
-          onchange={handleSeekChange}
-        />
-      </div>
-    </div>
+    <PlayerTimeline
+      value={shownProgress}
+      max={safeDuration}
+      disabled={!canSeek}
+      groupLabel={labels.ariaTimeline}
+      seekLabel={labels.ariaSeek}
+      onInput={handleSeekInput}
+      onChange={handleSeekChange}
+    />
 
     <div class="left-controls" role="group" aria-label={labels.ariaTransport}>
       <button
@@ -1086,6 +1131,8 @@
               bind:this={formatPopoverEl}
               role="region"
               aria-label={m.player_format_popover_title()}
+              onpointerenter={() => formatPopoverCloseTimer.cancel()}
+              onpointerleave={handleFormatPopoverPointerLeave}
             >
               <div class="format-popover-body">
                 <div class="format-popover-header">
@@ -1572,17 +1619,6 @@
     opacity: 1;
   }
 
-  .timeline {
-    --timeline-hit-size: 14px;
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 5;
-    min-width: 0;
-    height: var(--timeline-hit-size);
-  }
-
   .time {
     min-width: 0;
     font-size: 10.5px;
@@ -1616,87 +1652,6 @@
     font-weight: 600;
     color: color-mix(in srgb, currentColor 58%, transparent);
     line-height: 1;
-  }
-
-  .progress-track {
-    position: relative;
-    height: var(--timeline-hit-size);
-    display: flex;
-    align-items: flex-start;
-    min-width: 0;
-  }
-
-  .track-bg {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: var(--seek-track-size);
-    border-radius: 0;
-    background: linear-gradient(
-      90deg,
-      var(--album-accent) 0,
-      var(--album-accent-hover) var(--player-progress-percent),
-      rgba(120, 120, 128, 0.28) var(--player-progress-percent),
-      rgba(120, 120, 128, 0.28) 100%
-    );
-    overflow: hidden;
-  }
-
-  .seek-slider {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 100%;
-    margin: 0;
-    background: transparent;
-    height: var(--timeline-hit-size);
-    position: relative;
-    z-index: 2;
-    cursor: pointer;
-  }
-
-  .seek-slider::-webkit-slider-runnable-track {
-    height: var(--seek-track-size);
-    background: transparent;
-    border-radius: 0;
-  }
-
-  .seek-slider:disabled {
-    cursor: not-allowed;
-  }
-
-  .seek-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 0;
-    height: 0;
-    margin-top: 0;
-    border-radius: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-    opacity: 0;
-  }
-
-  .seek-slider::-moz-range-track {
-    height: var(--seek-track-size);
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .seek-slider::-moz-range-progress {
-    background: transparent;
-    border: 0;
-  }
-
-  .seek-slider::-moz-range-thumb {
-    width: 0;
-    height: 0;
-    border-radius: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-    opacity: 0;
   }
 
   .icon-button {
@@ -2666,8 +2621,7 @@
     color: var(--icon-active);
   }
 
-  .icon-button:focus-visible,
-  .seek-slider:focus-visible {
+  .icon-button:focus-visible {
     outline: none;
     box-shadow:
       0 0 0 2px color-mix(in srgb, var(--surface-highlight) 86%, white 14%),
@@ -2675,8 +2629,7 @@
     border-radius: var(--shape-pill);
   }
 
-  .icon-button:disabled,
-  .seek-slider:disabled {
+  .icon-button:disabled {
     opacity: 0.42;
   }
 

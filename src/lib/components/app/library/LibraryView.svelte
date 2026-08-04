@@ -86,7 +86,7 @@
     />
   </AlbumWorkspace>
 {:else}
-  <main class="content library-browse" bind:this={libraryScrollRoot}>
+  <div class="content library-browse" bind:this={libraryScrollRoot}>
     {#if runtime.loadingAlbums}
       <div class="library-loading">
         <span>{labels.loadingAlbums}</span>
@@ -116,7 +116,7 @@
         {/each}
       </div>
     {/if}
-  </main>
+  </div>
 {/if}
 
 <style>

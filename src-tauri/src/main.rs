@@ -232,8 +232,6 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            let _ =
-                tauri_plugin_notification::NotificationExt::notification(app).request_permission();
             let window = app
                 .get_webview_window("main")
                 .context("Failed to locate main window")?;

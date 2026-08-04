@@ -10,6 +10,7 @@
   import FullscreenPlayer from '$lib/components/app/player/FullscreenPlayer.svelte';
   import AppSideSheets from '$lib/components/app/shell/AppSideSheets.svelte';
   import CollectionFormDialog from '$lib/components/app/collection/CollectionFormDialog.svelte';
+  import ClearListeningHistoryDialog from '$lib/components/app/home/ClearListeningHistoryDialog.svelte';
   import ViewRouter from '$lib/components/app/shell/ViewRouter.svelte';
   import {
     createSidebarAnimator,
@@ -22,6 +23,7 @@
   } from '$lib/design/sidebar-resize';
   import { MOTION } from '$lib/design/gsap';
   import { syncBrandHeight } from '$lib/design/actions';
+  import * as m from '$lib/paraglide/messages.js';
 
   const runtime = createAppRuntime();
 
@@ -42,6 +44,9 @@
   let contentInteractive = $state(!runtime.sidebarCollapsed);
   let layoutCollapsed = $state(runtime.sidebarCollapsed);
   let isDragging = $state(false);
+  let currentSidebarWidth = $state(
+    runtime.sidebarCollapsed ? 56 : runtime.shellStore.sidebarWidth
+  );
 
   const COLLAPSED_WIDTH = 56;
   const MAX_SIDEBAR_WIDTH = 248;
@@ -80,6 +85,7 @@
         ? COLLAPSED_WIDTH
         : runtime.shellStore.sidebarWidth;
       shellEl.style.setProperty('--sidebar-width', `${initWidth}px`);
+      currentSidebarWidth = initWidth;
 
       animator = createSidebarAnimator({
         shellEl,
@@ -124,6 +130,7 @@
       targetWidth,
       compact ? MOTION.PAGE : undefined
     );
+    currentSidebarWidth = targetWidth;
 
     if (curr) {
       animator.collapse();
@@ -154,6 +161,7 @@
         getCollapsed: () => runtime.sidebarCollapsed,
         onWidthChange: (width) => {
           isDragging = true;
+          currentSidebarWidth = width;
           // 拖曳期间实时更新 sidebar 宽度（brand-region 独立不受影响）
           shellEl!.style.setProperty('--sidebar-width', `${width}px`);
           // 展开稳定态下让 slab 右边界跟随侧栏宽度（logo 保持不动）；
@@ -187,11 +195,13 @@
             } else {
               // 展开 → 折叠：内容在拖曳期间保持展开，交由共享 $effect 跑完整 collapse()
               runtime.shellStore.sidebarCollapsed = true;
+              currentSidebarWidth = COLLAPSED_WIDTH;
             }
           } else if (wasCollapsed) {
             // 折叠态未跨阈值——内容回到折叠布局并弹回折叠宽度
             animator?.previewContentCollapsed(true);
             animateSnapToWidth(shellEl!, COLLAPSED_WIDTH);
+            currentSidebarWidth = COLLAPSED_WIDTH;
           } else {
             // 展开态未跨阈值——保留当前宽度并持久化
             runtime.shellStore.sidebarWidth = finalWidth;
@@ -241,14 +251,21 @@
       bind:bottomLabelEl
     />
 
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (ARIA separator is keyboard-resizable) -->
     <div
       class="sidebar-resize-handle"
       class:dragging={isDragging}
       bind:this={resizeHandleEl}
-      aria-hidden="true"
+      role="separator"
+      aria-label={m.sidebar_resize_label()}
+      aria-orientation="vertical"
+      aria-valuemin={COLLAPSED_WIDTH}
+      aria-valuemax={MAX_SIDEBAR_WIDTH}
+      aria-valuenow={Math.round(currentSidebarWidth)}
+      tabindex="0"
     ></div>
 
-    <section class="main-region">
+    <main class="main-region">
       {#if runtime.isMacOS}
         <div
           class="main-drag-region"
@@ -301,7 +318,7 @@
         notifyError={runtime.notifyError}
         onOutputDirChange={runtime.handleOutputDirChange}
       />
-    </section>
+    </main>
   </div>
 
   <CollectionFormDialog
@@ -320,5 +337,10 @@
       }
     }}
     onClose={runtime.collectionController.closeFormDialog}
+  />
+  <ClearListeningHistoryDialog
+    open={runtime.clearListeningHistoryDialogOpen}
+    onOpenChange={(open) => (runtime.clearListeningHistoryDialogOpen = open)}
+    onConfirm={runtime.confirmClearListeningHistory}
   />
 </AppProviders>

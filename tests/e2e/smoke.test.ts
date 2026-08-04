@@ -1,16 +1,101 @@
-/**
- * 最小冒烟测试 — 三条主链路存根
- *
- * 这些测试在启动真实 Tauri 应用进程后运行。
- * 当前为 STUB：跳过（skip）以允许 CI 在未配置 WebDriver 环境时通过；
- * 补全执行条件后移除 test.skip。
- *
- * 运行前置：bun tauri:build && bun run test:e2e
- */
+/** Web 模式只验证前端交互；真实音频、下载和系统通知不在 mock 范围内。 */
 import { expect, test } from '@playwright/test';
 
 // 本机开发时手动设置 APP_URL，CI 中由启动脚本设定
 const APP_URL = process.env['APP_URL'] ?? 'tauri://localhost';
+
+test('设置导航与通知授权由用户显式触发', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('settings-trigger').click();
+
+  const sheet = page.getByTestId('settings-sheet');
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('.settings-section-nav button')).toHaveCount(6);
+  await expect(sheet.getByText('尚未请求')).toBeVisible();
+  await expect(sheet.getByRole('button', { name: '测试' })).toBeDisabled();
+  await expect(
+    sheet.locator('.settings-section-nav button').first()
+  ).toHaveAttribute('aria-current', 'location');
+
+  await sheet.getByRole('button', { name: '授权' }).click();
+  await expect(sheet.getByText('已授权')).toBeVisible();
+  await expect(sheet.getByRole('button', { name: '测试' })).toBeEnabled();
+
+  await sheet.getByRole('button', { name: '日志与诊断' }).click();
+  await expect(
+    sheet.getByRole('button', { name: '日志与诊断' })
+  ).toHaveAttribute('aria-current', 'location');
+});
+
+test('搜索范围同步语义状态并保持可用点击目标', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+
+  await expect(page.locator('main')).toHaveCount(1);
+  await expect(page.locator('main h1')).toHaveCount(1);
+  await expect(page.getByRole('textbox')).toBeFocused();
+
+  const scopeGroup = page.getByRole('group', { name: '搜索范围：全部' });
+  await expect(scopeGroup).toBeVisible();
+
+  const scopeButtons = scopeGroup.getByRole('button');
+  await expect(scopeButtons).toHaveCount(3);
+  for (const button of await scopeButtons.all()) {
+    expect((await button.boundingBox())?.height).toBeGreaterThanOrEqual(40);
+  }
+
+  await page.getByRole('button', { name: '专辑', exact: true }).click();
+  await expect(
+    page.getByRole('group', { name: '搜索范围：专辑' })
+  ).toBeVisible();
+});
+
+test('清空收听历史必须经过共享确认对话框', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('button', { name: '清除历史' }).click();
+  const dialog = page.getByRole('alertdialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('清空收听历史？')).toBeVisible();
+
+  await dialog.getByRole('button', { name: '取消' }).click();
+  await expect(page.getByText('E2E Test Song')).toBeVisible();
+
+  await page.getByRole('button', { name: '清除历史' }).click();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: '清空历史' })
+    .click();
+  await expect(page.getByText('E2E Test Song')).toHaveCount(0);
+});
+
+test('侧栏 separator 支持键盘调整并暴露当前宽度', async ({ page }) => {
+  await page.goto('/');
+  const separator = page.getByRole('separator', { name: '调整侧栏宽度' });
+
+  await separator.focus();
+  await page.keyboard.press('Home');
+  await expect(separator).toHaveAttribute('aria-valuenow', '56');
+  await page.keyboard.press('End');
+  await expect(separator).toHaveAttribute('aria-valuenow', '248');
+  expect((await separator.boundingBox())?.width).toBeGreaterThanOrEqual(40);
+});
+
+test('空合集折叠按钮与新建操作保持独立语义', async ({ page }) => {
+  await page.goto('/');
+
+  await expect(
+    page.getByRole('button', { name: '自定义合集', exact: true })
+  ).toBeDisabled();
+
+  const create = page.getByRole('button', { name: '新建合集' });
+  await expect(create).toBeEnabled();
+  expect(
+    await create.evaluate((element) =>
+      Boolean(element.closest('[aria-disabled="true"]'))
+    )
+  ).toBe(false);
+});
 
 test.skip('链路一：搜索 → 选择结果 → 启动播放', async ({ page }) => {
   await page.goto(APP_URL);

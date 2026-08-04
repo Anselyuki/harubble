@@ -692,7 +692,7 @@ for (const config of FAMILIES) {
         .evaluate((shell) => shell.getBoundingClientRect().width);
 
       await openFormatPopover(page);
-      await page.mouse.move(2, 2);
+      await page.locator('.format-popover-content').hover();
       await expect(button).toHaveAttribute('aria-expanded', 'true');
       await expect
         .poll(() =>
@@ -845,6 +845,39 @@ for (const config of FAMILIES) {
       'closed',
       { timeout: 500 }
     );
+  });
+
+  test(`${config.family} delays playback information close and cancels it on return`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 920, height: 420 });
+    await openFixture(page, config.family, config.scheme, {
+      processing: true,
+    });
+    const button = page.locator('.format-readout');
+    const popover = page.locator('#player-format-details');
+
+    await button.focus();
+    await page.keyboard.press('Enter');
+    await page.mouse.move(2, 2);
+    await button.evaluate((element: HTMLButtonElement) => element.blur());
+    await page.waitForTimeout(COLLAPSE_GRACE_MS - 99);
+    await expect(button).toHaveAttribute('aria-expanded', 'true');
+    await expect(popover).toBeVisible();
+
+    await button.hover();
+    await page.waitForTimeout(200);
+    await expect(button).toHaveAttribute('aria-expanded', 'true');
+    await expect(popover).toBeVisible();
+
+    await page.mouse.move(2, 2);
+    await page.waitForTimeout(COLLAPSE_GRACE_MS - 99);
+    await expect(button).toHaveAttribute('aria-expanded', 'true');
+    await expect(popover).toBeVisible();
+    await expect(button).toHaveAttribute('aria-expanded', 'false', {
+      timeout: 500,
+    });
+    await expect(popover).toBeHidden();
   });
 }
 

@@ -3,20 +3,20 @@
   import { localeState } from '$lib/i18n';
   import { imageDataSrc } from '$lib/imageDataSrc';
   import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
-  import type { SeriesGroup } from '$lib/types';
+  import type { Album, SeriesGroup } from '$lib/types';
 
   interface Props {
     groups: SeriesGroup[];
     belongReady: boolean;
     reducedMotion?: boolean;
-    onSelectSeries: (series: string) => void;
+    onSelectAlbum: (album: Album) => void | Promise<void>;
   }
 
   let {
     groups,
     belongReady,
     reducedMotion = false,
-    onSelectSeries,
+    onSelectAlbum,
   }: Props = $props();
 
   const labels = $derived.by(() => {
@@ -44,20 +44,22 @@
     <ul class="group-list" role="list">
       {#each groups as group (group.series)}
         <li class="group-item">
-          <button
-            class="group-header"
-            type="button"
-            onclick={() => onSelectSeries(group.series)}
-          >
+          <div class="group-header">
             <span class="group-name">{group.series}</span>
             <span class="group-count"
               >{m.home_album_count({ count: group.albums.length })}</span
             >
-          </button>
+          </div>
 
           <div class="group-albums">
             {#each group.albums.slice(0, 8) as album (album.cid)}
-              <div class="mini-cover-wrapper" title={album.name}>
+              <button
+                class="mini-cover-wrapper"
+                type="button"
+                title={album.name}
+                aria-label={album.name}
+                onclick={() => onSelectAlbum(album)}
+              >
                 <img
                   use:imageDataSrc={{
                     src: album.coverUrl,
@@ -68,7 +70,7 @@
                   class="mini-cover"
                   loading="lazy"
                 />
-              </div>
+              </button>
             {/each}
             {#if group.albums.length > 8}
               <span class="overflow-badge">+{group.albums.length - 8}</span>
@@ -117,12 +119,6 @@
     display: flex;
     align-items: baseline;
     gap: 0.5rem;
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    text-align: left;
-    color: inherit;
   }
 
   .group-name {
@@ -146,11 +142,28 @@
   }
 
   .mini-cover-wrapper {
+    display: block;
     width: 40px;
     height: 40px;
+    padding: 0;
+    border: 0;
     border-radius: 5px;
     overflow: hidden;
     flex-shrink: 0;
+    background: transparent;
+    cursor: pointer;
+    transition: var(--motion-hover);
+  }
+
+  .mini-cover-wrapper:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px
+      color-mix(in srgb, var(--text-primary) 18%, transparent);
+  }
+
+  .mini-cover-wrapper:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .mini-cover {

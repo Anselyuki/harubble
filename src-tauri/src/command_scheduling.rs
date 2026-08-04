@@ -65,494 +65,20 @@ pub(crate) struct CommandSpec {
     pub(crate) cancel_policy: CancelPolicy,
 }
 
-pub(crate) const COMMAND_SPECS: &[CommandSpec] = &[
-    spec(
-        "play_song",
-        CommandDomain::PlaybackTransition,
-        CommandPriority::Playback,
-        CancelPolicy::SupersedePlaybackSession,
-    ),
-    spec(
-        "seek_current_playback",
-        CommandDomain::PlaybackTransition,
-        CommandPriority::Playback,
-        CancelPolicy::LatestWins,
-    ),
-    spec(
-        "play_next",
-        CommandDomain::PlaybackTransition,
-        CommandPriority::Playback,
-        CancelPolicy::SupersedePlaybackSession,
-    ),
-    spec(
-        "play_previous",
-        CommandDomain::PlaybackTransition,
-        CommandPriority::Playback,
-        CancelPolicy::SupersedePlaybackSession,
-    ),
-    spec(
-        "pause_playback",
-        CommandDomain::PlaybackControl,
-        CommandPriority::Playback,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "resume_playback",
-        CommandDomain::PlaybackControl,
-        CommandPriority::Playback,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "get_player_state",
-        CommandDomain::PlaybackControl,
-        CommandPriority::Playback,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "set_playback_volume",
-        CommandDomain::PlaybackControl,
-        CommandPriority::Playback,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "get_albums",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_album_catalog",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "refresh_album_catalog",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_album_detail",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "refresh_album_detail",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_song_detail",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "search_library",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_latest_albums",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_albums_by_series",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_recent_history",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_homepage_status",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "list_collections",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_collection",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "create_collection",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "update_collection",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "delete_collection",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "add_songs_to_collection",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "remove_songs_from_collection",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "reorder_collection_songs",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "export_collection",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "import_collection",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_tag_dimensions",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_albums_by_tag_dimension",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_tag_editor_merged",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_tag_editor_local_overlay",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "set_tag_editor_entity_tag",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "remove_tag_editor_entity_tag",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "add_tag_editor_dimension",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "remove_tag_editor_dimension",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "apply_tag_editor_remote_update",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "resolve_tag_editor_conflict",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "export_tag_editor_registry",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "import_tag_editor_registry",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    // ── ThemePackages (Phase 1 MVP · 4 条) ─────────────────────────────
-    spec(
-        "list_theme_packages",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "inspect_theme_package",
-        CommandDomain::VisualAux,
-        CommandPriority::Visual,
-        CancelPolicy::LatestWins,
-    ),
-    spec(
-        "install_theme_package_from_file",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "install_theme_package_from_url",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "uninstall_theme_package",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "set_active_theme_package",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::LatestWins,
-    ),
-    spec(
-        "preview_theme_package",
-        CommandDomain::VisualAux,
-        CommandPriority::Visual,
-        CancelPolicy::LatestWins,
-    ),
-    spec(
-        "dismiss_theme_preview",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::LatestWins,
-    ),
-    spec(
-        "export_theme_package",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_preferences",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "set_preferences",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "export_preferences",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "import_preferences",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_notification_permission_state",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "send_test_notification",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "show_main_window",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "sync_playback_menu_state",
-        CommandDomain::VisualAux,
-        CommandPriority::Visual,
-        CancelPolicy::LatestWins,
-    ),
-    spec(
-        "list_log_records",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_log_file_status",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_default_output_dir",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "get_local_inventory_snapshot",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "rescan_local_inventory",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "cancel_local_inventory_scan",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Interactive,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "get_audio_metadata",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_song_lyrics",
-        CommandDomain::VisualAux,
-        CommandPriority::Visual,
-        CancelPolicy::LatestWins,
-    ),
-    spec(
-        "extract_image_theme",
-        CommandDomain::VisualAux,
-        CommandPriority::Visual,
-        CancelPolicy::LatestWins,
-    ),
-    spec(
-        "get_cached_image_path",
-        CommandDomain::VisualAux,
-        CommandPriority::Visual,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "create_download_job",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "list_download_jobs",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "get_download_job",
-        CommandDomain::InteractiveUi,
-        CommandPriority::Interactive,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "cancel_download_job",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Interactive,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "cancel_download_task",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Interactive,
-        CancelPolicy::NeverCancel,
-    ),
-    spec(
-        "retry_download_job",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "retry_download_task",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "clear_download_history",
-        CommandDomain::BackgroundIo,
-        CommandPriority::Background,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "clear_audio_cache",
-        CommandDomain::Maintenance,
-        CommandPriority::CriticalSideEffect,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "clear_response_cache",
-        CommandDomain::Maintenance,
-        CommandPriority::CriticalSideEffect,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "reset_http_client",
-        CommandDomain::Maintenance,
-        CommandPriority::CriticalSideEffect,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "clear_listening_history",
-        CommandDomain::PlaybackSideEffect,
-        CommandPriority::CriticalSideEffect,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
-        "record_song_heat",
-        CommandDomain::PlaybackSideEffect,
-        CommandPriority::CriticalSideEffect,
-        CancelPolicy::Cooperative,
-    ),
+macro_rules! collect_command_specs {
+    ( $( ($path:path, $name:literal, $domain:ident, $priority:ident, $cancel:ident) ),* $(,)? ) => {
+        &[$(CommandSpec {
+            name: $name,
+            domain: CommandDomain::$domain,
+            priority: CommandPriority::$priority,
+            cancel_policy: CancelPolicy::$cancel,
+        }),*]
+    };
+}
+
+const TAURI_COMMAND_SPECS: &[CommandSpec] = crate::for_each_tauri_command!(collect_command_specs);
+
+const INTERNAL_COMMAND_SPECS: &[CommandSpec] = &[
     spec(
         "record_listening_history",
         CommandDomain::PlaybackSideEffect,
@@ -606,7 +132,10 @@ const fn spec(
 }
 
 pub(crate) fn command_spec(name: &str) -> Option<&'static CommandSpec> {
-    COMMAND_SPECS.iter().find(|spec| spec.name == name)
+    TAURI_COMMAND_SPECS
+        .iter()
+        .chain(INTERNAL_COMMAND_SPECS)
+        .find(|spec| spec.name == name)
 }
 
 pub(crate) fn debug_assert_command_domain(name: &str, domain: CommandDomain) {
@@ -619,7 +148,10 @@ pub(crate) fn debug_assert_command_domain(name: &str, domain: CommandDomain) {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_spec, CancelPolicy, CommandDomain, CommandPriority, COMMAND_SPECS};
+    use super::{
+        command_spec, CancelPolicy, CommandDomain, CommandPriority, INTERNAL_COMMAND_SPECS,
+        TAURI_COMMAND_SPECS,
+    };
     use std::collections::HashSet;
 
     macro_rules! extract_names {
@@ -641,7 +173,7 @@ mod tests {
     #[test]
     fn command_registry_covers_all_tauri_commands() {
         let mut seen = HashSet::new();
-        for spec in COMMAND_SPECS {
+        for spec in TAURI_COMMAND_SPECS.iter().chain(INTERNAL_COMMAND_SPECS) {
             assert!(
                 seen.insert(spec.name),
                 "duplicate command spec {}",
@@ -656,7 +188,7 @@ mod tests {
             );
         }
 
-        for spec in COMMAND_SPECS {
+        for spec in TAURI_COMMAND_SPECS.iter().chain(INTERNAL_COMMAND_SPECS) {
             assert!(
                 ALL_TAURI_COMMAND_NAMES.contains(&spec.name)
                     || INTERNAL_SCHEDULED_ENTRIES.contains(&spec.name),

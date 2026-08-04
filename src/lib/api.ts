@@ -380,6 +380,20 @@ export async function sendTestNotification(): Promise<void> {
   return invoke('send_test_notification');
 }
 
+export type NotificationPermissionState =
+  | 'granted'
+  | 'denied'
+  | 'prompt'
+  | 'prompt-with-rationale';
+
+export async function getNotificationPermissionState(): Promise<NotificationPermissionState> {
+  return invoke('get_notification_permission_state');
+}
+
+export async function requestNotificationPermission(): Promise<NotificationPermissionState> {
+  return invoke('request_notification_permission');
+}
+
 export async function getLocalInventorySnapshot(): Promise<LocalInventorySnapshot> {
   return invoke<LocalInventorySnapshot>('get_local_inventory_snapshot');
 }

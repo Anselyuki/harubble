@@ -40,6 +40,7 @@ export interface MenuCommandDeps {
     toggleSidebar: () => void;
     navigateToTop: (view: AppView) => void;
     goBack: () => Promise<void> | void;
+    requestClearListeningHistory: () => void;
     readonly canGoBack: boolean;
   };
   playerController: {
@@ -79,9 +80,6 @@ export interface MenuCommandDeps {
     importRegistry: () => Promise<void>;
     exportRegistry: () => Promise<void>;
   };
-  homeController: {
-    handleClearHistory: () => Promise<void>;
-  };
   downloadController: {
     handleClearDownloadHistory: () => Promise<void>;
   };
@@ -119,7 +117,6 @@ async function handle(id: string, deps: MenuCommandDeps): Promise<void> {
     settingsController,
     collectionController,
     tagEditorController,
-    homeController,
     downloadController,
     notifyError,
     notifyInfo,
@@ -175,7 +172,7 @@ async function handle(id: string, deps: MenuCommandDeps): Promise<void> {
       return;
     }
     case 'app.file.clear_listening_history':
-      await homeController.handleClearHistory();
+      runtime.requestClearListeningHistory();
       return;
     case 'app.file.clear_download_history':
       await downloadController.handleClearDownloadHistory();

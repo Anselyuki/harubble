@@ -46,5 +46,18 @@ describe('SettingsSheet section composition', () => {
     expect(source).toContain('packageColorsLocked');
     expect(source).toContain('themePackageManager.activePackageId');
     expect(source).toContain('themePackageManager.previewingId');
+    expect(source).toContain('aria-current={activeSection === section.id');
+    expect(source).toContain("? 'location'");
+    expect(source).toContain('syncActiveSectionFromScroll');
+    expect(source).toContain("inline: 'nearest'");
+    expect(source).toMatch(
+      /\.settings-section-nav\s*\{[^}]*overflow-x:\s*auto;[^}]*scrollbar-width:\s*none;/s
+    );
+    expect(source).toMatch(
+      /\.settings-section-nav::-webkit-scrollbar\s*\{[^}]*display:\s*none;/s
+    );
+    expect(source).not.toMatch(
+      /\.settings-section-nav\s*\{[^}]*scrollbar-width:\s*thin;/s
+    );
   });
 });

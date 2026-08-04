@@ -40,9 +40,12 @@
   }: Props = $props();
 
   const roleValue = $derived(element === 'button' ? undefined : 'button');
-  const tabIndex = $derived(element === 'button' || disabled ? undefined : 0);
+  const tabIndex = $derived(
+    element === 'button' ? undefined : disabled ? -1 : 0
+  );
 
   function handleClick() {
+    if (disabled) return;
     const activation = getSidebarItemActivation({
       collapsed,
       expandOnCollapsedClick,
@@ -58,6 +61,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (disabled) return;
     if (element === 'button') return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
 
@@ -69,6 +73,7 @@
 <svelte:element
   this={element}
   type={element === 'button' ? 'button' : undefined}
+  disabled={element === 'button' ? disabled : undefined}
   class="sidebar-item-button"
   class:active
   class:collapsed
@@ -107,7 +112,7 @@
     align-items: center;
     gap: 0.5rem;
     width: 100%;
-    height: 36px;
+    height: 40px;
     padding: 0 0.75rem;
     border: none;
     border-radius: var(--shape-md);
@@ -122,7 +127,7 @@
   }
 
   .sidebar-item-button.collapsed {
-    width: 36px;
+    width: 40px;
     padding: 0;
     justify-content: center;
   }
@@ -140,6 +145,7 @@
 
   .sidebar-item-button.disabled {
     cursor: default;
+    opacity: 0.56;
   }
 
   .sidebar-item-button.disabled:hover {

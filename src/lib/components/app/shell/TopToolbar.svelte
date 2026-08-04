@@ -69,6 +69,7 @@
       size="icon"
       variant="ghost"
       class={`size-10 text-base ${toolbarIconButton({ active: settingsOpen })}`}
+      data-testid="settings-trigger"
       onclick={onOpenSettings}
       aria-label={labels.settings}
       aria-pressed={settingsOpen}
