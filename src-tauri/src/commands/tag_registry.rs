@@ -82,6 +82,6 @@ pub async fn get_albums_by_tag_dimension(
         })
         .collect();
 
-    groups.sort_by(|a, b| b.albums.len().cmp(&a.albums.len()));
+    groups.sort_by_key(|group| std::cmp::Reverse(group.albums.len()));
     Ok(groups)
 }

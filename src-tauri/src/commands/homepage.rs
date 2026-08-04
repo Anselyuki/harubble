@@ -105,7 +105,7 @@ pub async fn get_albums_by_series(
         .into_iter()
         .map(|(series, albums)| SeriesGroup { series, albums })
         .collect();
-    result.sort_by(|a, b| b.albums.len().cmp(&a.albums.len()));
+    result.sort_by_key(|group| std::cmp::Reverse(group.albums.len()));
     Ok(result)
 }
 

@@ -135,7 +135,7 @@ impl TaskDirectory {
     /// 适用于替代型语义：新任务启动时先取消老任务。
     pub async fn cancel_all_named(&self, domain: &str, name: &str) -> usize {
         let mut count = 0;
-        for (_, entry) in self.entries.lock().await.iter_mut() {
+        for entry in self.entries.lock().await.values_mut() {
             if entry.id.domain == domain && entry.id.name == name {
                 entry.cancel_token.cancel();
                 entry.state = TaskState::Cancelling;
@@ -154,7 +154,7 @@ impl TaskDirectory {
     ///
     /// 应用退出流程调用；调用方随后应通过等待 JoinHandle 完成回收（由各领域负责）。
     pub async fn cancel_all(&self) {
-        for (_, entry) in self.entries.lock().await.iter_mut() {
+        for entry in self.entries.lock().await.values_mut() {
             entry.cancel_token.cancel();
             entry.state = TaskState::Cancelling;
         }

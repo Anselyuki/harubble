@@ -470,11 +470,10 @@ impl AudioPlayer {
                 // P1-6 基准：把回调耗时统计一并写入日志上下文。
                 // avg_us = total_ns / count / 1000；桶数组直接序列化为 JSON 数组，供
                 // 后续基准报告脚本按需绘制直方图或近似百分位。
-                let avg_ns = if metrics.callback_count > 0 {
-                    metrics.callback_elapsed_ns_total / metrics.callback_count
-                } else {
-                    0
-                };
+                let avg_ns = metrics
+                    .callback_elapsed_ns_total
+                    .checked_div(metrics.callback_count)
+                    .unwrap_or(0);
                 state.log_center().record(
                     crate::logging::LogPayload::new(
                         crate::logging::LogLevel::Debug,

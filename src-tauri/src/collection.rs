@@ -590,16 +590,14 @@ impl CollectionService {
             )
             .map_err(|e| CollectionError::Database(format!("查询最大 position 失败: {e}")))?;
 
-        let mut pos = max_pos + 1;
         let now = now_millis();
-        for song_id in song_ids {
+        for (pos, song_id) in (max_pos + 1..).zip(song_ids) {
             conn.execute(
                 "INSERT OR IGNORE INTO collection_songs (collection_id, song_id, position, added_at)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![id, song_id, pos, now],
             )
             .map_err(|e| CollectionError::Database(format!("添加歌曲失败: {e}")))?;
-            pos += 1;
         }
 
         conn.execute(
