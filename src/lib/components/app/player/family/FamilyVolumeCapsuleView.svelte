@@ -114,7 +114,7 @@
       type="button"
       class="capsule-icon-btn"
       bind:this={iconBtnRef}
-      aria-label={m.player_aria_mute()}
+      aria-label={muted ? m.player_aria_unmute() : m.player_aria_mute()}
       aria-pressed={muted}
       onclick={handleMuteClick}
     >

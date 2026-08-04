@@ -9,6 +9,7 @@
     calcCardPosition,
     clampCardPosition,
     measureBubbleTargetSize,
+    resolveTriggerPoint,
   } from './popoverBubble';
   import { TAG_LOCALES, tagIdentity, displayValue } from './tagAddUtils';
   import TagSearchTab from './TagSearchTab.svelte';
@@ -174,8 +175,14 @@
   function handleTriggerClick(e: MouseEvent) {
     e.stopPropagation();
     triggerEl = e.currentTarget as HTMLButtonElement;
-    clickX = e.clientX;
-    clickY = e.clientY;
+    const triggerPoint = resolveTriggerPoint(
+      e.clientX,
+      e.clientY,
+      e.detail,
+      triggerEl.getBoundingClientRect()
+    );
+    clickX = triggerPoint.left;
+    clickY = triggerPoint.top;
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     expandDir = calcExpandDirection(
       e.clientX,
@@ -412,6 +419,7 @@
             type="button"
             class="toggle-item"
             class:active={activeTab === 'search'}
+            aria-pressed={activeTab === 'search'}
             onclick={() => (activeTab = 'search')}
             >{m.tag_editor_tab_search()}</button
           >
@@ -419,6 +427,7 @@
             type="button"
             class="toggle-item"
             class:active={activeTab === 'create'}
+            aria-pressed={activeTab === 'create'}
             onclick={() => (activeTab = 'create')}
             >{m.tag_editor_tab_create()}</button
           >

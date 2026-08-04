@@ -19,6 +19,26 @@ export interface BubbleSize {
   height: number;
 }
 
+export interface TriggerPointRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export function resolveTriggerPoint(
+  clientX: number,
+  clientY: number,
+  clickDetail: number,
+  rect: TriggerPointRect
+): CardPosition {
+  if (clickDetail > 0) return { left: clientX, top: clientY };
+  return {
+    left: rect.left + rect.width / 2,
+    top: rect.top + rect.height / 2,
+  };
+}
+
 const DEFAULT_CARD_WIDTH = 280;
 const DEFAULT_CARD_MAX_HEIGHT = 320;
 const DEFAULT_SAFE_MARGIN = 16;

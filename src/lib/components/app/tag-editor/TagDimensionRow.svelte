@@ -3,6 +3,9 @@
   import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
   import type { TagEditorLocalizedValue } from '$lib/types';
   import * as m from '$lib/paraglide/messages.js';
+  import GripVerticalIcon from '@lucide/svelte/icons/grip-vertical';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+  import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
 
   interface Props {
     dimensionKey: string;
@@ -27,6 +30,7 @@
 
   let dragIdx = $state<number | null>(null);
   let dropIdx = $state<number | null>(null);
+  let reorderAnnouncement = $state('');
 
   function displayValue(val: TagEditorLocalizedValue): string {
     return val['zh-CN'] || val['en-US'] || Object.values(val)[0] || '';
@@ -107,16 +111,47 @@
       dragIdx = null;
       return;
     }
-    const reordered = [...values];
-    const [moved] = reordered.splice(dragIdx, 1);
-    reordered.splice(targetIdx, 0, moved);
+    const sourceIdx = dragIdx;
     dragIdx = null;
-    await onSetTag(dimensionKey, reordered);
+    await moveValue(sourceIdx, targetIdx);
   }
 
   function handleDragEnd() {
     dragIdx = null;
     dropIdx = null;
+  }
+
+  async function moveValue(sourceIdx: number, targetIdx: number) {
+    if (
+      sourceIdx === targetIdx ||
+      sourceIdx < 0 ||
+      targetIdx < 0 ||
+      sourceIdx >= values.length ||
+      targetIdx >= values.length
+    )
+      return;
+    const reordered = [...values];
+    const [moved] = reordered.splice(sourceIdx, 1);
+    reordered.splice(targetIdx, 0, moved);
+    await onSetTag(dimensionKey, reordered);
+    reorderAnnouncement = m.tag_editor_value_moved_announcement({
+      value: displayValue(moved),
+      position: targetIdx + 1,
+      total: reordered.length,
+    });
+  }
+
+  function handleReorderKeydown(event: KeyboardEvent, idx: number) {
+    let targetIdx: number | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
+      targetIdx = idx - 1;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
+      targetIdx = idx + 1;
+    if (event.key === 'Home') targetIdx = 0;
+    if (event.key === 'End') targetIdx = values.length - 1;
+    if (targetIdx === null) return;
+    event.preventDefault();
+    void moveValue(idx, targetIdx);
   }
 </script>
 
@@ -128,6 +163,7 @@
 >
   <span class="dim-label">{dimensionLabel}</span>
 
+  <span class="sr-only" aria-live="polite">{reorderAnnouncement}</span>
   <div class="dim-chips" role="list">
     {#if values.length > 0}
       {#each values as val, idx (`${dimensionKey}-${idx}-${val['zh-CN'] ?? ''}`)}
@@ -136,7 +172,6 @@
           class="chip-wrapper"
           class:dragging={dragIdx === idx}
           class:drop-target={dropIdx === idx && dragIdx !== idx}
-          draggable="true"
           role="listitem"
           onmouseenter={handleChipEnter}
           onmouseleave={handleChipLeave}
@@ -145,12 +180,24 @@
             const next = (e as FocusEvent).relatedTarget as Node | null;
             if (!next || !e.currentTarget.contains(next)) handleChipLeave(e);
           }}
-          ondragstart={(e) => handleDragStart(e, idx)}
           ondragover={(e) => handleDragOver(e, idx)}
           ondragleave={handleDragLeave}
           ondrop={(e) => handleDrop(e, idx)}
           ondragend={handleDragEnd}
         >
+          <button
+            type="button"
+            class="chip-reorder-btn"
+            draggable="true"
+            aria-label={m.tag_editor_value_reorder_aria({
+              value: displayValue(val),
+            })}
+            ondragstart={(e) => handleDragStart(e, idx)}
+            ondragend={handleDragEnd}
+            onkeydown={(event) => handleReorderKeydown(event, idx)}
+          >
+            <GripVerticalIcon aria-hidden="true" />
+          </button>
           {#if tip}
             <Tooltip.Root>
               <Tooltip.Trigger>
@@ -161,6 +208,28 @@
           {:else}
             <span class="value-chip">{displayValue(val)}</span>
           {/if}
+          <button
+            type="button"
+            class="chip-reorder-btn"
+            disabled={idx === 0}
+            aria-label={m.tag_editor_value_move_up_aria({
+              value: displayValue(val),
+            })}
+            onclick={() => void moveValue(idx, idx - 1)}
+          >
+            <ArrowUpIcon aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="chip-reorder-btn"
+            disabled={idx === values.length - 1}
+            aria-label={m.tag_editor_value_move_down_aria({
+              value: displayValue(val),
+            })}
+            onclick={() => void moveValue(idx, idx + 1)}
+          >
+            <ArrowDownIcon aria-hidden="true" />
+          </button>
           <button
             type="button"
             class="chip-delete"
@@ -205,6 +274,39 @@
     align-items: center;
     border-radius: var(--shape-pill);
     cursor: grab;
+  }
+
+  .chip-reorder-btn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-tertiary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+
+  .chip-reorder-btn:first-child {
+    cursor: grab;
+  }
+
+  .chip-reorder-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .chip-reorder-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .chip-reorder-btn :global(svg) {
+    width: 15px;
+    height: 15px;
   }
 
   .chip-wrapper:active {

@@ -15,6 +15,7 @@ import {
 import type { AppPreferences, ColorScheme, RepeatMode } from '$lib/types';
 import {
   exportPreferences,
+  getNotificationPermissionState,
   importPreferences,
   rescanLocalInventory,
   sendTestNotification,
@@ -41,6 +42,7 @@ export interface MenuCommandDeps {
     navigateToTop: (view: AppView) => void;
     goBack: () => Promise<void> | void;
     requestClearListeningHistory: () => void;
+    requestClearDownloadHistory: () => void;
     readonly canGoBack: boolean;
   };
   playerController: {
@@ -80,9 +82,6 @@ export interface MenuCommandDeps {
     importRegistry: () => Promise<void>;
     exportRegistry: () => Promise<void>;
   };
-  downloadController: {
-    handleClearDownloadHistory: () => Promise<void>;
-  };
   notifyError: (message: string) => void;
   notifyInfo: (message: string) => void;
 }
@@ -117,7 +116,6 @@ async function handle(id: string, deps: MenuCommandDeps): Promise<void> {
     settingsController,
     collectionController,
     tagEditorController,
-    downloadController,
     notifyError,
     notifyInfo,
   } = deps;
@@ -126,6 +124,11 @@ async function handle(id: string, deps: MenuCommandDeps): Promise<void> {
       await runtime.handleToggleSettings();
       return;
     case 'app.app.test_notification':
+      if ((await getNotificationPermissionState()) !== 'granted') {
+        await runtime.openSettingsAt('notifications');
+        notifyInfo(m.menu_test_notification_permission_required());
+        return;
+      }
       await sendTestNotification();
       notifyInfo(m.menu_test_notification_sent());
       return;
@@ -175,7 +178,7 @@ async function handle(id: string, deps: MenuCommandDeps): Promise<void> {
       runtime.requestClearListeningHistory();
       return;
     case 'app.file.clear_download_history':
-      await downloadController.handleClearDownloadHistory();
+      runtime.requestClearDownloadHistory();
       return;
     case 'app.view.home':
       runtime.navigateToTop('home');

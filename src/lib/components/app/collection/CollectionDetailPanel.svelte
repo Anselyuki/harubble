@@ -5,6 +5,7 @@
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import type { PartialOptions } from 'overlayscrollbars';
   import SongRow from '$lib/components/SongRow.svelte';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import type {
@@ -33,7 +34,7 @@
     isResolvingSongs: boolean;
     playbackQueue: PlaybackQueueEntry[];
     onEdit: () => void;
-    onDelete: (id: string) => void;
+    onDelete: (id: string) => void | Promise<void>;
     onExport: (id: string) => void;
     onRemoveSongs: (collectionId: string, songIds: string[]) => void;
     onReorderSongs: (collectionId: string, songIds: string[]) => void;
@@ -63,6 +64,7 @@
 
   let dragSourceIndex = $state<number | null>(null);
   let reorderAnnouncement = $state('');
+  let deleteDialogOpen = $state(false);
 
   const isEditable = $derived.by(() => !props.collection?.isOfficial);
 
@@ -254,15 +256,7 @@
               <button
                 type="button"
                 class="btn btn-danger"
-                onclick={() => {
-                  if (
-                    confirm(
-                      m.collection_delete_confirm({ name: collection.name })
-                    )
-                  ) {
-                    props.onDelete(collection.id);
-                  }
-                }}
+                onclick={() => (deleteDialogOpen = true)}
               >
                 {m.collection_action_delete()}
               </button>
@@ -398,6 +392,28 @@
     </div>
   {/if}
 </OverlayScrollbarsComponent>
+
+{#if props.collection}
+  <AlertDialog.Root bind:open={deleteDialogOpen}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>{m.collection_action_delete()}</AlertDialog.Title>
+        <AlertDialog.Description>
+          {m.collection_delete_confirm({ name: props.collection.name })}
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel>{m.collection_form_cancel()}</AlertDialog.Cancel>
+        <AlertDialog.Action
+          variant="destructive"
+          onclick={() => void props.onDelete(props.collection!.id)}
+        >
+          {m.collection_action_delete()}
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+{/if}
 
 <style>
   :global(.collection-scroll-container) {

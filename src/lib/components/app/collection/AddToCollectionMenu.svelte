@@ -12,6 +12,7 @@
   let { collections, onAdd }: Props = $props();
 
   let open = $state(false);
+  let listEl = $state<HTMLUListElement | null>(null);
 
   const userCollections = $derived.by(() =>
     collections.filter((c) => !c.isOfficial)
@@ -25,6 +26,15 @@
     onAdd(id);
     open = false;
   }
+
+  $effect(() => {
+    if (!open || !listEl) return;
+    const list = listEl;
+    const frame = requestAnimationFrame(() =>
+      list.querySelector<HTMLButtonElement>('button')?.focus()
+    );
+    return () => cancelAnimationFrame(frame);
+  });
 </script>
 
 <span class="add-to-collection-wrapper">
@@ -33,7 +43,6 @@
       class="add-to-collection-btn"
       title={m.collection_menu_add_aria()}
       aria-label={m.collection_menu_add_aria()}
-      aria-haspopup="menu"
       onclick={stopRowInteraction}
     >
       <FolderPlusIcon size={14} />
@@ -49,23 +58,28 @@
         strategy="fixed"
         onclick={stopRowInteraction}
       >
-        <div role="menu" aria-label={m.collection_menu_add_aria()}>
+        <ul
+          class="collection-action-list"
+          aria-label={m.collection_menu_add_aria()}
+          bind:this={listEl}
+        >
           {#if userCollections.length === 0}
-            <div class="menu-empty">{m.collection_menu_empty()}</div>
+            <li class="menu-empty">{m.collection_menu_empty()}</li>
           {:else}
             {#each userCollections as col (col.id)}
-              <button
-                type="button"
-                class="menu-item"
-                role="menuitem"
-                onclick={() => handleSelect(col.id)}
-              >
-                <span class="menu-item-name">{col.name}</span>
-                <span class="menu-item-count">{col.songCount}</span>
-              </button>
+              <li>
+                <button
+                  type="button"
+                  class="menu-item"
+                  onclick={() => handleSelect(col.id)}
+                >
+                  <span class="menu-item-name">{col.name}</span>
+                  <span class="menu-item-count">{col.songCount}</span>
+                </button>
+              </li>
             {/each}
           {/if}
-        </div>
+        </ul>
       </Popover.Content>
     </Popover.Portal>
   </Popover.Root>
@@ -108,6 +122,12 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     transform-origin: var(--bits-popover-content-transform-origin);
+  }
+
+  .collection-action-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
   }
 
   .menu-item {

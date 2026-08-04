@@ -35,6 +35,7 @@
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
     onOutputDirChange: (outputDir: string) => boolean | Promise<boolean>;
+    onRequestClearDownloadHistory: () => void;
   }
 
   let {
@@ -58,6 +59,7 @@
     notifyInfo,
     notifyError,
     onOutputDirChange,
+    onRequestClearDownloadHistory,
   }: Props = $props();
 
   const download = getDownloadContext();
@@ -107,7 +109,7 @@
     canRetryTask={download.canRetryTask}
     getTaskErrorLabel={download.getTaskErrorLabel}
     getTaskStatusLabel={download.getTaskStatusLabel}
-    onClearDownloadHistory={download.handleClearDownloadHistory}
+    onClearDownloadHistory={onRequestClearDownloadHistory}
     onCancelDownloadJob={download.handleCancelDownloadJob}
     onRetryDownloadJob={download.handleRetryDownloadJob}
     onCancelDownloadTask={download.handleCancelDownloadTask}

@@ -75,6 +75,7 @@ export function createAppRuntime() {
   let albumStageElement = $state<HTMLElement | null>(null);
   let isRefreshing = $state(false);
   let clearListeningHistoryDialogOpen = $state(false);
+  let clearDownloadHistoryDialogOpen = $state(false);
 
   const pendingScrollToSongCid = $derived(
     libraryController.pendingScrollToSongCid
@@ -167,6 +168,19 @@ export function createAppRuntime() {
     clearListeningHistoryDialogOpen = false;
   }
 
+  function requestClearDownloadHistory() {
+    if (!downloadController.canClearDownloadHistory()) {
+      notifyInfo(m.download_notify_history_empty());
+      return;
+    }
+    clearDownloadHistoryDialogOpen = true;
+  }
+
+  async function confirmClearDownloadHistory() {
+    await downloadController.handleClearDownloadHistory();
+    clearDownloadHistoryDialogOpen = false;
+  }
+
   $effect(() => {
     albumStageMotionController.albumStageElement = albumStageElement;
   });
@@ -240,6 +254,7 @@ export function createAppRuntime() {
         navigateToTop: navigationManager.navigateToTop,
         goBack: navigationManager.goBack,
         requestClearListeningHistory,
+        requestClearDownloadHistory,
         get canGoBack() {
           return navigationManager.canGoBack;
         },
@@ -257,10 +272,6 @@ export function createAppRuntime() {
       tagEditorController: {
         importRegistry: tagEditorController.importRegistry,
         exportRegistry: tagEditorController.exportRegistry,
-      },
-      downloadController: {
-        handleClearDownloadHistory:
-          downloadController.handleClearDownloadHistory,
       },
       notifyError,
       notifyInfo,
@@ -590,6 +601,12 @@ export function createAppRuntime() {
     set clearListeningHistoryDialogOpen(value: boolean) {
       clearListeningHistoryDialogOpen = value;
     },
+    get clearDownloadHistoryDialogOpen() {
+      return clearDownloadHistoryDialogOpen;
+    },
+    set clearDownloadHistoryDialogOpen(value: boolean) {
+      clearDownloadHistoryDialogOpen = value;
+    },
     get currentSongDownloadState() {
       return playerController.currentSong
         ? downloadController.getSongDownloadState(
@@ -632,6 +649,8 @@ export function createAppRuntime() {
     handleRefresh,
     requestClearListeningHistory,
     confirmClearListeningHistory,
+    requestClearDownloadHistory,
+    confirmClearDownloadHistory,
     handleContentWheel,
     handleToggleDownloads: downloadBridge.handleToggleDownloads,
     handleToggleSettings: downloadBridge.handleToggleSettings,

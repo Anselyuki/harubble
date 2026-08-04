@@ -34,13 +34,12 @@
   <section class="tag-groups" aria-label={labels.aria}>
     <h2 class="section-title">{labels.title}</h2>
 
-    <div class="dimension-chips" role="tablist">
+    <div class="dimension-chips" role="group" aria-label={labels.title}>
       {#each dimensions as dim (dim.key)}
         <button
           class="dimension-chip"
           class:active={selectedDimensionKey === dim.key}
-          role="tab"
-          aria-selected={selectedDimensionKey === dim.key}
+          aria-pressed={selectedDimensionKey === dim.key}
           onclick={() => onSelectDimension(dim.key)}
           type="button"
         >

@@ -758,10 +758,9 @@ for (const config of FAMILIES) {
     await openFixture(page, config.family, config.scheme);
 
     const button = page.locator('.capsule-icon-btn');
-    const stableLabel = await button.getAttribute('aria-label');
     await button.click();
     await expect(button).toHaveAttribute('aria-pressed', 'true');
-    await expect(button).toHaveAttribute('aria-label', stableLabel!);
+    await expect(button).toHaveAttribute('aria-label', '取消静音');
     await expect(button).toBeFocused();
 
     await openFixture(page, config.family, config.scheme);
@@ -769,7 +768,7 @@ for (const config of FAMILIES) {
     await page.waitForTimeout(400);
     await button.click();
     await expect(button).toHaveAttribute('aria-pressed', 'true');
-    await expect(button).toHaveAttribute('aria-label', stableLabel!);
+    await expect(button).toHaveAttribute('aria-label', '取消静音');
 
     await openFixture(page, config.family, config.scheme);
     await focusSlider(page);
@@ -1321,10 +1320,9 @@ test('coarse pointers get persistent space and direct slider access', async ({
       .not.toBe(64);
 
     const button = page.locator('.capsule-icon-btn');
-    const label = await button.getAttribute('aria-label');
     await button.tap();
     await expect(button).toHaveAttribute('aria-pressed', 'true');
-    await expect(button).toHaveAttribute('aria-label', label!);
+    await expect(button).toHaveAttribute('aria-label', '取消静音');
   } finally {
     await context.close();
   }

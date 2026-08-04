@@ -4,6 +4,7 @@ import {
   calcCardPosition,
   clampCardPosition,
   measureBubbleTargetSize,
+  resolveTriggerPoint,
 } from './popoverBubble';
 
 describe('popoverBubble', () => {
@@ -11,6 +12,24 @@ describe('popoverBubble', () => {
   const CARD_WIDTH = 280;
   const CARD_MAX_HEIGHT = 320;
   const SAFE_MARGIN = 16;
+
+  describe('resolveTriggerPoint', () => {
+    const rect = { left: 120, top: 80, width: 40, height: 40 };
+
+    it('uses pointer coordinates for pointer activation', () => {
+      expect(resolveTriggerPoint(130, 90, 1, rect)).toEqual({
+        left: 130,
+        top: 90,
+      });
+    });
+
+    it('uses the trigger center for keyboard activation', () => {
+      expect(resolveTriggerPoint(0, 0, 0, rect)).toEqual({
+        left: 140,
+        top: 100,
+      });
+    });
+  });
 
   describe('calcExpandDirection', () => {
     it('returns bottom-right when click is in center area', () => {

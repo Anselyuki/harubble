@@ -11,6 +11,7 @@
   import AppSideSheets from '$lib/components/app/shell/AppSideSheets.svelte';
   import CollectionFormDialog from '$lib/components/app/collection/CollectionFormDialog.svelte';
   import ClearListeningHistoryDialog from '$lib/components/app/home/ClearListeningHistoryDialog.svelte';
+  import ClearDownloadHistoryDialog from '$lib/components/app/download/ClearDownloadHistoryDialog.svelte';
   import ViewRouter from '$lib/components/app/shell/ViewRouter.svelte';
   import {
     createSidebarAnimator,
@@ -317,6 +318,7 @@
         notifyInfo={runtime.notifyInfo}
         notifyError={runtime.notifyError}
         onOutputDirChange={runtime.handleOutputDirChange}
+        onRequestClearDownloadHistory={runtime.requestClearDownloadHistory}
       />
     </main>
   </div>
@@ -342,5 +344,10 @@
     open={runtime.clearListeningHistoryDialogOpen}
     onOpenChange={(open) => (runtime.clearListeningHistoryDialogOpen = open)}
     onConfirm={runtime.confirmClearListeningHistory}
+  />
+  <ClearDownloadHistoryDialog
+    open={runtime.clearDownloadHistoryDialogOpen}
+    onOpenChange={(open) => (runtime.clearDownloadHistoryDialogOpen = open)}
+    onConfirm={runtime.confirmClearDownloadHistory}
   />
 </AppProviders>

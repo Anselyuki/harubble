@@ -99,6 +99,7 @@
     role="group"
     aria-label={m.player_aria_volume()}
     data-state={open ? 'open' : 'closed'}
+    onfocusin={controller.handleFocusIn}
     onfocusout={controller.handleFocusOut}
   >
     <span class="volume-badge-clip">
@@ -136,8 +137,7 @@
       bind:this={iconBtnRef}
       aria-label={muted ? m.player_aria_unmute() : m.player_aria_mute()}
       aria-expanded={open}
-      onclick={controller.handleIconClick}
-      ondblclick={() => onToggleMute?.()}
+      onclick={() => onToggleMute?.()}
     >
       <svg class="capsule-icon" viewBox="0 0 24 24" aria-hidden="true">
         {#if volumeIcon === 'muted'}

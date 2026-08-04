@@ -149,16 +149,15 @@
     handleRowPlay();
   }
 
-  function handleRowKeydown(event: KeyboardEvent) {
-    if (isNestedInteractiveTarget(event.target)) return;
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      if (selectionMode) {
-        if (!selectionDisabled) onToggleSelection?.();
-      } else {
-        handleRowPlay();
-      }
-    }
+  function rowPointerInteractions(node: HTMLElement) {
+    node.addEventListener('click', handleRowActivate);
+    node.addEventListener('dblclick', handleRowDoubleClick);
+    return {
+      destroy() {
+        node.removeEventListener('click', handleRowActivate);
+        node.removeEventListener('dblclick', handleRowDoubleClick);
+      },
+    };
   }
 
   function computeExtraTags(
@@ -190,6 +189,8 @@
   const extraTags = $derived.by(() => computeExtraTags(song.tags, albumTags));
 </script>
 
+<!-- Row-level pointer activation is a convenience; explicit child buttons own keyboard actions. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="song-row"
   class:is-selection-mode={selectionMode}
@@ -198,12 +199,8 @@
   class:is-hovered={isHovered || isFocused}
   class:is-reduced-motion={reducedMotion}
   data-song-cid={song.cid}
-  role="button"
-  tabindex="0"
-  aria-label={song.name}
-  onclick={handleRowActivate}
-  ondblclick={handleRowDoubleClick}
-  onkeydown={handleRowKeydown}
+  class:has-row-action={selectionMode}
+  use:rowPointerInteractions
   onmouseenter={() => {
     isHovered = true;
   }}
@@ -337,10 +334,13 @@
     gap: 14px;
     padding: 10px 16px;
     border-radius: 14px;
-    cursor: pointer;
+    cursor: default;
     outline: none;
     background: rgba(15, 23, 42, 0);
     box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0);
+  }
+  .song-row.has-row-action {
+    cursor: pointer;
   }
   .song-row:not(.is-reduced-motion):active {
     transform: scale(0.996);
