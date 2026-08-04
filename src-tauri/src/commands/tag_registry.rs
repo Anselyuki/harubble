@@ -5,6 +5,24 @@ use harubble_core::api::Album;
 use harubble_core::homepage::TagGroup;
 use tauri::State;
 
+/// Tag Registry command 的结构化错误类型。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum TagRegistryError {
+    Network(String),
+    Internal(String),
+}
+
+impl std::fmt::Display for TagRegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TagRegistryError::Network(m) | TagRegistryError::Internal(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+impl std::error::Error for TagRegistryError {}
+
 /// 获取适用于专辑粒度的 tag 维度列表。
 ///
 /// 过滤掉 `scope = "song"` 的维度（如 "event"），仅返回可用于专辑分组浏览的维度。
@@ -12,9 +30,9 @@ use tauri::State;
 #[tauri::command]
 pub fn get_tag_dimensions(
     state: State<'_, AppState>,
-) -> Result<Vec<crate::tag_registry::TagDimensionResolved>, String> {
+) -> Result<Vec<crate::tag_registry::TagDimensionResolved>, TagRegistryError> {
     let locale = state.preferences().locale;
-    Ok(state.tag_registry.get_album_dimensions(locale))
+    Ok(state.tag_registry().get_album_dimensions(locale))
 }
 
 /// 按指定 tag 维度聚合专辑，用于分组浏览。
@@ -25,21 +43,23 @@ pub fn get_tag_dimensions(
 pub async fn get_albums_by_tag_dimension(
     state: State<'_, AppState>,
     dimension_key: String,
-) -> Result<Vec<TagGroup>, String> {
+) -> Result<Vec<TagGroup>, TagRegistryError> {
     let locale = state.preferences().locale;
     let value_to_cids = state
-        .tag_registry
+        .tag_registry()
         .get_album_cids_by_dimension(&dimension_key, locale);
 
     if value_to_cids.is_empty() {
         return Ok(Vec::new());
     }
 
-    let albums = state.api.get_albums().await.map_err(|e| e.to_string())?;
-    let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
-    for album in &mut enriched {
-        album.tags = state.tag_registry.get_album_tags(&album.cid, locale);
-    }
+    let albums = state
+        .album_catalog()
+        .get()
+        .await
+        .map_err(TagRegistryError::Network)?
+        .albums;
+    let enriched = state.attach_album_enrichment(albums).await;
 
     let album_map: std::collections::HashMap<&str, &Album> =
         enriched.iter().map(|a| (a.cid.as_str(), a)).collect();
@@ -62,6 +82,6 @@ pub async fn get_albums_by_tag_dimension(
         })
         .collect();
 
-    groups.sort_by(|a, b| b.albums.len().cmp(&a.albums.len()));
+    groups.sort_by_key(|group| std::cmp::Reverse(group.albums.len()));
     Ok(groups)
 }

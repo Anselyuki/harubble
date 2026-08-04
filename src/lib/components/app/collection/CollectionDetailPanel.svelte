@@ -5,23 +5,23 @@
   import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
   import type { PartialOptions } from 'overlayscrollbars';
   import SongRow from '$lib/components/SongRow.svelte';
-  import { getSongDetail, getAlbumDetail } from '$lib/api';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
+  import * as m from '$lib/paraglide/messages.js';
+  import { localeState } from '$lib/i18n';
   import type {
     Collection,
     CollectionSummary,
     SongEntry,
-    SongDetail,
     PlaybackQueueEntry,
   } from '$lib/types';
+  import type { ResolvedSong } from '$lib/features/collection/resolvedSongs.svelte';
+  import GripVerticalIcon from '@lucide/svelte/icons/grip-vertical';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+  import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
+  import XIcon from '@lucide/svelte/icons/x';
+  import { getKeyboardReorderTarget, reorderItems } from './collectionReorder';
 
   type SongDownloadState = 'idle' | 'creating' | 'queued' | 'running';
-
-  interface ResolvedSong {
-    entry: SongEntry;
-    albumCid: string;
-    albumName: string;
-    coverUrl: string | null;
-  }
 
   interface Props {
     collection: Collection | null;
@@ -30,8 +30,11 @@
     currentSongCid: string | null;
     isPlaybackActive: boolean;
     isPlaybackPaused: boolean;
+    resolvedSongs: ResolvedSong[];
+    isResolvingSongs: boolean;
+    playbackQueue: PlaybackQueueEntry[];
     onEdit: () => void;
-    onDelete: (id: string) => void;
+    onDelete: (id: string) => void | Promise<void>;
     onExport: (id: string) => void;
     onRemoveSongs: (collectionId: string, songIds: string[]) => void;
     onReorderSongs: (collectionId: string, songIds: string[]) => void;
@@ -60,6 +63,8 @@
   );
 
   let dragSourceIndex = $state<number | null>(null);
+  let reorderAnnouncement = $state('');
+  let deleteDialogOpen = $state(false);
 
   const isEditable = $derived.by(() => !props.collection?.isOfficial);
 
@@ -69,7 +74,10 @@
     return sections.flatMap((s) => s.songIds);
   });
 
-  const songCountLabel = $derived.by(() => `${allSongIds.length} 首歌曲`);
+  const songCountLabel = $derived.by(() => {
+    void localeState.current;
+    return m.collection_song_count({ count: allSongIds.length });
+  });
 
   const sectionStartMap = $derived.by((): SvelteMap<string, string> => {
     const sections = props.collection?.sections;
@@ -82,92 +90,6 @@
     }
     return map;
   });
-
-  let resolvedSongs = $state<ResolvedSong[]>([]);
-  let isResolvingSongs = $state(false);
-  let lastResolvedKey = $state<string | null>(null);
-
-  const playbackQueue = $derived.by((): PlaybackQueueEntry[] =>
-    resolvedSongs.map((rs) => ({
-      cid: rs.entry.cid,
-      name: rs.entry.name,
-      artists: rs.entry.artists,
-      coverUrl: rs.coverUrl,
-    }))
-  );
-
-  $effect(() => {
-    const collection = props.collection;
-    if (!collection) {
-      resolvedSongs = [];
-      lastResolvedKey = null;
-      return;
-    }
-    const ids = collection.sections.flatMap((s) => s.songIds);
-    const key = `${collection.id}:${ids.join(',')}`;
-    if (key === lastResolvedKey) return;
-    void resolveSongs(ids, key);
-  });
-
-  async function resolveSongs(songIds: string[], key: string): Promise<void> {
-    lastResolvedKey = key;
-    isResolvingSongs = true;
-    resolvedSongs = [];
-
-    try {
-      const details = await Promise.all(
-        songIds.map((id) =>
-          getSongDetail(id).catch((): SongDetail | null => null)
-        )
-      );
-
-      const albumCidList: string[] = [];
-      for (const d of details) {
-        if (d && !albumCidList.includes(d.albumCid)) {
-          albumCidList.push(d.albumCid);
-        }
-      }
-
-      const albumMap: Partial<
-        Record<string, { name: string; coverUrl: string | null }>
-      > = {};
-      const albumResults = await Promise.all(
-        albumCidList.map((cid) => getAlbumDetail(cid).catch(() => null))
-      );
-      for (const album of albumResults) {
-        if (album) {
-          albumMap[album.cid] = {
-            name: album.name,
-            coverUrl: album.coverUrl,
-          };
-        }
-      }
-
-      const resolved: ResolvedSong[] = [];
-      for (const detail of details) {
-        if (!detail) continue;
-        const albumInfo = albumMap[detail.albumCid];
-        resolved.push({
-          entry: {
-            cid: detail.cid,
-            name: detail.name,
-            artists: detail.artists,
-            download: detail.download,
-            tags: detail.tags,
-          },
-          albumCid: detail.albumCid,
-          albumName: albumInfo?.name ?? '',
-          coverUrl: albumInfo?.coverUrl ?? null,
-        });
-      }
-
-      if (lastResolvedKey === key) {
-        resolvedSongs = resolved;
-      }
-    } finally {
-      isResolvingSongs = false;
-    }
-  }
 
   let loadingEl = $state<HTMLElement | undefined>();
   let cardEl = $state<HTMLElement | undefined>();
@@ -241,12 +163,45 @@
       return;
     }
 
-    const newOrder = [...allSongIds];
-    const [moved] = newOrder.splice(dragSourceIndex, 1);
-    newOrder.splice(targetIndex, 0, moved);
-
+    moveSong(dragSourceIndex, targetIndex);
     dragSourceIndex = null;
+  }
+
+  function moveSong(sourceIndex: number, targetIndex: number) {
+    if (
+      !props.collection ||
+      sourceIndex === targetIndex ||
+      sourceIndex < 0 ||
+      sourceIndex >= allSongIds.length ||
+      targetIndex < 0 ||
+      targetIndex >= allSongIds.length
+    )
+      return;
+
+    const newOrder = reorderItems(allSongIds, sourceIndex, targetIndex);
+    const songId = allSongIds[sourceIndex];
+    const songName =
+      props.resolvedSongs.find((song) => song.entry.cid === songId)?.entry
+        .name ?? songId;
+
     props.onReorderSongs(props.collection.id, newOrder);
+    reorderAnnouncement = m.collection_song_moved_position({
+      name: songName,
+      position: targetIndex + 1,
+      count: allSongIds.length,
+    });
+  }
+
+  function handleReorderKeydown(event: KeyboardEvent, index: number) {
+    const targetIndex = getKeyboardReorderTarget(
+      event.key,
+      index,
+      allSongIds.length
+    );
+    if (targetIndex === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    moveSong(index, targetIndex);
   }
 </script>
 
@@ -257,11 +212,11 @@
 >
   {#if props.isLoading}
     <div class="collection-detail-loading" bind:this={loadingEl}>
-      <span>加载中…</span>
+      <span>{m.collection_detail_loading()}</span>
     </div>
   {:else if !props.collection}
     <div class="collection-detail-loading" bind:this={loadingEl}>
-      <span>请从侧边栏选择一个合集</span>
+      <span>{m.collection_detail_select_hint()}</span>
     </div>
   {:else}
     {@const collection = props.collection}
@@ -273,9 +228,11 @@
       <div class="collection-hero">
         <div class="collection-hero-info" bind:this={heroInfoEl}>
           {#if collection.isOfficial}
-            <span class="collection-official-tag">★ 官方合集</span>
+            <span class="collection-official-tag"
+              >{m.collection_official_badge()}</span
+            >
           {/if}
-          <h1 class="collection-hero-title">{collection.name}</h1>
+          <h2 class="collection-hero-title">{collection.name}</h2>
           {#if collection.description}
             <p class="collection-hero-description">
               {collection.description}
@@ -288,28 +245,20 @@
               class="btn btn-meta"
               onclick={() => props.onExport(collection.id)}
             >
-              导出
+              {m.collection_action_export()}
             </button>
           </div>
           {#if isEditable}
             <div class="controls collection-hero-actions">
               <button type="button" class="btn" onclick={props.onEdit}>
-                编辑
+                {m.collection_action_edit()}
               </button>
               <button
                 type="button"
                 class="btn btn-danger"
-                onclick={() => {
-                  if (
-                    confirm(
-                      `确定要删除合集「${collection.name}」吗？此操作不可撤销。`
-                    )
-                  ) {
-                    props.onDelete(collection.id);
-                  }
-                }}
+                onclick={() => (deleteDialogOpen = true)}
               >
-                删除
+                {m.collection_action_delete()}
               </button>
             </div>
           {/if}
@@ -318,11 +267,13 @@
 
       <div class="collection-divider"></div>
 
-      <div class="song-list" bind:this={songListEl}>
-        {#if isResolvingSongs && resolvedSongs.length === 0}
-          <div class="song-list-loading">加载歌曲信息…</div>
-        {:else if resolvedSongs.length > 0}
-          {#each resolvedSongs as rs, index (rs.entry.cid)}
+      <div class="song-list" bind:this={songListEl} role="list">
+        <span class="sr-only" aria-live="polite">{reorderAnnouncement}</span>
+        {#if props.isResolvingSongs && props.resolvedSongs.length === 0}
+          <div class="song-list-loading">{m.collection_songs_loading()}</div>
+        {:else if props.resolvedSongs.length > 0}
+          {#each props.resolvedSongs as rs, index (rs.entry.cid)}
+            {@const orderIndex = allSongIds.indexOf(rs.entry.cid)}
             {#if sectionStartMap.get(rs.entry.cid)}
               <div
                 class="section-header"
@@ -336,25 +287,61 @@
             <div
               class="collection-song-wrapper"
               class:is-drag-over={dragSourceIndex !== null &&
-                dragSourceIndex !== index}
-              draggable={isEditable ? 'true' : undefined}
+                dragSourceIndex !== orderIndex}
               role="listitem"
-              ondragstart={(e) => {
-                if (isEditable) handleDragStart(e, index);
-              }}
               ondragover={(e) => handleDragOver(e)}
-              ondrop={(e) => handleDrop(e, index)}
+              ondrop={(e) => handleDrop(e, orderIndex)}
               ondragend={() => {
                 dragSourceIndex = null;
               }}
             >
               {#if isEditable}
-                <button
-                  type="button"
-                  class="drag-handle"
-                  aria-hidden="true"
-                  tabindex={-1}>⠿</button
-                >
+                <div class="reorder-controls">
+                  <button
+                    type="button"
+                    class="drag-handle"
+                    draggable="true"
+                    aria-label={m.collection_song_reorder_handle_aria({
+                      name: rs.entry.name,
+                    })}
+                    ondragstart={(event) => handleDragStart(event, orderIndex)}
+                    ondragend={() => {
+                      dragSourceIndex = null;
+                    }}
+                    onkeydown={(event) =>
+                      handleReorderKeydown(event, orderIndex)}
+                  >
+                    <GripVerticalIcon />
+                  </button>
+                  <button
+                    type="button"
+                    class="move-song-btn"
+                    disabled={orderIndex === 0}
+                    aria-label={m.collection_song_move_up_aria({
+                      name: rs.entry.name,
+                    })}
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      moveSong(orderIndex, orderIndex - 1);
+                    }}
+                  >
+                    <ArrowUpIcon />
+                  </button>
+                  <button
+                    type="button"
+                    class="move-song-btn"
+                    disabled={orderIndex === allSongIds.length - 1}
+                    aria-label={m.collection_song_move_down_aria({
+                      name: rs.entry.name,
+                    })}
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      moveSong(orderIndex, orderIndex + 1);
+                    }}
+                  >
+                    <ArrowDownIcon />
+                  </button>
+                </div>
               {/if}
               <div class="collection-song-row-content">
                 <SongRow
@@ -374,7 +361,8 @@
                   reducedMotion={props.reducedMotion}
                   collections={props.collections}
                   onAddToCollection={props.onAddToCollection}
-                  onclick={() => props.onPlaySong(rs.entry, playbackQueue)}
+                  onclick={() =>
+                    props.onPlaySong(rs.entry, props.playbackQueue)}
                   onTogglePlay={() => props.onTogglePlay()}
                   onDownload={() => props.onDownloadSong(rs.entry.cid)}
                 />
@@ -383,27 +371,49 @@
                 <button
                   type="button"
                   class="remove-btn"
-                  title="移除"
-                  aria-label="从合集中移除"
+                  title={m.collection_song_remove_title()}
+                  aria-label={m.collection_song_remove_aria()}
                   onclick={(e) => {
                     e.stopPropagation();
                     props.onRemoveSongs(collection.id, [rs.entry.cid]);
                   }}
                 >
-                  ✕
+                  <XIcon />
                 </button>
               {/if}
             </div>
           {/each}
         {:else if allSongIds.length === 0}
           <div class="empty-song-list">
-            暂无歌曲，从专辑详情页将歌曲添加到此合集
+            {m.collection_songs_empty()}
           </div>
         {/if}
       </div>
     </div>
   {/if}
 </OverlayScrollbarsComponent>
+
+{#if props.collection}
+  <AlertDialog.Root bind:open={deleteDialogOpen}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>{m.collection_action_delete()}</AlertDialog.Title>
+        <AlertDialog.Description>
+          {m.collection_delete_confirm({ name: props.collection.name })}
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel>{m.collection_form_cancel()}</AlertDialog.Cancel>
+        <AlertDialog.Action
+          variant="destructive"
+          onclick={() => void props.onDelete(props.collection!.id)}
+        >
+          {m.collection_action_delete()}
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+{/if}
 
 <style>
   :global(.collection-scroll-container) {
@@ -453,7 +463,7 @@
     color: var(--accent-readable-foreground);
     background: var(--accent);
     padding: 1px 8px 0;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     letter-spacing: 0.04em;
     width: fit-content;
   }
@@ -501,7 +511,7 @@
     font-size: 13px;
     font-weight: 500;
     padding: 6px 14px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     cursor: pointer;
   }
 
@@ -551,55 +561,108 @@
     border-radius: 14px;
   }
 
-  .collection-song-wrapper[draggable='true'] {
-    cursor: grab;
-  }
-
-  .collection-song-wrapper[draggable='true']:active {
-    cursor: grabbing;
-  }
-
   .collection-song-row-content {
     flex: 1;
     min-width: 0;
   }
 
-  .drag-handle {
+  .reorder-controls {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .drag-handle,
+  .move-song-btn {
     appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
     border: none;
     background: none;
-    font-size: 14px;
     color: var(--text-tertiary);
-    cursor: grab;
     user-select: none;
-    flex-shrink: 0;
-    padding: 4px;
+    padding: 0;
+    border-radius: var(--shape-sm);
+  }
+
+  .drag-handle {
+    cursor: grab;
   }
 
   .drag-handle:active {
     cursor: grabbing;
   }
 
+  .drag-handle:hover,
+  .drag-handle:focus-visible,
+  .move-song-btn:hover:not(:disabled),
+  .move-song-btn:focus-visible {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  }
+
+  .move-song-btn {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .move-song-btn:disabled {
+    opacity: 0.3;
+  }
+
+  .collection-song-wrapper:hover .move-song-btn,
+  .collection-song-wrapper:focus-within .move-song-btn {
+    width: 40px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .remove-btn {
     appearance: none;
+    display: inline-flex;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
     border: none;
     background: none;
     color: var(--text-tertiary);
     cursor: pointer;
-    padding: 4px 6px;
-    border-radius: 6px;
+    padding: 0;
+    border-radius: var(--shape-sm);
     font-size: 12px;
     opacity: 0;
+    pointer-events: none;
     flex-shrink: 0;
   }
 
-  .collection-song-wrapper:hover .remove-btn {
+  .collection-song-wrapper:hover .remove-btn,
+  .collection-song-wrapper:focus-within .remove-btn {
     opacity: 1;
+    pointer-events: auto;
   }
 
   .remove-btn:hover {
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.08);
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .move-song-btn {
+      width: 40px;
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .remove-btn {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 
   .section-header {

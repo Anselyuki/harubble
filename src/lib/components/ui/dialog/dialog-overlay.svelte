@@ -58,8 +58,9 @@
     forceMount
     data-slot="dialog-overlay"
     class={cn(
-      'bg-black/20 supports-[backdrop-filter]:backdrop-blur-sm fixed inset-0 isolate z-50',
-      className
+      'bg-black/20 supports-[backdrop-filter]:backdrop-blur-sm fixed inset-0 isolate z-[var(--z-dialog-overlay)]',
+      className,
+      !open && '!pointer-events-none'
     )}
     {...restProps}
   />

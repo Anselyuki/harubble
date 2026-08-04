@@ -6,13 +6,66 @@
   import AlbumOverview from '$lib/components/app/album/AlbumOverview.svelte';
   import SearchView from '$lib/components/app/search/SearchView.svelte';
   import ViewTransition from '$lib/components/ViewTransition.svelte';
+  import { createResolvedSongsStore } from '$lib/features/collection/resolvedSongs.svelte';
+  import { getSongDetail, getAlbumDetail } from '$lib/api';
   import type { AppRuntime } from '$lib/features/shell/appRuntime.svelte';
+  import { tick } from 'svelte';
+  import * as m from '$lib/paraglide/messages.js';
+  import { localeState } from '$lib/i18n';
 
   interface Props {
     runtime: AppRuntime;
   }
 
   let { runtime }: Props = $props();
+
+  const resolvedSongsStore = createResolvedSongsStore({
+    getSongDetail,
+    getAlbumDetail,
+  });
+
+  $effect(() => {
+    resolvedSongsStore.resolve(runtime.collectionController.selectedCollection);
+  });
+
+  const viewTitle = $derived.by(() => {
+    void localeState.current;
+    switch (runtime.currentView) {
+      case 'home':
+        return m.shell_nav_home();
+      case 'search':
+        return m.shell_nav_search();
+      case 'overview':
+        return m.album_overview_all_title({ count: runtime.albums.length });
+      case 'library':
+        return runtime.selectedAlbum?.name ?? m.shell_nav_library();
+      case 'collection':
+        return (
+          runtime.collectionController.selectedCollection?.name ??
+          m.shell_nav_collections()
+        );
+      case 'tagEditor':
+        return m.shell_nav_tags();
+    }
+  });
+
+  let previousView: string | null = null;
+  $effect(() => {
+    const currentView = runtime.currentView;
+    if (previousView === null) {
+      previousView = currentView;
+      return;
+    }
+    if (currentView === previousView) return;
+    previousView = currentView;
+    void tick().then(() => {
+      const target =
+        currentView === 'search'
+          ? document.querySelector<HTMLElement>('[data-testid="search-input"]')
+          : document.querySelector<HTMLElement>('[data-view-heading]');
+      target?.focus({ preventScroll: true });
+    });
+  });
 </script>
 
 <ViewTransition
@@ -22,6 +75,7 @@
   onTransitionStart={runtime.handleTransitionStart}
   onTransitionEnd={runtime.handleTransitionEnd}
 >
+  <h1 class="sr-only" tabindex="-1" data-view-heading>{viewTitle}</h1>
   {#if runtime.currentView === 'home'}
     <HomeView {runtime} />
   {:else if runtime.currentView === 'search'}
@@ -29,6 +83,8 @@
       runtime={{
         searchController: runtime.searchController,
         handleSelectAlbum: runtime.handleSelectAlbum,
+        handleSelectSearchResult: runtime.handleSelectSearchResult,
+        albums: runtime.albums,
         prefersReducedMotion: runtime.prefersReducedMotion,
         loadingAlbumCid: runtime.loadingAlbumCid,
       }}
@@ -43,6 +99,9 @@
       currentSongCid={runtime.currentSong?.cid ?? null}
       isPlaybackActive={runtime.isPlaying || runtime.isPaused}
       isPlaybackPaused={runtime.isPaused}
+      resolvedSongs={resolvedSongsStore.resolvedSongs}
+      isResolvingSongs={resolvedSongsStore.isResolvingSongs}
+      playbackQueue={resolvedSongsStore.playbackQueue}
       onEdit={runtime.collectionController.openEditDialog}
       onDelete={runtime.collectionController.handleDelete}
       onExport={runtime.collectionController.handleExport}
@@ -66,11 +125,7 @@
       selectedAlbumCid={runtime.selectedAlbumCid}
       loadingAlbumCid={runtime.loadingAlbumCid}
       reducedMotion={runtime.prefersReducedMotion}
-      searchQuery={runtime.librarySearchQuery}
-      searchLoading={runtime.librarySearchLoading}
-      searchResponse={runtime.librarySearchResponse}
       onSelectAlbum={runtime.handleSelectAlbum}
-      onSelectSearchResult={runtime.handleSelectSearchResult}
     />
   {:else if runtime.currentView === 'library'}
     <LibraryView {runtime} />

@@ -118,6 +118,9 @@
         <section
           class="player-flyout"
           data-panel="playlist"
+          aria-hidden={!playlistOpen}
+          inert={!playlistOpen}
+          style:pointer-events={playlistOpen ? 'auto' : 'none'}
           bind:this={flyoutEl}
         >
           <div class="player-flyout-header">

@@ -9,8 +9,9 @@ import type {
   TagEditorMergeResult,
   TagEditorRegistry,
 } from '$lib/types';
-import { open, save } from '@tauri-apps/plugin-dialog';
 import { tagEditorStore } from './store.svelte';
+import { formatTagEditorError } from '$lib/features/shell/domainErrors';
+import * as m from '$lib/paraglide/messages.js';
 
 interface TagEditorControllerDeps {
   getTagEditorMerged: () => Promise<TagEditorRegistry>;
@@ -43,6 +44,8 @@ interface TagEditorControllerDeps {
   ) => Promise<void>;
   exportTagEditorRegistry: (path: string) => Promise<void>;
   importTagEditorRegistry: (path: string) => Promise<TagEditorMergeResult>;
+  pickSavePath: (defaultName: string) => Promise<string | null>;
+  pickOpenPath: () => Promise<string | null>;
   getAlbumDetail: (albumCid: string) => Promise<AlbumDetail>;
   getAlbums: () => Album[];
   notifyError: (message: string) => void;
@@ -65,7 +68,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       tagEditorStore.localOverlay = overlayResult;
     } catch (e: unknown) {
       deps.notifyError(
-        `加载 Tag 编辑器数据失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_load({
+          error: formatTagEditorError(e),
+        })
       );
     } finally {
       if (seq === loadSeq) {
@@ -96,7 +101,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       await loadData();
     } catch (e: unknown) {
       deps.notifyError(
-        `设置 Tag 失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_set_tag({
+          error: formatTagEditorError(e),
+        })
       );
     }
   }
@@ -114,7 +121,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       await loadData();
     } catch (e: unknown) {
       deps.notifyError(
-        `删除 Tag 失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_delete_tag({
+          error: formatTagEditorError(e),
+        })
       );
     }
   }
@@ -125,7 +134,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       await loadData();
     } catch (e: unknown) {
       deps.notifyError(
-        `新增维度失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_add_dimension({
+          error: formatTagEditorError(e),
+        })
       );
     }
   }
@@ -136,7 +147,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       await loadData();
     } catch (e: unknown) {
       deps.notifyError(
-        `删除维度失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_delete_dimension({
+          error: formatTagEditorError(e),
+        })
       );
     }
   }
@@ -161,7 +174,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       await loadData();
     } catch (e: unknown) {
       deps.notifyError(
-        `解决冲突失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_resolve_conflict({
+          error: formatTagEditorError(e),
+        })
       );
     }
   }
@@ -178,7 +193,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       tagEditorStore.editingAlbumSongs = detail.songs;
     } catch (e: unknown) {
       deps.notifyError(
-        `加载专辑歌曲失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_load_songs({
+          error: formatTagEditorError(e),
+        })
       );
       tagEditorStore.editingAlbumSongs = [];
     } finally {
@@ -206,7 +223,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
         tagEditorStore.loadingSongs = false;
       }
       deps.notifyError(
-        `加载专辑歌曲失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_load_songs({
+          error: formatTagEditorError(e),
+        })
       );
       return false;
     }
@@ -255,7 +274,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
         tagEditorStore.reset();
       }
       deps.notifyError(
-        `恢复 Tag 编辑器状态失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_restore({
+          error: formatTagEditorError(e),
+        })
       );
       return false;
     }
@@ -280,25 +301,22 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
   }
 
   async function exportRegistry() {
-    const path = await save({
-      defaultPath: 'tag_registry.json',
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
+    const path = await deps.pickSavePath('tag_registry.json');
     if (!path) return;
 
     try {
       await deps.exportTagEditorRegistry(path);
     } catch (e: unknown) {
       deps.notifyError(
-        `导出失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_export({
+          error: formatTagEditorError(e),
+        })
       );
     }
   }
 
   async function importRegistry() {
-    const path = await open({
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
+    const path = await deps.pickOpenPath();
     if (!path) return;
 
     try {
@@ -309,7 +327,9 @@ export function createTagEditorController(deps: TagEditorControllerDeps) {
       await loadData();
     } catch (e: unknown) {
       deps.notifyError(
-        `导入失败: ${e instanceof Error ? e.message : String(e)}`
+        m.tag_editor_error_import({
+          error: formatTagEditorError(e),
+        })
       );
     }
   }

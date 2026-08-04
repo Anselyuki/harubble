@@ -16,7 +16,11 @@ const typeAwareParserOptions = {
       'vite.config.ts',
       'svelte.config.js',
       'prettier.config.js',
+      'playwright.config.ts',
+      'tests/e2e/*.ts',
+      'tests/e2e/visual/*.ts',
     ],
+    maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 16,
   },
   tsconfigRootDir: import.meta.dirname,
 };
@@ -185,6 +189,45 @@ export default [
         { excludedRunes: ['$state', '$derived'] },
       ],
       'no-useless-assignment': 'error',
+    },
+  },
+  // ── IPC 边界规则 ──────────────────────────────────────────────────────────
+  // 禁止在 IPC 桥接层之外直接导入 @tauri-apps/api/core（invoke）或
+  // @tauri-apps/api/event（listen/unlisten）。
+  // 所有 invoke 调用应经由 src/lib/api.ts / collectionApi.ts / settingsApi.ts；
+  // listen 订阅应经由 appRuntimeBootstrap.svelte.ts 或 miniPlayerBridge.ts。
+  // 调用方只接触带类型的领域封装，不直接操作 Tauri IPC 原语。
+  {
+    files: ['src/**/*.{ts,svelte,svelte.ts}'],
+    ignores: [
+      // IPC 桥接层——允许直接使用 invoke / listen
+      'src/lib/api.ts',
+      'src/lib/collectionApi.ts',
+      'src/lib/settingsApi.ts',
+      // 事件订阅层——允许 listen
+      'src/lib/features/shell/appRuntimeBootstrap.svelte.ts',
+      'src/lib/features/player/miniPlayerBridge.ts',
+      // 组合根——将 listen 作为依赖注入参数传递给 subscribeToTauriEvents
+      'src/lib/features/shell/appRuntime.svelte.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@tauri-apps/api/core'],
+              message:
+                '禁止直接调用 invoke()。请使用领域 IPC 桥接层（src/lib/api.ts、collectionApi.ts、settingsApi.ts），保持 IPC 调用集中、类型化且可测试。',
+            },
+            {
+              group: ['@tauri-apps/api/event'],
+              message:
+                '禁止直接使用 listen/unlisten。裸事件订阅应集中在 appRuntimeBootstrap.svelte.ts；如需监听特定事件，请在该文件中添加处理分支，再通过回调注入到控制器。',
+            },
+          ],
+        },
+      ],
     },
   },
   prettierConfig,

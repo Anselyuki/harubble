@@ -6,24 +6,22 @@
 //!
 //! # 命令面
 //!
-//! Svelte 前端通过 `@tauri-apps/api/core::invoke` 调用下面这些命令：
+//! Svelte 前端通过 `@tauri-apps/api/core::invoke` 调用 Tauri command。完整注册表由
+//! `harubble::for_each_tauri_command!` 生成，不在二进制入口重复维护逐命令清单；实现按领域位于
+//! [`commands`] 的子模块：
 //!
-//! - 目录数据：[`commands::get_albums`]、[`commands::get_album_detail`]、
-//!   [`commands::get_song_detail`]、[`commands::get_song_lyrics`]
-//! - 播放控制：[`commands::play_song`]、[`commands::pause_playback`]、
-//!   [`commands::resume_playback`]、[`commands::seek_current_playback`]、
-//!   [`commands::play_next`]、[`commands::play_previous`]、
-//!   [`commands::get_player_state`]、
-//!   [`commands::set_playback_volume`]
-//! - 下载和工具：[`commands::get_default_output_dir`]、
-//!   [`commands::clear_audio_cache`]、[`commands::extract_image_theme`]
+//! - 目录与资源：[`commands::library`] / [`commands::album_catalog`]
+//! - 播放控制：[`commands::playback`]
+//! - 下载与缓存：[`commands::downloads`]
+//! - 偏好与通知：[`commands::preferences`]
+//! - 合集、首页、搜索与标签：[`commands::collection`] / [`commands::homepage`] /
+//!   [`commands::search`] / [`commands::tag_editor`]
 //!
 //! # 事件
 //!
-//! - [`player::events::PLAYER_STATE_CHANGED`] 会在播放状态、队列能力或音量
-//!   变化时发出完整的 [`player::PlayerState`] 快照。
-//! - [`player::events::PLAYER_PROGRESS`] 会在播放推进过程中持续发出完整的
-//!   [`player::PlayerState`] 快照。
+//! - `player-state-changed` 会在播放状态、队列能力或音量变化时发出完整的
+//!   `PlayerState` 快照。
+//! - `player-progress` 会在播放推进过程中持续发出完整的 `PlayerState` 快照。
 //!
 //! # 生成 rustdoc
 //!
@@ -44,8 +42,8 @@ use anyhow::Context;
 use harubble::{
     commands,
     desktop_lifecycle::{self, DesktopLifecycleState},
-    initialize_download_bridge, spawn_belong_warmup, spawn_inventory_scan, spawn_network_monitor,
-    spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
+    initialize_download_bridge, install_menu, spawn_belong_warmup, spawn_inventory_scan,
+    spawn_network_monitor, spawn_tag_registry_sync, AppState, LogLevel, LogPayload,
 };
 #[cfg(target_os = "macos")]
 use tauri::WebviewWindowBuilder;
@@ -217,12 +215,21 @@ fn flush_logs_on_exit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = harubble::repair_macos_url_cache() {
+        eprintln!("[cache-recovery] failed to repair macOS URL cache: {error}");
+    }
+
+    macro_rules! build_invoke_handler {
+        ( $( ($path:path, $name:literal, $domain:ident, $priority:ident, $cancel:ident) ),* $(,)? ) => {
+            tauri::generate_handler![$($path),*]
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            let _ =
-                tauri_plugin_notification::NotificationExt::notification(app).request_permission();
             let window = app
                 .get_webview_window("main")
                 .context("Failed to locate main window")?;
@@ -249,9 +256,12 @@ fn main() {
                 None,
             );
             spawn_belong_warmup(app.handle().clone(), &state);
-            spawn_tag_registry_sync(&state);
+            spawn_tag_registry_sync(app.handle().clone(), &state);
             spawn_network_monitor(&state);
             app.manage(state);
+            if let Err(error) = install_menu(app.handle()) {
+                eprintln!("[menu] failed to install app menu: {error}");
+            }
             if let Err(error) = desktop_lifecycle::install_background_entrypoint(app.handle()) {
                 if let Some(state) = app.handle().try_state::<AppState>() {
                     state.record_log(
@@ -267,76 +277,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::collection::list_collections,
-            commands::collection::get_collection,
-            commands::collection::create_collection,
-            commands::collection::update_collection,
-            commands::collection::delete_collection,
-            commands::collection::add_songs_to_collection,
-            commands::collection::remove_songs_from_collection,
-            commands::collection::reorder_collection_songs,
-            commands::collection::export_collection,
-            commands::collection::import_collection,
-            commands::library::get_albums,
-            commands::library::get_album_detail,
-            commands::library::get_song_detail,
-            commands::library::get_song_lyrics,
-            commands::library::extract_image_theme,
-            commands::library::get_image_data_url,
-            commands::library::get_default_output_dir,
-            commands::search::search_library,
-            commands::playback::play_song,
-            commands::playback::pause_playback,
-            commands::playback::resume_playback,
-            commands::playback::seek_current_playback,
-            commands::playback::play_next,
-            commands::playback::play_previous,
-            commands::playback::get_player_state,
-            commands::playback::set_playback_volume,
-            commands::window::show_main_window,
-            commands::preferences::get_preferences,
-            commands::preferences::set_preferences,
-            commands::preferences::export_preferences,
-            commands::preferences::import_preferences,
-            commands::local_inventory::get_local_inventory_snapshot,
-            commands::local_inventory::rescan_local_inventory,
-            commands::local_inventory::cancel_local_inventory_scan,
-            commands::local_inventory::get_audio_metadata,
-            commands::preferences::get_notification_permission_state,
-            commands::preferences::send_test_notification,
-            commands::logging::list_log_records,
-            commands::logging::get_log_file_status,
-            commands::downloads::clear_audio_cache,
-            commands::downloads::clear_response_cache,
-            commands::downloads::reset_http_client,
-            commands::downloads::create_download_job,
-            commands::downloads::list_download_jobs,
-            commands::downloads::get_download_job,
-            commands::downloads::cancel_download_job,
-            commands::downloads::cancel_download_task,
-            commands::downloads::retry_download_job,
-            commands::downloads::retry_download_task,
-            commands::downloads::clear_download_history,
-            commands::homepage::get_latest_albums,
-            commands::homepage::get_albums_by_series,
-            commands::homepage::get_recent_history,
-            commands::homepage::record_song_heat,
-            commands::homepage::clear_listening_history,
-            commands::homepage::get_homepage_status,
-            commands::tag_registry::get_tag_dimensions,
-            commands::tag_registry::get_albums_by_tag_dimension,
-            commands::tag_editor::get_tag_editor_merged,
-            commands::tag_editor::get_tag_editor_local_overlay,
-            commands::tag_editor::set_tag_editor_entity_tag,
-            commands::tag_editor::remove_tag_editor_entity_tag,
-            commands::tag_editor::add_tag_editor_dimension,
-            commands::tag_editor::remove_tag_editor_dimension,
-            commands::tag_editor::apply_tag_editor_remote_update,
-            commands::tag_editor::resolve_tag_editor_conflict,
-            commands::tag_editor::export_tag_editor_registry,
-            commands::tag_editor::import_tag_editor_registry,
-        ])
+        .invoke_handler(harubble::for_each_tauri_command!(build_invoke_handler))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
@@ -351,6 +292,11 @@ fn main() {
                 flush_logs_on_exit(app_handle);
             }
             RunEvent::Exit => {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    tauri::async_runtime::block_on(async {
+                        state.cancel_background_tasks().await;
+                    });
+                }
                 flush_logs_on_exit(app_handle);
             }
             _ => {}

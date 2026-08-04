@@ -19,8 +19,8 @@ pub(crate) struct AlbumMetadataCacheService {
 
 impl AlbumMetadataCacheService {
     pub(crate) fn new(db_path: &std::path::Path) -> Result<Self, String> {
-        let conn =
-            Connection::open(db_path).map_err(|e| format!("打开元数据缓存数据库失败: {e}"))?;
+        let conn = Connection::open(db_path)
+            .map_err(|e| format!("failed to open metadata cache database: {e}"))?;
         let service = Self {
             conn: Arc::new(Mutex::new(conn)),
         };

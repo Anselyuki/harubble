@@ -76,3 +76,59 @@ desktop-menu-pause = 暂停
 desktop-menu-next = 下一首
 desktop-menu-show = 显示 Harubble
 desktop-menu-quit = 退出 Harubble
+
+## 应用菜单栏
+
+appmenu-app = Harubble
+appmenu-edit = 编辑
+appmenu-window = 窗口
+appmenu-view = 视图
+appmenu-playback = 播放
+
+appmenu-app-preferences = 偏好设置…
+appmenu-app-test-notification = 发送测试通知
+
+appmenu-file = 文件
+appmenu-file-new-collection = 新建合集…
+appmenu-file-import-collection = 导入合集…
+appmenu-file-export-collection = 导出当前合集…
+appmenu-file-import-tag-registry = 导入标签库…
+appmenu-file-export-tag-registry = 导出标签库…
+appmenu-file-import-preferences = 导入偏好…
+appmenu-file-export-preferences = 导出偏好…
+appmenu-file-clear-listening-history = 清空最近播放
+appmenu-file-clear-download-history = 清空下载历史
+
+appmenu-view-home = 首页
+appmenu-view-search = 搜索
+appmenu-view-overview = 全部专辑
+appmenu-view-library = 曲库
+appmenu-view-collection = 合集
+appmenu-view-tag-editor = 标签编辑器
+appmenu-view-go-back = 后退
+appmenu-view-toggle-sidebar = 收起 / 展开侧栏
+appmenu-view-toggle-downloads = 下载任务
+appmenu-view-refresh = 刷新数据
+appmenu-view-rescan-inventory = 重新扫描本地库存
+appmenu-view-logs = 查看日志…
+appmenu-view-appearance = 外观
+appmenu-view-appearance-auto = 跟随系统
+appmenu-view-appearance-light = 浅色
+appmenu-view-appearance-dark = 深色
+
+appmenu-playback-toggle = 播放 / 暂停
+appmenu-playback-next = 下一曲
+appmenu-playback-previous = 上一曲
+appmenu-playback-seek-forward = 快进 10 秒
+appmenu-playback-seek-backward = 快退 10 秒
+appmenu-playback-volume-up = 提高音量
+appmenu-playback-volume-down = 降低音量
+appmenu-playback-toggle-mute = 静音
+appmenu-playback-toggle-shuffle = 随机播放
+appmenu-playback-repeat = 循环模式
+appmenu-playback-repeat-off = 关闭循环
+appmenu-playback-repeat-all = 列表循环
+appmenu-playback-repeat-one = 单曲循环
+appmenu-playback-toggle-lyrics = 显示歌词
+appmenu-playback-toggle-playlist = 显示播放列表
+appmenu-playback-toggle-fullscreen = 全屏播放器

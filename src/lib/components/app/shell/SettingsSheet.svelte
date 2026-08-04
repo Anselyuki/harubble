@@ -2,17 +2,24 @@
   import { untrack } from 'svelte';
   import * as Sheet from '$lib/components/ui/sheet/index.js';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import ChevronsLeftIcon from '@lucide/svelte/icons/chevrons-left';
+  import ChevronsRightIcon from '@lucide/svelte/icons/chevrons-right';
   import PreferencesSettingsSection from '$lib/components/app/shell/settings/PreferencesSettingsSection.svelte';
   import ThemeSettingsSection from '$lib/components/app/shell/settings/ThemeSettingsSection.svelte';
+  import ThemePackageLibrarySection from '$lib/components/app/shell/settings/ThemePackageLibrarySection.svelte';
   import NotificationsSettingsSection from '$lib/components/app/shell/settings/NotificationsSettingsSection.svelte';
   import CacheSettingsSection from '$lib/components/app/shell/settings/CacheSettingsSection.svelte';
   import LogsSettingsSection from '$lib/components/app/shell/settings/LogsSettingsSection.svelte';
   import {
     clearAudioCache,
     getLogFileStatus,
+    getNotificationPermissionState,
     listLogRecords,
+    requestNotificationPermission,
     selectDirectory,
     sendTestNotification,
+    type NotificationPermissionState,
   } from '$lib/settingsApi';
   import type { Locale } from '$lib/i18n/types';
   import * as m from '$lib/paraglide/messages.js';
@@ -36,6 +43,27 @@
     LogViewerRecord,
     OutputFormat,
   } from '$lib/types';
+  import type { SettingsSection } from '$lib/components/app/shell/settingsSection';
+  import {
+    getThemePackageManager,
+    type ThemePackageManager,
+  } from '$lib/features/shell/themePackageManager.svelte';
+
+  type SettingsThemePackageManager = Pick<
+    ThemePackageManager,
+    | 'activePackageId'
+    | 'previewingId'
+    | 'installedPackages'
+    | 'latestError'
+    | 'hydrate'
+    | 'setActive'
+    | 'preview'
+    | 'dismissPreview'
+    | 'importFromFile'
+    | 'importFromUrl'
+    | 'uninstall'
+  >;
+
   interface Props {
     open?: boolean;
     format?: OutputFormat;
@@ -50,6 +78,8 @@
     colorScheme?: ColorScheme;
     dynamicAlbumAccent?: boolean;
     logRefreshToken?: number;
+    initialSection?: SettingsSection | null;
+    themePackageManager?: SettingsThemePackageManager;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
     onOutputDirChange: (outputDir: string) => boolean | Promise<boolean>;
@@ -68,10 +98,57 @@
     colorScheme = $bindable<ColorScheme>('auto'),
     dynamicAlbumAccent = $bindable<boolean>(true),
     logRefreshToken = 0,
+    initialSection = null,
+    themePackageManager = getThemePackageManager(),
     notifyInfo,
     notifyError,
     onOutputDirChange,
   }: Props = $props();
+
+  let sheetBodyEl = $state<HTMLDivElement | null>(null);
+  let sectionNavEl = $state<HTMLElement | null>(null);
+  let activeSection = $state<SettingsSection>('preferences');
+  let navOverflowStart = $state(false);
+  let navOverflowEnd = $state(false);
+  let sectionScrollLock: SettingsSection | null = null;
+  let sectionScrollLockTimer: ReturnType<typeof setTimeout> | null = null;
+  let previewBackdropRetracted = $state(false);
+  const previewingThemePackage = $derived(
+    Boolean(
+      themePackageManager.previewingId &&
+      themePackageManager.previewingId !== themePackageManager.activePackageId
+    )
+  );
+  const packageColorsLocked = $derived(
+    Boolean(
+      themePackageManager.activePackageId || themePackageManager.previewingId
+    )
+  );
+
+  // 打开设置抽屉时若外部指定了 initialSection，等 Sheet 内容挂载后再滚动到锚点。
+  // Sheet 使用 GSAP 缓动进场（约 260ms），因此这里用两次 rAF 让它稳定后再滚。
+  $effect(() => {
+    if (!open || !initialSection) return;
+    const target = initialSection;
+    const body = sheetBodyEl;
+    if (!body) return;
+    let cancelled = false;
+    const scheduleId = requestAnimationFrame(() => {
+      if (cancelled) return;
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const anchor = body.querySelector<HTMLElement>(
+          `[data-settings-section="${target}"]`
+        );
+        lockActiveSection(target);
+        anchor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(scheduleId);
+    };
+  });
   let logFileKind = $state<LogFileKind>('session');
   let logRecords = $state<LogViewerRecord[]>([]);
   let logFileStatus = $state<LogFileStatus | null>(null);
@@ -79,6 +156,11 @@
   let logViewerError = $state('');
   let logRequestSeq = 0;
   let isSendingTestNotification = $state(false);
+  let isRequestingNotificationPermission = $state(false);
+  let notificationPermissionState = $state<NotificationPermissionState | null>(
+    null
+  );
+  let notificationPermissionRequestSeq = 0;
   let isClearingAudioCache = $state(false);
   let lastLoadedWhileOpen = $state(false);
   let themeColorDrafts = $state<Partial<Record<ThemeColorSlot, string>>>({});
@@ -95,6 +177,8 @@
       description: m.settings_description(),
       sectionPreferences: m.settings_section_preferences(),
       sectionTheme: m.settings_section_theme(),
+      sectionThemePackages: m.settings_section_theme_packages(),
+      sectionThemePackagesDescription: m.settings_theme_packages_description(),
       sectionNotifications: m.settings_section_notifications(),
       sectionCache: m.settings_section_cache(),
       sectionLogs: m.settings_section_logs(),
@@ -111,6 +195,17 @@
       outputDirSelect: m.settings_output_dir_select(),
       notificationTest: m.settings_notification_test(),
       notificationTestSending: m.settings_notification_test_sending(),
+      notificationPermissionLabel: m.settings_notification_permission_label(),
+      notificationPermissionGranted:
+        m.settings_notification_permission_granted(),
+      notificationPermissionDenied: m.settings_notification_permission_denied(),
+      notificationPermissionPrompt: m.settings_notification_permission_prompt(),
+      notificationPermissionLoading:
+        m.settings_notification_permission_loading(),
+      notificationPermissionRequest:
+        m.settings_notification_permission_request(),
+      notificationPermissionRequesting:
+        m.settings_notification_permission_requesting(),
       lyricsTitle: m.settings_lyrics_title(),
       lyricsDescription: m.settings_lyrics_description(),
       notifyDownloadTitle: m.settings_notify_download_title(),
@@ -136,6 +231,10 @@
       dynamicAlbumLabel: m.settings_theme_dynamic_album_label(),
       dynamicAlbumOn: m.settings_theme_dynamic_album_on(),
       dynamicAlbumOff: m.settings_theme_dynamic_album_off(),
+      retractPreviewOverlay:
+        m.settings_theme_packages_retract_preview_overlay(),
+      restorePreviewOverlay:
+        m.settings_theme_packages_restore_preview_overlay(),
     };
   });
   const formatOptions = $derived.by(() => {
@@ -168,6 +267,20 @@
   const currentLogLevelLabel = $derived(
     logLevelOptions.find((o) => o.value === logLevel)?.label ?? 'Error'
   );
+  const sectionLinks = $derived([
+    { id: 'preferences' as SettingsSection, label: labels.sectionPreferences },
+    { id: 'theme' as SettingsSection, label: labels.sectionTheme },
+    {
+      id: 'theme-packages' as SettingsSection,
+      label: labels.sectionThemePackages,
+    },
+    {
+      id: 'notifications' as SettingsSection,
+      label: labels.sectionNotifications,
+    },
+    { id: 'cache' as SettingsSection, label: labels.sectionCache },
+    { id: 'logs' as SettingsSection, label: labels.sectionLogs },
+  ]);
   const resolvedThemeColors = $derived(
     resolveThemeColors({
       presetId: themePresetId,
@@ -295,6 +408,77 @@
     syncThemeDraftsToResolvedColors(nextResolvedColors, true);
   }
 
+  function togglePreviewBackdrop() {
+    if (!previewingThemePackage) return;
+    previewBackdropRetracted = !previewBackdropRetracted;
+  }
+
+  function scrollToSection(section: SettingsSection) {
+    lockActiveSection(section);
+    sheetBodyEl
+      ?.querySelector<HTMLElement>(`[data-settings-section="${section}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    sectionNavEl
+      ?.querySelector<HTMLElement>(`[data-section-link="${section}"]`)
+      ?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'nearest',
+      });
+  }
+
+  function lockActiveSection(section: SettingsSection) {
+    activeSection = section;
+    sectionScrollLock = section;
+    if (sectionScrollLockTimer !== null) {
+      clearTimeout(sectionScrollLockTimer);
+    }
+    sectionScrollLockTimer = setTimeout(() => {
+      sectionScrollLock = null;
+      sectionScrollLockTimer = null;
+    }, 800);
+  }
+
+  function updateNavOverflow() {
+    if (!sectionNavEl) return;
+    navOverflowStart = sectionNavEl.scrollLeft > 2;
+    navOverflowEnd =
+      sectionNavEl.scrollLeft + sectionNavEl.clientWidth <
+      sectionNavEl.scrollWidth - 2;
+  }
+
+  function syncActiveSectionFromScroll() {
+    if (!sheetBodyEl) return;
+    if (sectionScrollLock) {
+      activeSection = sectionScrollLock;
+      return;
+    }
+    const sections = Array.from(
+      sheetBodyEl.querySelectorAll<HTMLElement>('[data-settings-section]')
+    );
+    if (sections.length === 0) return;
+
+    const bodyTop = sheetBodyEl.getBoundingClientRect().top;
+    const atBottom =
+      sheetBodyEl.scrollTop + sheetBodyEl.clientHeight >=
+      sheetBodyEl.scrollHeight - 2;
+    const current = atBottom
+      ? sections.at(-1)
+      : ([...sections]
+          .reverse()
+          .find(
+            (section) => section.getBoundingClientRect().top <= bodyTop + 24
+          ) ?? sections[0]);
+    const next = current?.dataset.settingsSection as
+      | SettingsSection
+      | undefined;
+    if (!next || next === activeSection) return;
+    activeSection = next;
+    sectionNavEl
+      ?.querySelector<HTMLElement>(`[data-section-link="${next}"]`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
   async function refreshLogs(kind = logFileKind) {
     const requestSeq = ++logRequestSeq;
     logViewerLoading = true;
@@ -347,7 +531,8 @@
     }
   }
   async function handleSendTestNotification() {
-    if (isSendingTestNotification) return;
+    if (isSendingTestNotification || notificationPermissionState !== 'granted')
+      return;
     isSendingTestNotification = true;
     try {
       await sendTestNotification();
@@ -362,16 +547,57 @@
       isSendingTestNotification = false;
     }
   }
+  async function handleRequestNotificationPermission() {
+    if (isRequestingNotificationPermission) return;
+    isRequestingNotificationPermission = true;
+    try {
+      notificationPermissionState = await requestNotificationPermission();
+    } catch (error) {
+      notifyError(
+        m.settings_toast_notification_failed({
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
+    } finally {
+      isRequestingNotificationPermission = false;
+    }
+  }
+  function getNotificationPermissionLabel() {
+    switch (notificationPermissionState) {
+      case 'granted':
+        return labels.notificationPermissionGranted;
+      case 'denied':
+        return labels.notificationPermissionDenied;
+      case 'prompt':
+      case 'prompt-with-rationale':
+        return labels.notificationPermissionPrompt;
+      default:
+        return labels.notificationPermissionLoading;
+    }
+  }
   $effect(() => {
     if (!open) {
       lastLoadedWhileOpen = false;
       logRequestSeq += 1;
+      notificationPermissionRequestSeq += 1;
       logViewerLoading = false;
       return;
     }
     if (lastLoadedWhileOpen) return;
     lastLoadedWhileOpen = true;
     void refreshLogs(logFileKind);
+    const requestSeq = ++notificationPermissionRequestSeq;
+    void getNotificationPermissionState()
+      .then((state) => {
+        if (requestSeq === notificationPermissionRequestSeq) {
+          notificationPermissionState = state;
+        }
+      })
+      .catch(() => {
+        if (requestSeq === notificationPermissionRequestSeq) {
+          notificationPermissionState = null;
+        }
+      });
   });
   $effect(() => {
     const refreshToken = logRefreshToken;
@@ -383,112 +609,304 @@
     void themeCustomColors;
     syncThemeDraftsToResolvedColors(resolvedThemeColors);
   });
+  $effect(() => {
+    if ((!open || !previewingThemePackage) && previewBackdropRetracted) {
+      previewBackdropRetracted = false;
+    }
+  });
+  $effect(() => {
+    if (!open || !sectionNavEl) return;
+    updateNavOverflow();
+    const observer = new ResizeObserver(updateNavOverflow);
+    observer.observe(sectionNavEl);
+    return () => observer.disconnect();
+  });
+  $effect(() => {
+    return () => {
+      if (sectionScrollLockTimer !== null) {
+        clearTimeout(sectionScrollLockTimer);
+      }
+    };
+  });
 </script>
 
 <Sheet.Root bind:open>
   <Sheet.Content
-    class="app-side-sheet settings-sheet gap-0 overflow-hidden border-[var(--sheet-border)] bg-[var(--surface-sheet)] p-0 text-[var(--text-primary)] shadow-[0_24px_64px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+    class="app-side-sheet settings-sheet gap-0 border-[var(--sheet-border)] bg-[var(--surface-sheet)] p-0 text-[var(--text-primary)] shadow-[0_24px_64px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+    data-testid="settings-sheet"
+    data-previewing={previewingThemePackage}
+    data-preview-backdrop-retracted={previewBackdropRetracted}
+    overlayProps={{
+      class: previewBackdropRetracted
+        ? 'settings-preview-overlay settings-preview-overlay--retracted'
+        : 'settings-preview-overlay',
+      'data-testid': 'settings-preview-backdrop',
+      'data-previewing': previewingThemePackage,
+      'data-retracted': previewBackdropRetracted,
+    }}
   >
     <Sheet.Header class="sheet-header settings-sheet-header">
       <Sheet.Title>{labels.title}</Sheet.Title>
       <Sheet.Description>{labels.description}</Sheet.Description>
     </Sheet.Header>
     <Tooltip.Provider>
-      <div class="sheet-body">
-        <PreferencesSettingsSection
-          bind:locale
-          bind:format
-          bind:logLevel
-          {outputDir}
-          {localeOptions}
-          {formatOptions}
-          {logLevelOptions}
-          {currentLocaleLabel}
-          {currentFormatLabel}
-          {currentLogLevelLabel}
-          sectionTitle={labels.sectionPreferences}
-          languageLabel={labels.languageLabel}
-          outputFormatLabel={labels.outputFormat}
-          logLevelLabel={labels.logLevel}
-          outputDirLabel={labels.outputDir}
-          outputDirSelectLabel={labels.outputDirSelect}
-          onSelectDirectory={() => void handleSelectDirectory()}
-        />
-        <ThemeSettingsSection
-          bind:colorScheme
-          bind:dynamicAlbumAccent
-          {themePresetId}
-          {resolvedThemeColors}
-          {themePresetOptions}
-          {currentThemePresetLabel}
-          {getThemeDraft}
-          {getSlotLabel}
-          {isValidThemeHex}
-          sectionTitle={labels.sectionTheme}
-          themePresetLabel={labels.themePreset}
-          themeResetLabel={labels.themeReset}
-          themeResetTitle={labels.themeResetTitle}
-          themeHexInvalidLabel={labels.themeHexInvalid}
-          appearanceLabel={labels.appearanceLabel}
-          appearanceAutoLabel={labels.appearanceAuto}
-          appearanceLightLabel={labels.appearanceLight}
-          appearanceDarkLabel={labels.appearanceDark}
-          appearanceSegmentAria={labels.appearanceSegmentAria}
-          dynamicAlbumLabel={labels.dynamicAlbumLabel}
-          dynamicAlbumOnLabel={labels.dynamicAlbumOn}
-          dynamicAlbumOffLabel={labels.dynamicAlbumOff}
-          onThemePresetChange={handleThemePresetChange}
-          onThemeTextInput={handleThemeTextInput}
-          onThemeColorInput={handleThemeColorInput}
-          onResetThemeCustomColors={resetThemeCustomColors}
-        />
-        <NotificationsSettingsSection
-          bind:downloadLyrics
-          bind:notifyOnDownloadComplete
-          bind:notifyOnPlaybackChange
-          {isSendingTestNotification}
-          sectionTitle={labels.sectionNotifications}
-          notificationTestLabel={labels.notificationTest}
-          notificationTestSendingLabel={labels.notificationTestSending}
-          lyricsTitle={labels.lyricsTitle}
-          lyricsDescription={labels.lyricsDescription}
-          notifyDownloadTitle={labels.notifyDownloadTitle}
-          notifyDownloadDescription={labels.notifyDownloadDescription}
-          notifyPlaybackTitle={labels.notifyPlaybackTitle}
-          notifyPlaybackDescription={labels.notifyPlaybackDescription}
-          onSendTestNotification={() => void handleSendTestNotification()}
-        />
-        <CacheSettingsSection
-          {isClearingAudioCache}
-          sectionTitle={labels.sectionCache}
-          cacheDescription={labels.cacheDescription}
-          cacheClearLabel={labels.cacheClear}
-          cacheClearingLabel={labels.cacheClearing}
-          onClearAudioCache={() => void handleClearAudioCache()}
-        />
-        <LogsSettingsSection
-          {logFileKind}
-          {logRecords}
-          {logFileStatus}
-          {logViewerLoading}
-          {logViewerError}
-          sectionTitle={labels.sectionLogs}
-          logsDescription={labels.logsDescription}
-          logSegmentAria={labels.logSegmentAria}
-          logSessionLabel={labels.logSession}
-          logPersistentLabel={labels.logPersistent}
-          logStatusAvailableLabel={labels.logStatusAvailable}
-          logStatusNoneLabel={labels.logStatusNone}
-          logLoadingLabel={labels.logLoading}
-          logEmptyLabel={labels.logEmpty}
-          onRefreshLogs={(kind) => void refreshLogs(kind)}
-        />
+      {#if previewingThemePackage}
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant="outline"
+                size="icon-lg"
+                class="preview-backdrop-toggle"
+                aria-label={previewBackdropRetracted
+                  ? labels.restorePreviewOverlay
+                  : labels.retractPreviewOverlay}
+                aria-pressed={previewBackdropRetracted}
+                data-testid="theme-preview-backdrop-toggle"
+                onclick={togglePreviewBackdrop}
+              >
+                {#if previewBackdropRetracted}
+                  <ChevronsRightIcon aria-hidden="true" />
+                {:else}
+                  <ChevronsLeftIcon aria-hidden="true" />
+                {/if}
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content
+            class="preview-backdrop-tooltip"
+            side="left"
+            sideOffset={8}
+          >
+            {previewBackdropRetracted
+              ? labels.restorePreviewOverlay
+              : labels.retractPreviewOverlay}
+          </Tooltip.Content>
+        </Tooltip.Root>
+      {/if}
+      <div
+        class="settings-section-nav-shell"
+        class:has-overflow-start={navOverflowStart}
+        class:has-overflow-end={navOverflowEnd}
+      >
+        <nav
+          class="settings-section-nav"
+          aria-label={labels.title}
+          bind:this={sectionNavEl}
+          onscroll={updateNavOverflow}
+        >
+          {#each sectionLinks as section (section.id)}
+            <button
+              type="button"
+              class:active={activeSection === section.id}
+              aria-current={activeSection === section.id
+                ? 'location'
+                : undefined}
+              data-section-link={section.id}
+              onclick={() => scrollToSection(section.id)}
+            >
+              {section.label}
+            </button>
+          {/each}
+        </nav>
+      </div>
+      <div
+        class="sheet-body"
+        bind:this={sheetBodyEl}
+        onscroll={syncActiveSectionFromScroll}
+      >
+        <div data-settings-section="preferences">
+          <PreferencesSettingsSection
+            bind:locale
+            bind:format
+            bind:logLevel
+            {outputDir}
+            {localeOptions}
+            {formatOptions}
+            {logLevelOptions}
+            {currentLocaleLabel}
+            {currentFormatLabel}
+            {currentLogLevelLabel}
+            sectionTitle={labels.sectionPreferences}
+            languageLabel={labels.languageLabel}
+            outputFormatLabel={labels.outputFormat}
+            logLevelLabel={labels.logLevel}
+            outputDirLabel={labels.outputDir}
+            outputDirSelectLabel={labels.outputDirSelect}
+            onSelectDirectory={() => void handleSelectDirectory()}
+          />
+        </div>
+        <div data-settings-section="theme">
+          <ThemeSettingsSection
+            bind:colorScheme
+            bind:dynamicAlbumAccent
+            {packageColorsLocked}
+            {themePresetId}
+            {resolvedThemeColors}
+            {themePresetOptions}
+            {currentThemePresetLabel}
+            {getThemeDraft}
+            {getSlotLabel}
+            {isValidThemeHex}
+            sectionTitle={labels.sectionTheme}
+            themePresetLabel={labels.themePreset}
+            themeResetLabel={labels.themeReset}
+            themeResetTitle={labels.themeResetTitle}
+            themeHexInvalidLabel={labels.themeHexInvalid}
+            appearanceLabel={labels.appearanceLabel}
+            appearanceAutoLabel={labels.appearanceAuto}
+            appearanceLightLabel={labels.appearanceLight}
+            appearanceDarkLabel={labels.appearanceDark}
+            appearanceSegmentAria={labels.appearanceSegmentAria}
+            dynamicAlbumLabel={labels.dynamicAlbumLabel}
+            dynamicAlbumOnLabel={labels.dynamicAlbumOn}
+            dynamicAlbumOffLabel={labels.dynamicAlbumOff}
+            onThemePresetChange={handleThemePresetChange}
+            onThemeTextInput={handleThemeTextInput}
+            onThemeColorInput={handleThemeColorInput}
+            onResetThemeCustomColors={resetThemeCustomColors}
+          />
+        </div>
+        <div data-settings-section="theme-packages">
+          <ThemePackageLibrarySection
+            manager={themePackageManager}
+            sectionTitle={labels.sectionThemePackages}
+            sectionDescription={labels.sectionThemePackagesDescription}
+          />
+        </div>
+        <div data-settings-section="notifications">
+          <NotificationsSettingsSection
+            bind:downloadLyrics
+            bind:notifyOnDownloadComplete
+            bind:notifyOnPlaybackChange
+            {isSendingTestNotification}
+            {isRequestingNotificationPermission}
+            {notificationPermissionState}
+            sectionTitle={labels.sectionNotifications}
+            notificationTestLabel={labels.notificationTest}
+            notificationTestSendingLabel={labels.notificationTestSending}
+            notificationPermissionLabel={labels.notificationPermissionLabel}
+            notificationPermissionStatus={getNotificationPermissionLabel()}
+            notificationPermissionRequestLabel={labels.notificationPermissionRequest}
+            notificationPermissionRequestingLabel={labels.notificationPermissionRequesting}
+            lyricsTitle={labels.lyricsTitle}
+            lyricsDescription={labels.lyricsDescription}
+            notifyDownloadTitle={labels.notifyDownloadTitle}
+            notifyDownloadDescription={labels.notifyDownloadDescription}
+            notifyPlaybackTitle={labels.notifyPlaybackTitle}
+            notifyPlaybackDescription={labels.notifyPlaybackDescription}
+            onSendTestNotification={() => void handleSendTestNotification()}
+            onRequestNotificationPermission={() =>
+              void handleRequestNotificationPermission()}
+          />
+        </div>
+        <div data-settings-section="cache">
+          <CacheSettingsSection
+            {isClearingAudioCache}
+            sectionTitle={labels.sectionCache}
+            cacheDescription={labels.cacheDescription}
+            cacheClearLabel={labels.cacheClear}
+            cacheClearingLabel={labels.cacheClearing}
+            onClearAudioCache={() => void handleClearAudioCache()}
+          />
+        </div>
+        <div data-settings-section="logs">
+          <LogsSettingsSection
+            {logFileKind}
+            {logRecords}
+            {logFileStatus}
+            {logViewerLoading}
+            {logViewerError}
+            sectionTitle={labels.sectionLogs}
+            logsDescription={labels.logsDescription}
+            logSegmentAria={labels.logSegmentAria}
+            logSessionLabel={labels.logSession}
+            logPersistentLabel={labels.logPersistent}
+            logStatusAvailableLabel={labels.logStatusAvailable}
+            logStatusNoneLabel={labels.logStatusNone}
+            logLoadingLabel={labels.logLoading}
+            logEmptyLabel={labels.logEmpty}
+            onRefreshLogs={(kind) => void refreshLogs(kind)}
+          />
+        </div>
       </div>
     </Tooltip.Provider>
   </Sheet.Content>
 </Sheet.Root>
 
 <style>
+  .settings-section-nav {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 8px 16px;
+    border-block: 1px solid var(--sheet-border, var(--border));
+    background: var(--sheet-control-bg, var(--bg-primary));
+    scrollbar-width: none;
+  }
+  .settings-section-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .sheet-body::-webkit-scrollbar {
+    display: none;
+  }
+  .settings-section-nav-shell {
+    position: relative;
+  }
+  .settings-section-nav-shell::before,
+  .settings-section-nav-shell::after {
+    content: '';
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    bottom: 0;
+    width: 18px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--motion-fast);
+  }
+  .settings-section-nav-shell::before {
+    left: 0;
+    background: linear-gradient(90deg, var(--surface-sheet), transparent);
+  }
+  .settings-section-nav-shell::after {
+    right: 0;
+    background: linear-gradient(270deg, var(--surface-sheet), transparent);
+  }
+  .settings-section-nav-shell.has-overflow-start::before,
+  .settings-section-nav-shell.has-overflow-end::after {
+    opacity: 1;
+  }
+  .sheet-body {
+    overflow-x: hidden;
+    scrollbar-width: none;
+  }
+  .settings-section-nav button {
+    min-height: 40px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: var(--shape-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .settings-section-nav button:hover,
+  .settings-section-nav button.active {
+    background: var(--hover-bg-elevated);
+    color: var(--text-primary);
+  }
+  .settings-section-nav button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .sheet-body > [data-settings-section] {
+    scroll-margin-top: 12px;
+  }
   :global(.settings-section) {
     gap: 12px;
   }
@@ -511,6 +929,39 @@
     font-weight: 700;
     letter-spacing: 0;
   }
+  :global(.settings-sheet .preview-backdrop-toggle) {
+    position: absolute;
+    top: 12px;
+    left: -48px;
+    z-index: 1;
+    width: 40px;
+    height: 40px;
+    border-color: var(--sheet-border, var(--border));
+    border-radius: var(--shape-md);
+    background: var(--sheet-control-bg, var(--bg-primary));
+    color: var(--text-primary);
+    box-shadow: 0 8px 22px
+      color-mix(in srgb, var(--text-primary) 12%, transparent);
+  }
+  :global(.settings-sheet .preview-backdrop-toggle:hover) {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-readable-foreground);
+  }
+  :global(.settings-sheet .preview-backdrop-toggle:focus-visible) {
+    border-color: var(--accent);
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+  :global(.settings-preview-overlay) {
+    clip-path: inset(0);
+    transition: clip-path var(--motion-slow) var(--ease-ios);
+    will-change: clip-path;
+  }
+  :global(.settings-preview-overlay--retracted) {
+    clip-path: inset(0 100% 0 0);
+  }
   :global(.settings-section-heading p) {
     margin: 3px 0 0;
     color: var(--text-secondary);
@@ -531,7 +982,7 @@
     grid-auto-columns: minmax(0, 1fr);
     overflow: hidden;
     border: 1px solid var(--sheet-border);
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--sheet-row-bg);
     padding: 2px;
     flex-shrink: 0;
@@ -540,7 +991,7 @@
     height: 26px;
     padding-inline: 10px;
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: transparent;
     color: var(--text-secondary);
     font: inherit;
@@ -551,12 +1002,27 @@
   }
   :global(.settings-segment button.active) {
     background: var(--accent);
-    color: white;
+    color: var(--accent-readable-foreground);
   }
   @media (max-width: 420px) {
+    :global(.settings-sheet .settings-sheet-header) {
+      padding-right: 108px;
+    }
+    :global(.settings-sheet .preview-backdrop-toggle) {
+      right: 60px;
+      left: auto;
+    }
+    :global(.preview-backdrop-tooltip) {
+      display: none;
+    }
     :global(.settings-section-heading) {
       display: grid;
       grid-template-columns: 1fr;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :global(.settings-preview-overlay) {
+      transition-duration: 0ms;
     }
   }
 </style>

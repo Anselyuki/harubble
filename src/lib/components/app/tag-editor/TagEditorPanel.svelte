@@ -14,6 +14,7 @@
     album: Album;
     songs: SongEntry[];
     loadingSongs: boolean;
+    reducedMotion?: boolean;
     merged: TagEditorRegistry | null;
     selectedEntityTags: Record<string, TagEditorLocalizedValue[]>;
     onSetTag: (
@@ -34,6 +35,7 @@
     album,
     songs,
     loadingSongs,
+    reducedMotion = false,
     merged,
     selectedEntityTags,
     onSetTag,
@@ -66,7 +68,7 @@
     {#key album.cid}
       <div
         class="album-cover"
-        use:lazyLoad={{ rootMargin: '0px', reducedMotion: false }}
+        use:lazyLoad={{ rootMargin: '0px', reducedMotion }}
         data-src={album.coverUrl}
       >
         <div class="album-cover-placeholder">♪</div>
@@ -236,7 +238,7 @@
     align-items: center;
     justify-content: center;
     border: 1px solid var(--color-border, #d1d5db);
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
@@ -330,7 +332,7 @@
     padding: 0.5rem 0.5rem;
     background: none;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     cursor: pointer;
     text-align: left;
     color: var(--text-primary);
@@ -353,7 +355,7 @@
     flex-shrink: 0;
     font-size: 0.6875rem;
     padding: 0.125rem 0.375rem;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     background: rgba(var(--accent-rgb), 0.1);
     color: var(--accent);
   }

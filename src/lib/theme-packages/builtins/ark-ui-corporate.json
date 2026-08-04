@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "ark-ui-corporate",
+    "name": "Studio Lime",
+    "version": "1.0.0",
+    "description": "Original monochrome editorial studio theme with a restrained lime signal.",
+    "author": "Harubble Contributors",
+    "license": "MIT",
+    "minAppVersion": "2.2.0"
+  },
+  "visualContract": {
+    "family": "corporate",
+    "depth": "moderate"
+  },
+  "slots": {
+    "accent": "#F3FF00",
+    "surface": "#050505",
+    "textPrimary": "#F3F3F3",
+    "textSecondary": "#A5A5A5",
+    "tint": "#8A8A8A",
+    "danger": "#FF5C65"
+  },
+  "variants": {
+    "light": {
+      "accent": "#858C00",
+      "surface": "#F3F3F3",
+      "textPrimary": "#050505",
+      "textSecondary": "#555555",
+      "tint": "#727272",
+      "danger": "#C63D46"
+    },
+    "dark": {
+      "accent": "#F3FF00",
+      "surface": "#050505",
+      "textPrimary": "#F3F3F3",
+      "textSecondary": "#A5A5A5",
+      "tint": "#8A8A8A",
+      "danger": "#FF5C65"
+    }
+  },
+  "motion": {
+    "micro": 100,
+    "fast": 150,
+    "base": 220,
+    "slow": 320,
+    "page": 500,
+    "baseOut": 170,
+    "slowOut": 260,
+    "pageOut": 400,
+    "overlayIn": 240
+  },
+  "shape": {
+    "xs": 0,
+    "sm": 0,
+    "md": 2,
+    "lg": 2,
+    "xl": 4,
+    "2xl": 4,
+    "pill": 4
+  },
+  "density": {
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 18,
+    "xl": 26
+  },
+  "elevation": {
+    "none": "none",
+    "xs": "0 1px 2px rgba(0, 0, 0, 0.08)",
+    "sm": "0 3px 8px rgba(0, 0, 0, 0.12)",
+    "md": "0 8px 20px rgba(0, 0, 0, 0.16)",
+    "lg": "0 14px 36px rgba(0, 0, 0, 0.2)",
+    "xl": "0 22px 56px rgba(0, 0, 0, 0.24)"
+  },
+  "blur": {
+    "sm": 2,
+    "md": 6,
+    "lg": 10,
+    "xl": 16
+  },
+  "fontFamily": {
+    "body": "HarmonyOS Sans SC, Arial, sans-serif",
+    "display": "Geometos, NovecentoSansWide, sans-serif",
+    "mono": "SFMono-Regular, Cascadia Code, monospace"
+  },
+  "cssVariables": {
+    "--theme-custom-signal-alt": "#FFFFFF",
+    "--theme-custom-stage-opacity": "0.16",
+    "--theme-custom-attention-duration": "2400ms"
+  },
+  "cssVariableVariants": {
+    "light": {
+      "--theme-custom-panel": "rgba(243, 243, 243, 0.9)",
+      "--theme-custom-rule": "rgba(5, 5, 5, 0.18)"
+    },
+    "dark": {
+      "--theme-custom-panel": "rgba(0, 0, 0, 0.88)",
+      "--theme-custom-rule": "rgba(243, 255, 0, 0.32)"
+    }
+  }
+}

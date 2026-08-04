@@ -1,7 +1,16 @@
+mod api_clients;
+mod download_subsystem;
 mod media_controls;
 mod playback;
+mod preferences;
 
+pub(crate) use api_clients::ApiClients;
+pub(crate) use download_subsystem::DownloadSubsystem;
+pub(crate) use preferences::PreferencesSubsystem;
+
+use crate::album_catalog::AlbumCatalogService;
 use crate::album_metadata_cache::AlbumMetadataCacheService;
+use crate::background_tasks::TaskDirectory;
 use crate::collection::CollectionService;
 use crate::command_scheduling::{self, CommandDomain};
 use crate::download_session::DownloadSessionStore;
@@ -19,6 +28,7 @@ use crate::search::LibrarySearchService;
 use crate::startup_recovery::prepare_local_database;
 use crate::tag_editor::TagEditorService;
 use crate::tag_registry::TagRegistryService;
+use crate::theme_packages::ThemePackageService;
 use harubble_core::{DownloadManagerSnapshot, DownloadService};
 use serde_json::json;
 use std::future::Future;
@@ -32,32 +42,45 @@ use tokio::sync::{Mutex, MutexGuard};
 /// 这是 Tauri command、下载桥接、播放器控制与日志系统共用的高层入口，适用于需要访问跨域后端能力的场景。
 /// 其内部聚合播放器、API 客户端、下载服务、库存服务、偏好存储与日志中心等共享状态。
 /// 该类型应作为长生命周期共享状态使用，而不是按请求临时构造；调用方也不应绕过它直接拼装各子系统依赖。
+///
+/// # 架构决策（P0-5 步骤5）：保留 AppState 作为纯组合根
+///
+/// 在完成 P0-5 步骤1-4（accessor 模式、字段私有化、跨域编排收敛）后，评估是否将
+/// `State<'_, AppState>` 拆分为独立的域级 `State<'_, XDomainFacade>`：
+///
+/// **决策：保留 `AppState` 作为唯一注入点。**
+///
+/// 理由：
+/// - Tauri 的状态注入模型（`State<'_, T>`）在单一泛型参数时最自然；拆分后68个命令签名均需修改。
+/// - 领域边界已通过 `accessor 方法 + 私有字段 + 架构测试` 执行，不依赖类型系统拆分也能保证约束。
+/// - 跨域命令（如 `get_homepage_status` 协调 library/download/inventory）在统一 AppState 下
+///   编排最简洁；独立 State 后需额外参数或引入聚合 Facade。
+/// - 命令层已完全通过 accessor 访问域服务，`AppState` 对命令只是透明路由层，不承载业务逻辑。
+///
+/// **本决策意味着：** `AppState` 是纯组合根——所有字段私有、唯一公开出口为 accessor 方法，
+/// 不再是包含全局可见字段的"God Object"。
 #[derive(Clone)]
 pub struct AppState {
-    pub(crate) player: Arc<AudioPlayer>,
-    pub(crate) api: Arc<harubble_core::ApiClient>,
-    pub(crate) playback_api: Arc<harubble_core::ApiClient>,
-    pub(crate) image_api: Arc<harubble_core::ApiClient>,
-    pub(crate) download_api: Arc<harubble_core::ApiClient>,
-    pub(crate) playback_runtime: Arc<tokio::runtime::Runtime>,
-    pub(crate) playback_actor: PlaybackActor,
-    pub(crate) playback_load_gate: PlaybackLoadGate,
-    pub(crate) visual_aux_lock: Arc<Mutex<()>>,
-    pub(crate) download_service: Arc<Mutex<DownloadService>>,
-    pub(crate) download_job_creation_lock: Arc<Mutex<()>>,
-    pub(crate) preferences_write_lock: Arc<Mutex<()>>,
-    pub(crate) local_inventory_service: LocalInventoryService,
-    pub(crate) local_inventory_provenance_store: Arc<LocalInventoryProvenanceStore>,
-    pub(crate) download_session_store: Arc<DownloadSessionStore>,
-    pub(crate) preferences_store: Arc<PreferencesStore>,
-    pub(crate) preferences: Arc<StdMutex<AppPreferences>>,
-    pub(crate) log_center: Arc<LogCenter>,
-    pub(crate) library_search_service: LibrarySearchService,
-    pub(crate) listening_history: Arc<ListeningHistoryService>,
-    pub(crate) album_metadata_cache: AlbumMetadataCacheService,
-    pub(crate) tag_registry: TagRegistryService,
-    pub(crate) tag_editor: TagEditorService,
-    pub(crate) collection: CollectionService,
+    player: Arc<AudioPlayer>,
+    api_clients: ApiClients,
+    album_catalog: AlbumCatalogService,
+    playback_runtime: Arc<tokio::runtime::Runtime>,
+    playback_actor: PlaybackActor,
+    playback_load_gate: PlaybackLoadGate,
+    visual_aux_lock: Arc<Mutex<()>>,
+    download: DownloadSubsystem,
+    prefs: PreferencesSubsystem,
+    local_inventory_service: LocalInventoryService,
+    local_inventory_provenance_store: Arc<LocalInventoryProvenanceStore>,
+    log_center: Arc<LogCenter>,
+    task_directory: TaskDirectory,
+    library_search_service: LibrarySearchService,
+    listening_history: Arc<ListeningHistoryService>,
+    album_metadata_cache: AlbumMetadataCacheService,
+    tag_registry: TagRegistryService,
+    tag_editor: TagEditorService,
+    collection: CollectionService,
+    theme_packages: ThemePackageService,
 }
 
 struct PreparedPlaybackInput {
@@ -74,7 +97,7 @@ impl AppState {
     pub fn new(app: tauri::AppHandle) -> Result<Self, String> {
         let log_center = Arc::new(LogCenter::new(app.clone())?);
         let player = AudioPlayer::new(app.clone()).map_err(|e| e.to_string())?;
-        let api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
+        let api = Arc::new(harubble_core::ApiClient::new().map_err(|e| e.to_string())?);
         let playback_api = harubble_core::ApiClient::new().map_err(|e| e.to_string())?;
         let image_api = harubble_core::ApiClient::new_image().map_err(|e| e.to_string())?;
         let download_api = harubble_core::ApiClient::new_download().map_err(|e| e.to_string())?;
@@ -108,7 +131,34 @@ impl AppState {
         );
         let local_inventory_service =
             LocalInventoryService::new(local_inventory_provenance_store.clone());
-        let search_data_dir = app_data_dir.join("library-search");
+        let legacy_search_dir = app_data_dir.join("library-search");
+        let new_search_dir = crate::storage_paths::search_index_root(&app)?;
+        if legacy_search_dir.exists() && !new_search_dir.exists() {
+            if let Err(err) = std::fs::rename(&legacy_search_dir, &new_search_dir) {
+                log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "storage",
+                        "storage.search_migration_failed",
+                        "Failed to migrate search index to cache dir, will rebuild",
+                    )
+                    .details(err.to_string()),
+                );
+                // 迁移失败：删除旧目录以避免重复迁移尝试，索引将在下次 inventory scan 时重建
+                let _ = std::fs::remove_dir_all(&legacy_search_dir);
+            } else {
+                log_center.record(LogPayload::new(
+                    LogLevel::Info,
+                    "storage",
+                    "storage.search_migrated",
+                    "Migrated search index from app_data_dir to app_cache_dir",
+                ));
+            }
+        } else if legacy_search_dir.exists() && new_search_dir.exists() {
+            // 两处都存在：删除旧位置（新位置已经是权威）
+            let _ = std::fs::remove_dir_all(&legacy_search_dir);
+        }
+        let search_data_dir = new_search_dir;
         let library_search_service =
             LibrarySearchService::new(search_data_dir, preferences.output_dir.clone());
         let db_path = prepare_local_database(&app_data_dir, Some(log_center.as_ref()))?;
@@ -123,31 +173,42 @@ impl AppState {
         let official_collections_bytes = include_bytes!("../../../data/official_collections.json");
         let collection = CollectionService::new(&db_path, official_collections_bytes)
             .map_err(|e| format!("初始化合集服务失败: {e}"))?;
+        let theme_packages = ThemePackageService::new(app_data_dir.clone())
+            .map_err(|e| format!("初始化主题包服务失败: {e}"))?;
         let state = Self {
             player: Arc::new(player),
-            api: Arc::new(api),
-            playback_api: Arc::new(playback_api),
-            image_api: Arc::new(image_api),
-            download_api: Arc::new(download_api),
+            api_clients: ApiClients {
+                api: Arc::clone(&api),
+                playback_api: Arc::new(playback_api),
+                image_api: Arc::new(image_api),
+                download_api: Arc::new(download_api),
+            },
+            album_catalog: AlbumCatalogService::new(api, app.clone()),
             playback_runtime: Arc::new(playback_runtime),
             playback_actor,
             playback_load_gate: PlaybackLoadGate::new(),
             visual_aux_lock: Arc::new(Mutex::new(())),
-            download_service,
-            download_job_creation_lock: Arc::new(Mutex::new(())),
-            preferences_write_lock: Arc::new(Mutex::new(())),
+            download: DownloadSubsystem {
+                download_service,
+                download_job_creation_lock: Arc::new(Mutex::new(())),
+                download_session_store,
+            },
+            prefs: PreferencesSubsystem {
+                preferences_store: Arc::new(store),
+                preferences: Arc::new(StdMutex::new(preferences)),
+                preferences_write_lock: Arc::new(Mutex::new(())),
+            },
             local_inventory_service,
             local_inventory_provenance_store,
-            download_session_store,
-            preferences_store: Arc::new(store),
-            preferences: Arc::new(StdMutex::new(preferences)),
             log_center,
+            task_directory: TaskDirectory::new(),
             library_search_service,
             listening_history,
             album_metadata_cache,
             tag_registry,
             tag_editor,
             collection,
+            theme_packages,
         };
         state.player.set_volume_silent(state.preferences().volume);
         start_playback_actor(Arc::clone(&state.playback_runtime), playback_actor_inbox);
@@ -158,10 +219,122 @@ impl AppState {
     }
 
     pub(crate) fn preferences(&self) -> AppPreferences {
-        self.preferences
+        self.prefs
+            .preferences
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    // ─── 领域访问器 ─────────────────────────────────────────────────────────
+    // 为 command 层提供窄化访问入口。command 应通过这些方法访问各领域服务，
+    // 而不是直接读写 pub(crate) 字段，以便未来能够拆分为独立的 Tauri State
+    // 或按领域建立 Facade。app_state 内部（playback / media_controls）以及
+    // 非-command 的模块（playback_actor / downloads/bridge 等）继续使用字段
+    // 直接访问。
+
+    /// 返回音频播放器实例（用于状态查询与音量控制）。
+    pub(crate) fn player(&self) -> &Arc<AudioPlayer> {
+        &self.player
+    }
+
+    /// 返回合集服务（列表、增删改、导入导出）。
+    pub(crate) fn collection(&self) -> &CollectionService {
+        &self.collection
+    }
+
+    /// 返回 Tag 编辑器服务（双层存储、三路合并）。
+    pub(crate) fn tag_editor(&self) -> &TagEditorService {
+        &self.tag_editor
+    }
+
+    /// 返回 Tag 注册表服务（维度定义、按 tag 查专辑）。
+    pub(crate) fn tag_registry(&self) -> &TagRegistryService {
+        &self.tag_registry
+    }
+
+    /// 返回库内搜索服务。
+    pub(crate) fn library_search(&self) -> &LibrarySearchService {
+        &self.library_search_service
+    }
+
+    /// 返回收听历史服务。
+    pub(crate) fn listening_history(&self) -> &Arc<ListeningHistoryService> {
+        &self.listening_history
+    }
+
+    /// 返回专辑元数据缓存服务。
+    pub(crate) fn album_metadata_cache(&self) -> &AlbumMetadataCacheService {
+        &self.album_metadata_cache
+    }
+
+    /// 返回共享专辑目录服务。
+    pub(crate) fn album_catalog(&self) -> &AlbumCatalogService {
+        &self.album_catalog
+    }
+
+    /// 返回主题包服务（列表、检查、安装、卸载、预览与导出）。
+    ///
+    /// `*_theme_package` 系列命令通过该 accessor 使用，而非直接持有服务字段
+    ///（配合私有字段守卫）。
+    pub(crate) fn theme_packages(&self) -> &ThemePackageService {
+        &self.theme_packages
+    }
+
+    /// 返回本地库存服务。
+    pub(crate) fn local_inventory(&self) -> &LocalInventoryService {
+        &self.local_inventory_service
+    }
+
+    /// 返回日志中心（用于查询记录、状态检查等）。
+    pub(crate) fn log_center(&self) -> &Arc<LogCenter> {
+        &self.log_center
+    }
+
+    /// 返回后台任务目录（跨领域生命周期协调）。
+    #[allow(dead_code)]
+    pub(crate) fn task_directory(&self) -> &TaskDirectory {
+        &self.task_directory
+    }
+
+    /// 返回本地库存来源记录存储（用于记录已完成的下载归档）。
+    pub(crate) fn local_inventory_provenance_store(&self) -> &Arc<LocalInventoryProvenanceStore> {
+        &self.local_inventory_provenance_store
+    }
+
+    /// 返回播放运行时（用于在 playback 专属线程池中调度异步任务）。
+    pub(crate) fn playback_runtime(&self) -> &Arc<tokio::runtime::Runtime> {
+        &self.playback_runtime
+    }
+
+    /// 返回播放加载门控（用于查询或等待播放启动阶段）。
+    pub(crate) fn playback_load_gate(&self) -> &PlaybackLoadGate {
+        &self.playback_load_gate
+    }
+
+    /// 返回通用业务 API 客户端。
+    pub(crate) fn api_client(&self) -> &Arc<harubble_core::ApiClient> {
+        &self.api_clients.api
+    }
+
+    /// 返回下载链路专用 API 客户端。
+    pub(crate) fn download_api_client(&self) -> &Arc<harubble_core::ApiClient> {
+        &self.api_clients.download_api
+    }
+
+    /// 返回图片资源专用 API 客户端。
+    pub(crate) fn image_api_client(&self) -> &Arc<harubble_core::ApiClient> {
+        &self.api_clients.image_api
+    }
+
+    /// 返回下载服务实例（需在 lock 后使用）。
+    pub(crate) fn download_service(&self) -> &Arc<Mutex<DownloadService>> {
+        &self.download.download_service
+    }
+
+    /// 返回下载批次创建互斥锁。
+    pub(crate) fn download_job_creation_lock(&self) -> &Arc<Mutex<()>> {
+        &self.download.download_job_creation_lock
     }
 
     /// 返回当前配置中的根输出目录。
@@ -170,7 +343,8 @@ impl AppState {
     /// 返回值为当前内存中已生效的输出目录字符串。
     /// 该接口不会触发偏好重新加载；若调用方关心磁盘上的最新配置，应先完成偏好同步。
     pub fn output_dir(&self) -> String {
-        self.preferences
+        self.prefs
+            .preferences
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .output_dir
@@ -186,6 +360,15 @@ impl AppState {
         self.log_center.record(payload);
     }
 
+    /// 请求取消所有后台追踪任务。
+    ///
+    /// 应在应用退出前调用，以协作式通知各后台任务（库存扫描、搜索重建、tag 同步、
+    /// 下载执行循环等）尽快退出，避免在进程终止时留下未完成的 I/O 操作。
+    /// 该方法只发出取消信号，不等待各任务实际退出。
+    pub async fn cancel_background_tasks(&self) {
+        self.task_directory.cancel_all().await;
+    }
+
     /// 按当前日志级别阈值将会话日志刷入持久化日志文件。
     ///
     /// 适用于应用退出前、崩溃恢复前置收尾，或需要显式落盘当前会话日志的场景。
@@ -194,6 +377,7 @@ impl AppState {
     pub fn flush_logs_on_exit(&self) -> Result<(), String> {
         let threshold = LogLevel::parse(
             &self
+                .prefs
                 .preferences
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -206,26 +390,108 @@ impl AppState {
     }
 
     pub(crate) fn set_preferences(&self, prefs: AppPreferences) {
-        *self.preferences.lock().unwrap_or_else(|e| e.into_inner()) = prefs;
+        *self
+            .prefs
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = prefs;
+    }
+
+    /// 在本地 tag_editor 修改成功后，异步刷新受影响专辑的搜索索引。
+    ///
+    /// 与 tag_registry_sync 通路复用 `build_snapshot_records_for_album` +
+    /// `apply_incremental_tag_update`，任一步失败视为软失败，仅记日志不阻塞主流程。
+    /// 无活跃索引或空 `album_cids` 时直接返回。
+    pub(crate) fn schedule_local_tag_incremental_update(&self, album_cids: Vec<String>) {
+        if album_cids.is_empty() {
+            return;
+        }
+        let state = self.clone();
+        let directory = state.task_directory.clone();
+        tauri::async_runtime::spawn(async move {
+            let task_id = directory
+                .next_task_id("library_search", "local_tag_incremental")
+                .await;
+            crate::background_tasks::spawn_tracked(
+                directory,
+                task_id,
+                move |_cancel_token| async move {
+                    let locale = state.preferences().locale;
+                    let mut updates = Vec::with_capacity(album_cids.len());
+                    for cid in &album_cids {
+                        match crate::search::build_snapshot_records_for_album(
+                            state.api_clients.api.clone(),
+                            state.tag_registry.clone(),
+                            cid,
+                            locale,
+                        )
+                        .await
+                        {
+                            Ok(records) => updates.push(records),
+                            Err(error) => {
+                                state.record_log(
+                                    LogPayload::new(
+                                        LogLevel::Warn,
+                                        "library-search",
+                                        "library_search.local_incremental_fetch_failed",
+                                        "Failed to build incremental snapshot records for local tag edit",
+                                    )
+                                    .context(json!({
+                                        "album_cid": cid,
+                                    }))
+                                    .details(error.to_string()),
+                                );
+                                return;
+                            }
+                        }
+                    }
+                    if let Err(error) = state
+                        .library_search_service
+                        .apply_incremental_tag_update(updates)
+                        .await
+                    {
+                        state.record_log(
+                            LogPayload::new(
+                                LogLevel::Warn,
+                                "library-search",
+                                "library_search.local_incremental_apply_failed",
+                                "Incremental tag update failed after local tag edit; will heal on next full rebuild",
+                            )
+                            .context(json!({
+                                "changed_album_count": album_cids.len(),
+                            }))
+                            .details(error.to_string()),
+                        );
+                    }
+                },
+            );
+        });
     }
 
     pub(crate) fn preferences_store(&self) -> Arc<PreferencesStore> {
-        self.preferences_store.clone()
+        self.prefs.preferences_store.clone()
     }
 
-    pub(crate) fn clear_api_response_caches(&self) {
-        self.api.clear_response_cache();
-        self.playback_api.clear_response_cache();
-        self.image_api.clear_response_cache();
-        self.download_api.clear_response_cache();
+    pub(crate) async fn clear_api_response_caches(&self) {
+        self.api_clients.api.clear_response_cache();
+        self.api_clients.playback_api.clear_response_cache();
+        self.api_clients.image_api.clear_response_cache();
+        self.api_clients.download_api.clear_response_cache();
+        self.album_catalog.clear_snapshot().await;
     }
 
     pub(crate) fn reset_http_clients(&self) -> Result<(), String> {
         let results = [
-            ("app", self.api.reset_http_client()),
-            ("playback", self.playback_api.reset_http_client()),
-            ("image", self.image_api.reset_http_client()),
-            ("download", self.download_api.reset_http_client()),
+            ("app", self.api_clients.api.reset_http_client()),
+            (
+                "playback",
+                self.api_clients.playback_api.reset_http_client(),
+            ),
+            ("image", self.api_clients.image_api.reset_http_client()),
+            (
+                "download",
+                self.api_clients.download_api.reset_http_client(),
+            ),
         ];
         let errors = results
             .into_iter()
@@ -376,34 +642,22 @@ impl AppState {
             command_name,
             CommandDomain::PlaybackSideEffect,
         );
-        let submitted_at = Instant::now();
+        // Side effect 命令没有独立排队层，因此这里只统计 run_ms；避免记录一个恒为 0
+        // 的 queue_wait_ms 掩盖真实的调度堆积（如果未来把它接入排队器时再补上）。
         let state = self.clone();
         let log_center = Arc::clone(&self.log_center);
         let started_at = Instant::now();
-        let queue_wait_ms = submitted_at.elapsed().as_millis();
         let result = task(state).await;
         let run_ms = started_at.elapsed().as_millis();
-        record_playback_side_effect_metrics(log_center, command_name, queue_wait_ms, run_ms);
+        record_playback_side_effect_metrics(log_center, command_name, run_ms);
         result
-    }
-
-    pub(crate) async fn persist_preferences(&self, prefs: AppPreferences) -> Result<(), String> {
-        let _guard = self.preferences_write_lock.lock().await;
-        let locale = prefs.locale;
-        let store = self.preferences_store();
-        let prefs_to_save = prefs.clone();
-        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
-            .await
-            .map_err(|error| error.to_string())??;
-        self.set_preferences(prefs);
-        Ok(())
     }
 
     pub(crate) async fn update_preferences<F>(&self, update: F) -> Result<AppPreferences, String>
     where
         F: FnOnce(&mut AppPreferences),
     {
-        let _guard = self.preferences_write_lock.lock().await;
+        let _guard = self.prefs.preferences_write_lock.lock().await;
         let mut prefs = self.preferences();
         update(&mut prefs);
         let locale = prefs.locale;
@@ -416,8 +670,64 @@ impl AppState {
         Ok(prefs)
     }
 
+    /// 在偏好写锁内执行一个可拒绝的更新。
+    ///
+    /// 回调返回错误时不会落盘，适用于需要把 CAS 校验、主题包存在性检查与
+    /// 偏好写入放进同一临界区的命令。
+    pub(crate) async fn try_update_preferences<F, T, E>(
+        &self,
+        update: F,
+    ) -> Result<Result<(AppPreferences, T), E>, String>
+    where
+        F: FnOnce(&mut AppPreferences) -> Result<T, E>,
+    {
+        let _guard = self.prefs.preferences_write_lock.lock().await;
+        let mut prefs = self.preferences();
+        let output = match update(&mut prefs) {
+            Ok(output) => output,
+            Err(error) => return Ok(Err(error)),
+        };
+        let locale = prefs.locale;
+        let store = self.preferences_store();
+        let prefs_to_save = prefs.clone();
+        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
+            .await
+            .map_err(|error| error.to_string())??;
+        self.set_preferences(prefs.clone());
+        Ok(Ok((prefs, output)))
+    }
+
+    /// 先持久化偏好，再在同一把写锁内执行关联副作用。
+    ///
+    /// 副作用失败时偏好快照仍然有效并随结果返回，调用方可广播已发生的偏好变化。
+    /// 这用于卸载主题包：宁可保留一个已停用的包，也不能先删包后因偏好保存失败
+    /// 留下悬挂的 activePackageId。
+    pub(crate) async fn update_preferences_then<F, T, A>(
+        &self,
+        update: F,
+        after_persist: A,
+    ) -> Result<(AppPreferences, T, Result<(), String>), String>
+    where
+        F: FnOnce(&mut AppPreferences) -> T,
+        A: FnOnce() -> Result<(), String>,
+    {
+        let _guard = self.prefs.preferences_write_lock.lock().await;
+        let mut prefs = self.preferences();
+        let output = update(&mut prefs);
+        let locale = prefs.locale;
+        let store = self.preferences_store();
+        let prefs_to_save = prefs.clone();
+        tokio::task::spawn_blocking(move || store.save(&prefs_to_save, locale))
+            .await
+            .map_err(|error| error.to_string())??;
+        self.set_preferences(prefs.clone());
+        let after_result = after_persist();
+        Ok((prefs, output, after_result))
+    }
+
     pub(crate) fn persist_download_snapshot(&self, snapshot: &DownloadManagerSnapshot) {
         if let Err(error) = self
+            .download
             .download_session_store
             .save(snapshot, self.preferences().locale)
         {
@@ -438,7 +748,7 @@ impl AppState {
     }
 
     pub(crate) async fn persist_download_snapshot_async(&self, snapshot: DownloadManagerSnapshot) {
-        let store = self.download_session_store.clone();
+        let store = self.download.download_session_store.clone();
         let locale = self.preferences().locale;
         let result = tokio::task::spawn_blocking(move || store.save(&snapshot, locale))
             .await
@@ -461,6 +771,111 @@ impl AppState {
             );
         }
     }
+
+    // ─── 跨领域应用服务 ────────────────────────────────────────────────────────
+    // 收敛涉及多个领域的编排逻辑，避免 command 直接协调 api / local_inventory /
+    // tag_registry / album_metadata_cache / download 等多个服务。command 只
+    // 负责 IPC 参数解析与领域错误映射。
+
+    /// 为已获取的专辑列表补齐本地库存徽标与 tag 元数据。
+    ///
+    /// 跨领域协调：local_inventory.enrich_albums + tag_registry.get_album_tags + preferences.locale。
+    /// 该方法不产生错误，纯数据装配。
+    pub(crate) async fn attach_album_enrichment(
+        &self,
+        albums: Vec<harubble_core::api::Album>,
+    ) -> Vec<harubble_core::api::Album> {
+        let mut enriched = self.local_inventory_service.enrich_albums(albums).await;
+        let locale = self.preferences().locale;
+        for album in &mut enriched {
+            album.tags = self.tag_registry.get_album_tags(&album.cid, locale);
+        }
+        enriched
+    }
+
+    /// 为已获取的专辑详情补齐本地库存徽标、tag，并 upsert belong 缓存（fire-and-forget）。
+    ///
+    /// 跨领域协调：album_metadata_cache.upsert_belong + local_inventory.enrich_album_detail
+    /// + tag_registry.get_album_tags + tag_registry.get_song_tags + preferences.locale。
+    ///   belong 缓存更新失败不影响主流程返回值。
+    pub(crate) async fn attach_album_detail_enrichment(
+        &self,
+        album: harubble_core::api::AlbumDetail,
+    ) -> harubble_core::api::AlbumDetail {
+        let cache = self.album_metadata_cache.clone();
+        let album_cid_for_cache = album.cid.clone();
+        let album_belong_for_cache = album.belong.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            cache.upsert_belong(&album_cid_for_cache, &album_belong_for_cache)
+        })
+        .await;
+        let mut enriched = self
+            .local_inventory_service
+            .enrich_album_detail(album)
+            .await;
+        let locale = self.preferences().locale;
+        enriched.tags = self.tag_registry.get_album_tags(&enriched.cid, locale);
+        for song in &mut enriched.songs {
+            song.tags = self
+                .tag_registry
+                .get_song_tags(&song.cid, &enriched.cid, locale);
+        }
+        enriched
+    }
+
+    /// 为已获取的歌曲详情补齐所属专辑上下文的本地库存徽标与 tag。
+    ///
+    /// 跨领域协调：local_inventory.enrich_song_detail + tag_registry.get_song_tags + preferences.locale。
+    pub(crate) async fn attach_song_detail_enrichment(
+        &self,
+        song: harubble_core::api::SongDetail,
+        album_name: &str,
+    ) -> harubble_core::api::SongDetail {
+        let mut enriched = self
+            .local_inventory_service
+            .enrich_song_detail(song, album_name)
+            .await;
+        let locale = self.preferences().locale;
+        enriched.tags = self
+            .tag_registry
+            .get_song_tags(&enriched.cid, &enriched.album_cid, locale);
+        enriched
+    }
+
+    /// 收集首页仪表盘状态，聚合平台专辑总数、本地库存与下载会话。
+    ///
+    /// 跨领域协调：album_catalog.get + local_inventory.snapshot + download.download_service.lock().await.snapshot。
+    /// 避免 command 直接持有下载服务锁。
+    pub(crate) async fn homepage_status(
+        &self,
+    ) -> Result<harubble_core::homepage::HomepageStatus, String> {
+        let catalog = self.album_catalog.get().await?;
+        let platform_album_count = catalog.albums.len() as u32;
+
+        let inventory_snapshot = self.local_inventory_service.snapshot().await;
+        let local_downloaded_count = inventory_snapshot.matched_track_count as u32;
+
+        let download_snapshot = self.download.download_service.lock().await.snapshot();
+        let active_download_count = download_snapshot
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, harubble_core::DownloadJobStatus::Running))
+            .count() as u32;
+        let completed_download_count = download_snapshot
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, harubble_core::DownloadJobStatus::Completed))
+            .count() as u32;
+
+        Ok(harubble_core::homepage::HomepageStatus {
+            platform_album_count,
+            platform_song_count: 0,
+            local_downloaded_count,
+            local_storage_bytes: 0,
+            active_download_count,
+            completed_download_count,
+        })
+    }
 }
 
 /// 启动 belong 预热后台任务。
@@ -475,7 +890,8 @@ impl AppState {
 /// 若获取专辑列表或查询缺失 CID 失败，任务会记录警告日志后提前退出，不会 panic。
 /// 并发度上限为 5，避免对上游 API 造成过大压力。
 pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
-    let api = state.api.clone();
+    let api = state.api_clients.api.clone();
+    let album_catalog = state.album_catalog.clone();
     let cache = state.album_metadata_cache.clone();
     let log_center = state.log_center.clone();
     let state_for_gate = state.clone();
@@ -485,8 +901,8 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
             .wait_for_background_io_gate("belong_warmup", Duration::from_millis(250))
             .await;
 
-        let albums = match api.get_albums().await {
-            Ok(albums) => albums,
+        let albums = match album_catalog.get().await {
+            Ok(snapshot) => snapshot.albums,
             Err(e) => {
                 log_center.record(
                     LogPayload::new(
@@ -502,13 +918,14 @@ pub fn spawn_belong_warmup(app_handle: tauri::AppHandle, state: &AppState) {
         };
 
         let all_cids: Vec<String> = albums.iter().map(|a| a.cid.clone()).collect();
-        let missing = match {
+        let missing_result = {
             let cache = cache.clone();
             tokio::task::spawn_blocking(move || cache.get_missing_album_cids(&all_cids))
                 .await
                 .map_err(|error| error.to_string())
                 .and_then(|result| result)
-        } {
+        };
+        let missing = match missing_result {
             Ok(m) => m,
             Err(e) => {
                 log_center.record(
@@ -603,6 +1020,7 @@ async fn load_tag_registry_bytes(_state: &AppState) -> anyhow::Result<Vec<u8>> {
 #[cfg(not(debug_assertions))]
 async fn load_tag_registry_bytes(state: &AppState) -> anyhow::Result<Vec<u8>> {
     state
+        .api_clients
         .api
         .download_bytes(crate::tag_registry::REMOTE_URL, |_, _| {})
         .await
@@ -661,7 +1079,6 @@ fn record_visual_aux_metrics(
 fn record_playback_side_effect_metrics(
     log_center: Arc<LogCenter>,
     command_name: &'static str,
-    queue_wait_ms: u128,
     run_ms: u128,
 ) {
     if let Some(spec) = command_scheduling::command_spec(command_name) {
@@ -676,7 +1093,6 @@ fn record_playback_side_effect_metrics(
                 "command.name": command_name,
                 "command.domain": spec.domain.as_label(),
                 "command.priority": spec.priority.as_label(),
-                "command.queue_wait_ms": queue_wait_ms,
                 "command.run_ms": run_ms,
             })),
         );
@@ -686,82 +1102,306 @@ fn record_playback_side_effect_metrics(
 /// 启动 tag registry 远程同步后台任务。
 ///
 /// 在应用启动后异步从远程拉取最新 tag JSON，与本地版本比对后按需替换。
-/// 若注册表发生更新且当前已有库存快照，自动触发搜索索引重建以同步新 tag 数据。
+/// 若注册表发生更新，会先尝试增量刷新受影响专辑的搜索索引：
+/// 变更专辑数量少于阈值时，只重建这些专辑的快照记录与 Tantivy 文档；
+/// 变更规模较大或增量过程失败时，回退为全量重建。
 /// 网络失败时静默使用本地缓存，不阻塞应用启动。
-pub fn spawn_tag_registry_sync(state: &AppState) {
+pub fn spawn_tag_registry_sync(app: tauri::AppHandle, state: &AppState) {
     let state = state.clone();
+    let directory = state.task_directory.clone();
 
     tauri::async_runtime::spawn(async move {
-        state
-            .wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250))
-            .await;
-
-        let updated = async {
-            let response_bytes = load_tag_registry_bytes(&state).await?;
-            let new_registry: crate::tag_registry::TagRegistry =
-                serde_json::from_slice(&response_bytes)
-                    .map_err(|e| anyhow::anyhow!("failed to parse tag registry: {e}"))?;
-
-            if new_registry.schema_version != crate::tag_registry::CURRENT_SCHEMA_VERSION {
-                anyhow::bail!(
-                    "tag registry schema version {} does not match expected {}",
-                    new_registry.schema_version,
-                    crate::tag_registry::CURRENT_SCHEMA_VERSION
-                );
-            }
-
-            #[cfg(not(debug_assertions))]
-            {
-                let current_updated_at = state.tag_registry.current_updated_at();
-                if new_registry.updated_at == current_updated_at && !current_updated_at.is_empty() {
-                    return Ok(false);
+        let task_id = directory.next_task_id("tag_registry", "sync").await;
+        crate::background_tasks::spawn_tracked(
+            directory,
+            task_id,
+            move |cancel_token| async move {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => { return; }
+                    _ = state.wait_for_background_io_gate("tag_registry_sync", Duration::from_millis(250)) => {}
                 }
-            }
+                if cancel_token.is_cancelled() {
+                    return;
+                }
 
-            state.tag_registry.replace_in_memory(new_registry.clone());
-            let tag_registry = state.tag_registry.clone();
-            let persist_result =
-                tokio::task::spawn_blocking(move || tag_registry.persist_registry(&new_registry))
+                let sync_result = async {
+                    let response_bytes = load_tag_registry_bytes(&state).await?;
+                    let new_registry: crate::tag_registry::TagRegistry =
+                        serde_json::from_slice(&response_bytes)
+                            .map_err(|e| anyhow::anyhow!("failed to parse tag registry: {e}"))?;
+
+                    if new_registry.schema_version != crate::tag_registry::CURRENT_SCHEMA_VERSION {
+                        anyhow::bail!(
+                            "tag registry schema version {} does not match expected {}",
+                            new_registry.schema_version,
+                            crate::tag_registry::CURRENT_SCHEMA_VERSION
+                        );
+                    }
+
+                    #[cfg(not(debug_assertions))]
+                    {
+                        let current_updated_at = state.tag_registry.current_updated_at();
+                        if new_registry.updated_at == current_updated_at
+                            && !current_updated_at.is_empty()
+                        {
+                            return Ok(None);
+                        }
+                    }
+
+                    let tag_registry = state.tag_registry.clone();
+                    let registry_for_persist = new_registry.clone();
+                    let persist_result = tokio::task::spawn_blocking(move || {
+                        tag_registry.persist_registry(&registry_for_persist)
+                    })
                     .await
                     .map_err(|error| anyhow::anyhow!(error.to_string()))
                     .and_then(|result| result);
-            if let Err(error) = persist_result {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "tag-registry",
-                        "tag_registry.persist_failed",
-                        "Failed to persist synced tag registry",
-                    )
-                    .details(error.to_string()),
-                );
-            }
+                    persist_result.map_err(|error| {
+                        anyhow::anyhow!("failed to persist synced tag registry: {error}")
+                    })?;
 
-            Ok::<bool, anyhow::Error>(true)
-        }
-        .await;
+                    let old_registry = state.tag_registry.clone_current();
+                    let new_registry_snapshot = new_registry.clone();
+                    state.tag_registry.replace_in_memory(new_registry);
 
-        match updated {
-            Ok(true) => {
-                let inventory = state.local_inventory_service.snapshot().await;
-                state
-                    .library_search_service
-                    .schedule_rebuild(state.clone(), inventory);
-            }
-            Ok(false) => {}
-            Err(error) => {
-                state.log_center.record(
-                    LogPayload::new(
-                        LogLevel::Warn,
-                        "tag-registry",
-                        "tag_registry.sync_failed",
-                        "Failed to sync tag registry from remote",
-                    )
-                    .details(error.to_string()),
-                );
-            }
-        }
+                    Ok::<
+                        Option<(
+                            crate::tag_registry::TagRegistry,
+                            crate::tag_registry::TagRegistry,
+                        )>,
+                        anyhow::Error,
+                    >(Some((old_registry, new_registry_snapshot)))
+                }
+                .await;
+
+                match sync_result {
+                    Ok(Some((old_registry, new_registry))) => {
+                        apply_tag_registry_change(app, state, old_registry, new_registry).await;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        state.log_center.record(
+                            LogPayload::new(
+                                LogLevel::Warn,
+                                "tag-registry",
+                                "tag_registry.sync_failed",
+                                "Failed to sync tag registry from remote",
+                            )
+                            .details(error.to_string()),
+                        );
+                    }
+                }
+            },
+        );
     });
+}
+
+/// 阈值：变更专辑数在此以下才尝试增量搜索索引刷新，否则回退到全量重建。
+const TAG_REGISTRY_INCREMENTAL_THRESHOLD: usize = 50;
+
+/// 处理 tag registry 变更后的搜索索引刷新策略。
+///
+/// 步骤：
+/// 1. 计算 `old` 与 `new` 之间 tag 发生变化的专辑 CID 集合（含歌曲级 tag 变更
+///    通过快照歌曲→专辑映射回溯得到的父专辑）。
+/// 2. 若集合为空，记录一次 no-op 日志后直接返回。
+/// 3. 若规模低于阈值，逐个构建增量记录并调用 `apply_incremental_tag_update`；
+///    构建失败或增量返回 `Ok(false)` / `Err(_)` 则回退为全量重建。
+/// 4. 否则直接触发全量重建。
+async fn apply_tag_registry_change(
+    app: tauri::AppHandle,
+    state: AppState,
+    old_registry: crate::tag_registry::TagRegistry,
+    new_registry: crate::tag_registry::TagRegistry,
+) {
+    let song_album_map = state
+        .library_search_service
+        .current_song_album_map()
+        .await
+        .unwrap_or_default();
+    let changed_albums = compute_changed_album_cids(&old_registry, &new_registry, &song_album_map);
+
+    if changed_albums.is_empty() {
+        state.record_log(
+            LogPayload::new(
+                LogLevel::Info,
+                "tag-registry",
+                "tag_registry.sync_no_op",
+                "Tag registry sync produced no album-level changes",
+            )
+            .context(json!({
+                "old_updated_at": old_registry.updated_at,
+                "new_updated_at": new_registry.updated_at,
+            })),
+        );
+        return;
+    }
+
+    if changed_albums.len() < TAG_REGISTRY_INCREMENTAL_THRESHOLD {
+        if try_incremental_tag_update(&state, &changed_albums).await {
+            return;
+        }
+    } else {
+        state.record_log(
+            LogPayload::new(
+                LogLevel::Info,
+                "tag-registry",
+                "tag_registry.sync_full_rebuild",
+                "Tag registry change exceeds incremental threshold; scheduling full rebuild",
+            )
+            .context(json!({
+                "changed_album_count": changed_albums.len(),
+                "threshold": TAG_REGISTRY_INCREMENTAL_THRESHOLD,
+            })),
+        );
+    }
+
+    let inventory = state.local_inventory_service.snapshot().await;
+    state
+        .library_search_service
+        .schedule_rebuild(app, state.clone(), inventory);
+}
+
+/// 尝试执行增量搜索索引刷新。
+///
+/// # 返回值
+/// - `true` 增量成功，无需再触发全量重建。
+/// - `false` 拉取快照失败、当前无活跃索引，或增量写入失败；调用方应回退到全量重建。
+async fn try_incremental_tag_update(state: &AppState, changed_albums: &[String]) -> bool {
+    let mut updates = Vec::with_capacity(changed_albums.len());
+    let locale = state.preferences().locale;
+    for cid in changed_albums {
+        match crate::search::build_snapshot_records_for_album(
+            state.api_clients.api.clone(),
+            state.tag_registry.clone(),
+            cid,
+            locale,
+        )
+        .await
+        {
+            Ok(records) => updates.push(records),
+            Err(error) => {
+                state.record_log(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "library-search",
+                        "library_search.incremental_fetch_failed",
+                        "Failed to fetch album detail for incremental tag update",
+                    )
+                    .context(json!({
+                        "album_cid": cid,
+                    }))
+                    .details(error.to_string()),
+                );
+                return false;
+            }
+        }
+    }
+
+    match state
+        .library_search_service
+        .apply_incremental_tag_update(updates)
+        .await
+    {
+        Ok(true) => {
+            state.record_log(
+                LogPayload::new(
+                    LogLevel::Info,
+                    "library-search",
+                    "library_search.incremental_updated",
+                    "Applied incremental tag update",
+                )
+                .context(json!({
+                    "changed_album_count": changed_albums.len(),
+                })),
+            );
+            true
+        }
+        Ok(false) => {
+            state.record_log(
+                LogPayload::new(
+                    LogLevel::Info,
+                    "library-search",
+                    "library_search.incremental_skipped",
+                    "No active search index; falling back to full rebuild",
+                )
+                .context(json!({
+                    "changed_album_count": changed_albums.len(),
+                })),
+            );
+            false
+        }
+        Err(error) => {
+            state.record_log(
+                LogPayload::new(
+                    LogLevel::Warn,
+                    "library-search",
+                    "library_search.incremental_apply_failed",
+                    "Incremental tag update failed; falling back to full rebuild",
+                )
+                .context(json!({
+                    "changed_album_count": changed_albums.len(),
+                }))
+                .details(error.to_string()),
+            );
+            false
+        }
+    }
+}
+
+/// 计算两版 tag registry 之间发生 tag 变更的专辑 CID 集合。
+///
+/// 覆盖两类变更：
+/// - 专辑级 tag 集合发生变化（含新增、删除、内容修改）。
+/// - 歌曲级 tag 集合发生变化，通过 `song_album_map` 回溯到所属专辑 CID。
+///
+/// # 参数
+/// - `old`：旧的 tag registry 快照。
+/// - `new`：新的 tag registry 快照。
+/// - `song_album_map`：来自当前搜索快照的"歌曲 CID → 专辑 CID"映射；缺失映射的
+///   歌曲变更会被忽略（这些专辑通常不在当前库存中，即便刷新也不会命中搜索）。
+///
+/// # 返回值
+/// 变更专辑 CID 的去重列表，顺序不保证。
+fn compute_changed_album_cids(
+    old: &crate::tag_registry::TagRegistry,
+    new: &crate::tag_registry::TagRegistry,
+    song_album_map: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let old_album_tags = crate::tag_registry::albums_to_tag_map(&old.albums, &old.type_definitions);
+    let new_album_tags = crate::tag_registry::albums_to_tag_map(&new.albums, &new.type_definitions);
+    let old_song_tags = crate::tag_registry::songs_to_tag_map(&old.songs);
+    let new_song_tags = crate::tag_registry::songs_to_tag_map(&new.songs);
+
+    let mut changed: HashSet<String> = HashSet::new();
+
+    let mut album_cids: HashSet<&String> = HashSet::new();
+    album_cids.extend(old_album_tags.keys());
+    album_cids.extend(new_album_tags.keys());
+    for cid in album_cids {
+        let old_tags = old_album_tags.get(cid).map(|s| &s.tags);
+        let new_tags = new_album_tags.get(cid).map(|s| &s.tags);
+        if old_tags != new_tags {
+            changed.insert(cid.clone());
+        }
+    }
+
+    let mut song_cids: HashSet<&String> = HashSet::new();
+    song_cids.extend(old_song_tags.keys());
+    song_cids.extend(new_song_tags.keys());
+    for song_cid in song_cids {
+        let old_tags = old_song_tags.get(song_cid).map(|s| &s.tags);
+        let new_tags = new_song_tags.get(song_cid).map(|s| &s.tags);
+        if old_tags != new_tags {
+            if let Some(album_cid) = song_album_map.get(song_cid) {
+                changed.insert(album_cid.clone());
+            }
+        }
+    }
+
+    changed.into_iter().collect()
 }
 
 fn normalize_seek_position(position_secs: f64, duration_secs: f64) -> f64 {

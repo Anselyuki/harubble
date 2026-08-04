@@ -72,3 +72,31 @@ pub struct TagGroup {
     /// 命中该 tag 值的专辑列表。
     pub albums: Vec<Album>,
 }
+
+/// 从专辑名称中派生系列标签。
+///
+/// 对名称做大小写不敏感的单词边界匹配，识别 OST、EP 等关键词。
+/// 返回匹配到的标签列表；未匹配到任何关键词时返回空列表。
+pub fn derive_series_tags(name: &str) -> Vec<&'static str> {
+    let upper = name.to_uppercase();
+    let bytes = upper.as_bytes();
+    let mut tags = Vec::new();
+
+    if let Some(pos) = upper.find("OST") {
+        let before_ok = pos == 0 || !bytes[pos - 1].is_ascii_alphanumeric();
+        let after_ok = pos + 3 >= bytes.len() || !bytes[pos + 3].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            tags.push("OST");
+        }
+    }
+
+    if let Some(pos) = upper.find("EP") {
+        let before_ok = pos == 0 || !bytes[pos - 1].is_ascii_alphanumeric();
+        let after_ok = pos + 2 >= bytes.len() || !bytes[pos + 2].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            tags.push("EP");
+        }
+    }
+
+    tags
+}

@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "ark-ui-exa",
+    "name": "Astral Archive",
+    "version": "1.0.0",
+    "description": "Original midnight, aqua, and serif-led cosmic archive theme.",
+    "author": "Harubble Contributors",
+    "license": "MIT",
+    "minAppVersion": "2.2.0"
+  },
+  "visualContract": {
+    "family": "exa",
+    "depth": "moderate"
+  },
+  "slots": {
+    "accent": "#46F6E6",
+    "surface": "#080914",
+    "textPrimary": "#F3F2EF",
+    "textSecondary": "#AAABBA",
+    "tint": "#7D82AA",
+    "danger": "#FF6175"
+  },
+  "variants": {
+    "light": {
+      "accent": "#008F86",
+      "surface": "#F3F2EF",
+      "textPrimary": "#080914",
+      "textSecondary": "#54586A",
+      "tint": "#737991",
+      "danger": "#C43E55"
+    },
+    "dark": {
+      "accent": "#46F6E6",
+      "surface": "#080914",
+      "textPrimary": "#F3F2EF",
+      "textSecondary": "#AAABBA",
+      "tint": "#7D82AA",
+      "danger": "#FF6175"
+    }
+  },
+  "motion": {
+    "micro": 120,
+    "fast": 220,
+    "base": 300,
+    "slow": 480,
+    "page": 780,
+    "baseOut": 240,
+    "slowOut": 380,
+    "pageOut": 620,
+    "overlayIn": 360
+  },
+  "shape": {
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 22,
+    "2xl": 32,
+    "pill": 9999
+  },
+  "density": {
+    "xs": 4,
+    "sm": 10,
+    "md": 14,
+    "lg": 20,
+    "xl": 28
+  },
+  "elevation": {
+    "none": "none",
+    "xs": "0 1px 4px rgba(8, 9, 20, 0.12)",
+    "sm": "0 4px 12px rgba(8, 9, 20, 0.16)",
+    "md": "0 8px 24px rgba(8, 9, 20, 0.22), 0 0 0 1px rgba(70, 246, 230, 0.1)",
+    "lg": "0 16px 40px rgba(8, 9, 20, 0.28), 0 0 0 1px rgba(70, 246, 230, 0.14)",
+    "xl": "0 24px 64px rgba(8, 9, 20, 0.34), 0 0 24px rgba(70, 246, 230, 0.1)"
+  },
+  "blur": {
+    "sm": 6,
+    "md": 10,
+    "lg": 16,
+    "xl": 24
+  },
+  "fontFamily": {
+    "body": "HarmonyOS Sans SC, Arial, sans-serif",
+    "display": "Noto Serif SC, Songti SC, STSong, serif",
+    "mono": "SFMono-Regular, Cascadia Code, monospace"
+  },
+  "cssVariables": {
+    "--theme-custom-signal-alt": "#925DFF",
+    "--theme-custom-stage-opacity": "0.28",
+    "--theme-custom-attention-duration": "2200ms"
+  },
+  "cssVariableVariants": {
+    "light": {
+      "--theme-custom-panel": "rgba(243, 242, 239, 0.84)",
+      "--theme-custom-rule": "rgba(8, 9, 20, 0.18)"
+    },
+    "dark": {
+      "--theme-custom-panel": "rgba(8, 9, 20, 0.78)",
+      "--theme-custom-rule": "rgba(70, 246, 230, 0.18)"
+    }
+  }
+}

@@ -255,8 +255,8 @@
 <style>
   :global(.meta-trigger) {
     appearance: none;
-    width: 28px;
-    height: 28px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     border: none;
     background: transparent;
@@ -284,7 +284,7 @@
     max-height: 60vh;
     overflow-y: auto;
     padding: 12px 14px;
-    border-radius: 12px;
+    border-radius: var(--shape-lg);
     background: var(--bg-primary);
     border: 1px solid rgba(var(--accent-rgb), 0.1);
     box-shadow:
@@ -324,7 +324,7 @@
     font-weight: 600;
     line-height: 1;
     padding: 3px 8px;
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     background: rgba(var(--accent-rgb), 0.12);
     color: var(--accent);
     flex-shrink: 0;

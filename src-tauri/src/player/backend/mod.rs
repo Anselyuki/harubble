@@ -67,13 +67,28 @@ pub struct OutputFormat {
     pub device_identity: String,
 }
 
-/// 音频实时回调路径的聚合指标。
+/// 回调运行时间直方图桶数（覆盖 1μs~65ms 的 log2 分布）。
+///
+/// 索引 i 对应 [2^i μs, 2^(i+1) μs) 区间；索引 15 为 ≥32768μs（约 33ms 及以上）的溢出桶。
+pub const CALLBACK_DURATION_BUCKETS: usize = 16;
+
+/// 音频实时回调路径的聚合指标（P1-6 基准测量）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AudioCallbackMetrics {
     /// 输出回调因为拿不到样本缓冲锁而静音的次数。
     pub silence_due_to_lock: u64,
     /// 输出回调因可播放样本不足而补静音的帧数。
     pub underrun_frames: u64,
+    /// 上报窗口内回调调用总次数。
+    pub callback_count: u64,
+    /// 上报窗口内回调运行时间累加（纳秒），配合 `callback_count` 求平均。
+    pub callback_elapsed_ns_total: u64,
+    /// 上报窗口内单次回调最长运行时间（纳秒）。
+    pub callback_elapsed_ns_max: u64,
+    /// 上报窗口内回调运行时间 log2μs 直方图（索引即桶编号）。
+    ///
+    /// 供 monitor 线程近似求 P50/P95/P99 百分位；直方图桶在回调路径内以 Relaxed 原子写入。
+    pub callback_duration_buckets: [u64; CALLBACK_DURATION_BUCKETS],
 }
 
 /// 音频实时回调指标的上报回调。
@@ -102,6 +117,14 @@ pub trait PlaybackBackend: Send {
         underrun_handler: AudioUnderrunHandler,
     ) -> Result<()>;
 
+    /// 让当前输出进入会话切换期。
+    ///
+    /// 调用方会先停止旧会话；后端应停止消费旧样本，但尽可能保留设备输出流，持续
+    /// 写入数字静音，直到新流准备完成。无法保留流的后端可以退化为普通停止。
+    fn quiesce_for_transition(&mut self) -> Result<()> {
+        self.stop()
+    }
+
     /// 暂停播放。
     fn pause(&mut self) -> Result<()>;
 
@@ -113,6 +136,7 @@ pub trait PlaybackBackend: Send {
 }
 
 pub mod cpal;
+pub(crate) mod cpal_helpers;
 
 /// 创建默认播放后端实现。
 ///

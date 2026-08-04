@@ -25,6 +25,40 @@ export const THEME_COLOR_SLOTS = [
 
 export const DEFAULT_THEME_PRESET_ID = 'harubble-classic';
 
+/**
+ * Phase 0 Step 0.c 校准的系统内置浅色 slot 组合。
+ *
+ * 用途：`deriveGlobalTokensFromSlots(SYSTEM_LIGHT_SLOTS, 'light')` 与旧硬编码
+ * `LIGHT_TOKENS` 的 bg/text/surface 系列 token 逐字段匹配（tint 混合系数配合 0.08/0.184）。
+ * 派生输出与旧路径的最大差异 ≤ 1 RGB 通道（因四舍五入产生，视觉不可辨）。
+ *
+ * 与用户可导入的主题包 slot 声明结构一致，未来可作为 `system-light` 内置主题包导出。
+ */
+export const SYSTEM_LIGHT_SLOTS: ThemeColorSlots = {
+  accent: '#7c3aed',
+  surface: '#ffffff',
+  textPrimary: '#1d1d1f',
+  textSecondary: '#6e6e73',
+  tint: '#82829B',
+  danger: '#ef4444',
+};
+
+/**
+ * Phase 0 Step 0.c 校准的系统内置深色 slot 组合。
+ *
+ * 用途：`deriveGlobalTokensFromSlots(SYSTEM_DARK_SLOTS, 'dark')` 与旧硬编码
+ * `DARK_TOKENS` 的 bg/text/surface 系列 token 匹配（tint 混合系数配合 0.12/0.187）。
+ * 派生输出与旧路径 bgSecondary R/G/B 差异 ≤ 1，textTertiary 通过降饱和+减亮度公式派生。
+ */
+export const SYSTEM_DARK_SLOTS: ThemeColorSlots = {
+  accent: '#7c3aed',
+  surface: '#000000',
+  textPrimary: '#ffffff',
+  textSecondary: '#8e8e93',
+  tint: '#E9E9FA',
+  danger: '#ef4444',
+};
+
 export const HARUBBLE_CLASSIC_COLORS: ThemeColorSlots = {
   accent: '#FFE47A',
   surface: '#D1D6DB',

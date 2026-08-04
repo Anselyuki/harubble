@@ -2,7 +2,6 @@
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
   import { Input } from '$lib/components/ui/input/index.js';
-  import { Button } from '$lib/components/ui/button/index.js';
   import { Search } from '@lucide/svelte';
   import type { LibrarySearchScope } from '$lib/types';
 
@@ -36,47 +35,53 @@
     };
   });
 
-  const activeScopeLabel = $derived.by(
-    () => labels[scopeOptions.find((o) => o.value === scope)?.labelKey ?? 'all']
+  const activeScopeLabel = $derived(
+    labels[
+      scopeOptions.find((option) => option.value === scope)?.labelKey ?? 'all'
+    ]
   );
 
-  function cycleScope() {
-    const idx = scopeOptions.findIndex((o) => o.value === scope);
-    const next = (idx + 1) % scopeOptions.length;
-    onScopeChange(scopeOptions[next]?.value ?? 'all');
-  }
+  const scopeAria = $derived.by(() => {
+    void localeState.current;
+    return m.library_search_scope_title({ scope: activeScopeLabel });
+  });
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      onSubmit();
-    }
+  function handleSubmit(event: SubmitEvent) {
+    event.preventDefault();
+    onSubmit();
   }
 </script>
 
-<div class="search-bar" class:has-query={query.length > 0}>
-  <Button
-    variant="outline"
-    size="icon"
-    class="scope-btn"
-    data-scope={scope}
-    aria-label={activeScopeLabel}
-    title={activeScopeLabel}
-    onclick={cycleScope}
-  >
-    {activeScopeLabel}
-  </Button>
-
+<form
+  class="search-bar"
+  class:has-query={query.length > 0}
+  role="search"
+  onsubmit={handleSubmit}
+>
   <Input
     value={query}
     placeholder={labels.placeholder}
     class="search-input"
+    data-testid="search-input"
     aria-label={labels.placeholder}
     oninput={(e) => onQueryChange((e.currentTarget as HTMLInputElement).value)}
-    onkeydown={handleKeydown}
   />
 
   <Search size={16} class="search-icon" aria-hidden="true" />
-</div>
+
+  <div class="scope-segment" role="group" aria-label={scopeAria}>
+    {#each scopeOptions as option (option.value)}
+      <button
+        type="button"
+        class:active={scope === option.value}
+        aria-pressed={scope === option.value}
+        onclick={() => onScopeChange(option.value)}
+      >
+        {labels[option.labelKey]}
+      </button>
+    {/each}
+  </div>
+</form>
 
 <style>
   .search-bar {
@@ -84,7 +89,7 @@
     align-items: center;
     gap: 10px;
     padding: 10px 16px;
-    border-radius: 16px;
+    border-radius: var(--shape-xl);
     background: var(--toolbar-surface);
     border: 1px solid var(--toolbar-highlight);
     backdrop-filter: blur(18px) saturate(1.3);
@@ -122,38 +127,62 @@
     flex-shrink: 0;
   }
 
-  .search-bar :global(.scope-btn) {
-    --scope-bg: var(--accent);
-    interpolate-size: allow-keywords;
-    width: auto;
-    min-width: 28px;
-    height: 28px;
-    padding: 0 8px;
-    border: 1px solid color-mix(in srgb, var(--scope-bg) 72%, white 28%);
-    border-radius: 8px;
-    background: var(--scope-bg);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.22),
-      0 4px 10px color-mix(in srgb, var(--scope-bg) 24%, transparent);
-    color: var(--accent-readable-foreground);
-    font-family: var(--font-wide);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    line-height: 1;
-    white-space: nowrap;
+  .scope-segment {
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(44px, auto);
+    padding: 2px;
+    border: 1px solid var(--toolbar-highlight);
+    border-radius: var(--shape-md);
+    background: color-mix(
+      in srgb,
+      var(--toolbar-surface) 74%,
+      var(--text-primary) 6%
+    );
     flex-shrink: 0;
   }
 
-  .search-bar :global(.scope-btn[data-scope='albums']) {
-    --scope-bg: oklch(from var(--accent) l c calc(h + 22));
+  .scope-segment button {
+    min-width: 44px;
+    height: 40px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--shape-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-wide);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: var(--motion-hover);
   }
 
-  .search-bar :global(.scope-btn[data-scope='songs']) {
-    --scope-bg: oklch(from var(--accent) l c calc(h - 28));
+  .scope-segment button:hover {
+    color: var(--text-primary);
+    background: var(--hover-bg-elevated);
   }
 
-  .search-bar :global(.scope-btn:active) {
-    transform: scale(0.94);
+  .scope-segment button.active {
+    background: var(--accent);
+    color: var(--accent-readable-foreground);
+  }
+
+  .scope-segment button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  @media (max-width: 620px) {
+    .search-bar {
+      flex-wrap: wrap;
+    }
+
+    .scope-segment {
+      width: 100%;
+      grid-auto-columns: minmax(0, 1fr);
+    }
   }
 </style>

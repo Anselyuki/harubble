@@ -34,13 +34,12 @@
   <section class="tag-groups" aria-label={labels.aria}>
     <h2 class="section-title">{labels.title}</h2>
 
-    <div class="dimension-chips" role="tablist">
+    <div class="dimension-chips" role="group" aria-label={labels.title}>
       {#each dimensions as dim (dim.key)}
         <button
           class="dimension-chip"
           class:active={selectedDimensionKey === dim.key}
-          role="tab"
-          aria-selected={selectedDimensionKey === dim.key}
+          aria-pressed={selectedDimensionKey === dim.key}
           onclick={() => onSelectDimension(dim.key)}
           type="button"
         >
@@ -116,7 +115,7 @@
 
   .dimension-chip {
     padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     border: 1px solid var(--text-tertiary, rgba(255, 255, 255, 0.2));
     background: none;
     color: var(--text-secondary, rgba(255, 255, 255, 0.6));
@@ -134,7 +133,7 @@
   .dimension-chip.active {
     background: var(--accent, rgb(250, 45, 72));
     border-color: var(--accent, rgb(250, 45, 72));
-    color: #fff;
+    color: var(--accent-readable-foreground);
   }
 
   .group-list {

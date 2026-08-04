@@ -131,7 +131,7 @@
     gap: 6px;
     padding: 14px;
     border: 1px solid rgba(255, 255, 255, 0.55);
-    border-radius: 12px;
+    border-radius: var(--shape-lg);
     background: rgba(255, 255, 255, 0.62);
     backdrop-filter: blur(12px) saturate(1.2);
     -webkit-backdrop-filter: blur(12px) saturate(1.2);
@@ -160,7 +160,7 @@
     text-transform: uppercase;
     color: var(--accent);
     background: rgba(var(--accent-rgb), 0.1);
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     padding: 2px 6px;
     align-self: flex-start;
   }

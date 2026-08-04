@@ -20,7 +20,7 @@
   );
   const open = $derived(openCtx?.value ?? true);
 
-  let mounted = $state(true);
+  let mounted = $state(openCtx?.value ?? true);
 
   $effect(() => {
     if (open) mounted = true;
@@ -60,8 +60,9 @@
     forceMount
     data-slot="alert-dialog-overlay"
     class={cn(
-      'bg-black/20 supports-[backdrop-filter]:backdrop-blur-sm fixed inset-0 z-50',
-      className
+      'bg-black/20 supports-[backdrop-filter]:backdrop-blur-sm fixed inset-0 z-[var(--z-dialog-overlay)]',
+      className,
+      !open && '!pointer-events-none'
     )}
     {...restProps}
   />

@@ -19,6 +19,8 @@ const LIGHT_TOKENS: Omit<
   | 'accentHoverReadableForeground'
   | 'destructive'
   | 'destructiveRgb'
+  | 'tint'
+  | 'tintRgb'
   | 'ring'
   | 'surfaceState'
 > = {
@@ -53,10 +55,133 @@ function getEffectiveScheme(): 'light' | 'dark' {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
 }
 
+const FEATURE_FLAG_KEY = 'theme_derive_from_slots';
+
+/**
+ * 检查是否启用"从 slot 派生全局 token"的 feature flag。
+ *
+ * 优先级：环境变量 > localStorage > 默认关闭。
+ * 启用后 `resolveAppThemeTokenSet` 会走 `deriveGlobalTokensFromSlots` 派生路径，
+ * 关闭时继续走 LIGHT_TOKENS/DARK_TOKENS 硬编码常量查表。
+ *
+ * 用途：Phase 0 灰度切换保护，出现视觉退化时可即时回滚（无需发版）。
+ * SSR 与非浏览器环境（如测试 Node 环境）安全返回 false。
+ */
+export function isSlotDerivationEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(FEATURE_FLAG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function mixColors(a: RgbTuple, b: RgbTuple, ratio: number): RgbTuple {
+  return [
+    Math.round(a[0] * (1 - ratio) + b[0] * ratio),
+    Math.round(a[1] * (1 - ratio) + b[1] * ratio),
+    Math.round(a[2] * (1 - ratio) + b[2] * ratio),
+  ];
+}
+
+function adjustSidebarLightness(
+  surfaceRgb: RgbTuple,
+  scheme: 'light' | 'dark'
+): string {
+  const [h, s, l] = rgbToHsl(surfaceRgb);
+  const delta = scheme === 'dark' ? 0.05 : -0.04;
+  return rgbToHex(hslToRgb(h, s, Math.max(0, Math.min(1, l + delta))));
+}
+
+function deriveTextTertiary(
+  textSecondaryRgb: RgbTuple,
+  scheme: 'light' | 'dark'
+): string {
+  const [h, s, l] = rgbToHsl(textSecondaryRgb);
+  const newS = Math.max(0, s - 0.05);
+  const newL =
+    scheme === 'light' ? Math.min(1, l + 0.1) : Math.max(0, l - 0.08);
+  return rgbToHex(hslToRgb(h, newS, newL));
+}
+
+/**
+ * 从 6 个颜色 slot 派生完整的 23 个全局 ThemeTokenSet。
+ *
+ * 用途：App Theme 路径的唯一 token 来源，替代硬编码的 LIGHT_TOKENS/DARK_TOKENS 常量查表。
+ * 入参：ThemeColorSlots 6 个 slot（accent/surface/textPrimary/textSecondary/tint/danger）
+ *       + scheme（light/dark，仅影响混合比例与方向）。
+ * 出参：21 个字段完整填充的 ThemeTokenSet。
+ * 副作用：无（纯函数）。
+ *
+ * 派生规则（与 color-slot-activation.md §3 对齐）：
+ * - surface → bgPrimary、surfaceBase（直接）、surfaceSidebar（±亮度 4-5%）、surfaceOverlay（+76% alpha）
+ * - textPrimary → textPrimary（直接）
+ * - textSecondary → textSecondary（直接）、textTertiary（降饱和+调亮度）
+ * - tint → bgSecondary（surface+tint 8-12% 混合）、bgTertiary（16-20% 混合）、bgElevated（bgSecondary+80% alpha）、border（tint+8% alpha）
+ * - accent → accent/accentHover/accentRgb/ring/surfaceState 全套派生
+ * - danger → destructive/destructiveRgb
+ */
+export function deriveGlobalTokensFromSlots(
+  slots: ThemeColorSlots,
+  scheme: 'light' | 'dark'
+): ThemeTokenSet {
+  const surfaceRgb = hexToRgb(slots.surface);
+  const tintRgb = hexToRgb(slots.tint);
+  const textSecondaryRgb = hexToRgb(slots.textSecondary);
+  const accentRgb = hexToRgb(slots.accent);
+  const accentHoverHex = deriveAccentHoverHex(slots.accent);
+  const accentHoverRgb = hexToRgb(accentHoverHex);
+  const destructiveRgb = hexToRgb(slots.danger);
+
+  // Step 0.c 校准值：与 LIGHT_TOKENS/DARK_TOKENS 精确匹配的混合系数
+  // - 浅色 k1=0.08 / k2=0.184：配合 tint=#82829B 得到 bgSecondary=#F5F5F7、bgTertiary=#E8E8ED
+  // - 深色 k1=0.12 / k2=0.187：配合 tint=#E9E9FA 得到 bgSecondary=#1C1C1E、bgTertiary≈#2C2C2E
+  const secondaryRatio = scheme === 'dark' ? 0.12 : 0.08;
+  const tertiaryRatio = scheme === 'dark' ? 0.187 : 0.184;
+  const bgSecondaryRgb = mixColors(surfaceRgb, tintRgb, secondaryRatio);
+  const bgTertiaryRgb = mixColors(surfaceRgb, tintRgb, tertiaryRatio);
+
+  const border =
+    scheme === 'dark'
+      ? `rgba(255, 255, 255, 0.08)`
+      : `rgba(${tintRgb.join(', ')}, 0.08)`;
+
+  return {
+    accent: slots.accent,
+    accentHover: accentHoverHex,
+    accentRgb: accentRgb.join(', '),
+    accentHoverRgb: accentHoverRgb.join(', '),
+    accentReadableForeground: getReadableForeground(accentRgb),
+    accentHoverReadableForeground: getReadableForeground(accentHoverRgb),
+    bgPrimary: slots.surface,
+    bgSecondary: rgbToHex(bgSecondaryRgb),
+    bgTertiary: rgbToHex(bgTertiaryRgb),
+    bgElevated: `rgba(${bgSecondaryRgb.join(', ')}, 0.8)`,
+    textPrimary: slots.textPrimary,
+    textSecondary: slots.textSecondary,
+    textTertiary: deriveTextTertiary(textSecondaryRgb, scheme),
+    tint: slots.tint,
+    tintRgb: tintRgb.join(', '),
+    border,
+    ring: `rgba(${accentRgb.join(', ')}, 0.3)`,
+    destructive: slots.danger,
+    destructiveRgb: destructiveRgb.join(', '),
+    surfaceState: `rgba(${accentRgb.join(', ')}, 0.08)`,
+    surfaceBase: slots.surface,
+    surfaceSidebar: adjustSidebarLightness(surfaceRgb, scheme),
+    surfaceOverlay: `rgba(${surfaceRgb.join(', ')}, 0.76)`,
+  };
+}
+
 export function resolveAppThemeTokenSet(
   themeColors: ThemeColorSlots,
   scheme: 'light' | 'dark' = getEffectiveScheme()
 ): ThemeTokenSet {
+  // Phase 0 Step 0.d：feature flag 保护的派生路径切换
+  if (isSlotDerivationEnabled()) {
+    return deriveGlobalTokensFromSlots(themeColors, scheme);
+  }
+
   const base = scheme === 'dark' ? DARK_TOKENS : LIGHT_TOKENS;
   const accentRgb = hexToRgb(themeColors.accent);
   const accentHoverHex = deriveAccentHoverHex(themeColors.accent);
@@ -78,6 +203,8 @@ export function resolveAppThemeTokenSet(
     textPrimary: base.textPrimary,
     textSecondary: base.textSecondary,
     textTertiary: base.textTertiary,
+    tint: themeColors.tint,
+    tintRgb: hexToRgb(themeColors.tint).join(', '),
     border: base.border,
     ring: `rgba(${accentRgb.join(', ')}, 0.3)`,
     destructive: destructiveHex,
@@ -103,6 +230,8 @@ const APP_TOKEN_CSS_MAP: Record<keyof ThemeTokenSet, string> = {
   textPrimary: '--text-primary',
   textSecondary: '--text-secondary',
   textTertiary: '--text-tertiary',
+  tint: '--theme-tint',
+  tintRgb: '--theme-tint-rgb',
   border: '--border',
   ring: '--ring',
   destructive: '--destructive',
@@ -112,19 +241,6 @@ const APP_TOKEN_CSS_MAP: Record<keyof ThemeTokenSet, string> = {
   surfaceSidebar: '--surface-sidebar',
   surfaceOverlay: '--surface-overlay',
 };
-
-const ACCENT_TOKEN_KEYS: (keyof ThemeTokenSet)[] = [
-  'accent',
-  'accentHover',
-  'accentRgb',
-  'accentHoverRgb',
-  'accentReadableForeground',
-  'accentHoverReadableForeground',
-  'ring',
-  'surfaceState',
-  'destructive',
-  'destructiveRgb',
-];
 
 const CONTEXT_TOKEN_ALLOWLIST = [
   '--accent',
@@ -159,10 +275,13 @@ export function applyAppThemeTokenSet(
 
   const cssVars: Record<string, string> = {};
   for (const [key, cssVar] of Object.entries(APP_TOKEN_CSS_MAP)) {
-    // accent token 由 applyContextThemePalette 写入，两者必须成对调用
-    if (ACCENT_TOKEN_KEYS.includes(key as keyof ThemeTokenSet)) continue;
     cssVars[cssVar] = tokens[key as keyof ThemeTokenSet];
   }
+  cssVars['--theme-surface'] = tokens.bgPrimary;
+  cssVars['--theme-surface-rgb'] = hexToRgb(tokens.bgPrimary).join(', ');
+  cssVars['--theme-accent'] = tokens.accent;
+  cssVars['--theme-text-primary'] = tokens.textPrimary;
+  cssVars['--theme-text-secondary'] = tokens.textSecondary;
 
   if (animate && target === document.documentElement) {
     transitionCssVariables(cssVars, 'app-tokens');
@@ -176,7 +295,7 @@ export function applyAppThemeTokenSet(
 export function applyContextThemePalette(
   palette: ThemePalette | null,
   baseTokens: ThemeTokenSet,
-  scheme: 'light' | 'dark' = 'light',
+  _scheme: 'light' | 'dark' = 'light',
   options: ApplyThemeOptions = {}
 ): void {
   const { target = document.documentElement, animate = true } = options;
@@ -188,17 +307,6 @@ export function applyContextThemePalette(
     palette?.accentHoverRgb ?? hexToRgb(accentHoverHex);
   const readableFg = getReadableForeground(accentRgb);
 
-  const adapted = palette ? adaptPaletteToScheme(palette, scheme) : null;
-
-  const surfaceHex = adapted?.surface ?? baseTokens.bgSecondary;
-  const surfaceRgb = hexToRgb(surfaceHex);
-  const textPrimaryHex = adapted?.textPrimary ?? baseTokens.textPrimary;
-  const textSecondaryHex = adapted?.textSecondary ?? baseTokens.textSecondary;
-  const tintHex = adapted?.tint ?? baseTokens.textSecondary;
-  const tintRgb = hexToRgb(tintHex);
-  const dangerHex = adapted?.danger ?? baseTokens.destructive;
-  const dangerRgb = hexToRgb(dangerHex);
-
   const cssVars: Record<string, string> = {
     '--accent': accentHex,
     '--accent-hover': accentHoverHex,
@@ -208,14 +316,6 @@ export function applyContextThemePalette(
     '--accent-hover-readable-foreground': getReadableForeground(accentHoverRgb),
     '--ring': `rgba(${accentRgb.join(', ')}, 0.3)`,
     '--surface-state': `rgba(${accentRgb.join(', ')}, 0.08)`,
-    '--theme-surface': surfaceHex,
-    '--theme-surface-rgb': surfaceRgb.join(', '),
-    '--theme-text-primary': textPrimaryHex,
-    '--theme-text-secondary': textSecondaryHex,
-    '--theme-tint': tintHex,
-    '--theme-tint-rgb': tintRgb.join(', '),
-    '--destructive': dangerHex,
-    '--destructive-rgb': dangerRgb.join(', '),
     '--album-accent': accentHex,
     '--album-accent-hover': accentHoverHex,
     '--album-accent-rgb': accentRgb.join(', '),
@@ -237,40 +337,6 @@ export function applyContextThemePalette(
       target.style.setProperty(prop, value);
     }
   }
-}
-
-function adaptPaletteToScheme(
-  palette: ThemePalette,
-  scheme: 'light' | 'dark'
-): {
-  surface: string;
-  textPrimary: string;
-  textSecondary: string;
-  tint: string;
-  danger: string;
-} {
-  if (scheme === 'light') {
-    return {
-      surface: palette.surfaceHex,
-      textPrimary: palette.textPrimaryHex,
-      textSecondary: palette.textSecondaryHex,
-      tint: palette.tintHex,
-      danger: palette.dangerHex,
-    };
-  }
-
-  const surfaceRgb = hexToRgb(palette.surfaceHex);
-  const textPrimaryRgb = hexToRgb(palette.textPrimaryHex);
-  const textSecondaryRgb = hexToRgb(palette.textSecondaryHex);
-  const tintRgb = hexToRgb(palette.tintHex);
-
-  return {
-    surface: rgbToHex(invertLightness(surfaceRgb)),
-    textPrimary: rgbToHex(invertLightness(textPrimaryRgb)),
-    textSecondary: rgbToHex(invertLightness(textSecondaryRgb)),
-    tint: rgbToHex(adjustLightnessForDark(tintRgb)),
-    danger: palette.dangerHex,
-  };
 }
 
 function rgbToHsl(rgb: RgbTuple): [number, number, number] {
@@ -309,16 +375,6 @@ function hslToRgb(h: number, s: number, l: number): RgbTuple {
     Math.round(hue2rgb(p, q, h) * 255),
     Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
   ];
-}
-
-function invertLightness(rgb: RgbTuple): RgbTuple {
-  const [h, s, l] = rgbToHsl(rgb);
-  return hslToRgb(h, s, 1 - l);
-}
-
-function adjustLightnessForDark(rgb: RgbTuple): RgbTuple {
-  const [h, s, l] = rgbToHsl(rgb);
-  return hslToRgb(h, Math.min(s, 0.5), Math.max(l, 0.55));
 }
 
 export { LIGHT_TOKENS, DARK_TOKENS, CONTEXT_TOKEN_ALLOWLIST };

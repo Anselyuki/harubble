@@ -5,7 +5,10 @@
   "type": "module",
   "description": "Cross-platform lossless music player and downloader built with Rust + Tauri 2",
   "scripts": {
+    "test": "bunx vitest run",
+    "test:watch": "bunx vitest",
     "dev": "vite",
+    "dev:web": "vite --mode e2e --port 1421",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -22,7 +25,9 @@
     "check:svelte": "bun run i18n:generate && bunx svelte-check",
     "check:build": "vite build",
     "check:cargo": "cargo check --workspace",
-    "sort:tags": "bun scripts/sort-tag-registry.mjs"
+    "sort:tags": "bun scripts/sort-tag-registry.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:visual": "playwright test --project=visual"
   },
   "keywords": [],
   "author": "",
@@ -40,6 +45,7 @@
     "@inlang/paraglide-js": "^2.16.1",
     "@internationalized/date": "^3.12.1",
     "@lucide/svelte": "^1.8.0",
+    "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tailwindcss/vite": "^4.1.14",
     "@tauri-apps/cli": "^2.11.1",

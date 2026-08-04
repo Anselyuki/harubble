@@ -302,6 +302,31 @@
           ]
         }
       ]
+    },
+    {
+      "id": "gaokao-support-songs",
+      "name": {
+        "zh-CN": "明日方舟历年高考应援曲",
+        "en-US": "Arknights Gaokao Support Songs"
+      },
+      "description": {
+        "zh-CN": "明日方舟 2020 至 2026 年高考应援曲合集",
+        "en-US": "Arknights Gaokao support songs from 2020 through 2026"
+      },
+      "cover": null,
+      "sections": [
+        {
+          "songIds": [
+            "461190",
+            "ext-heart-forest",
+            "306846",
+            "953984",
+            "306803",
+            "697699",
+            "779450"
+          ]
+        }
+      ]
     }
   ]
 }

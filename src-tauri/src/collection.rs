@@ -21,6 +21,7 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,6 +31,43 @@ use uuid::Uuid;
 
 /// 官方合集 ID 前缀，带此前缀的合集不可修改。
 const OFFICIAL_PREFIX: &str = "official:";
+
+// ─── 错误类型 ─────────────────────────────────────────────────────────────────
+
+/// 合集操作错误。
+///
+/// 实现 `Serialize`，可直接通过 Tauri IPC 序列化返回前端。
+/// 序列化格式：`{ "code": "<variant>", "detail": <payload> }`。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum CollectionError {
+    /// 合集不存在。
+    NotFound { id: String },
+    /// 官方合集不可修改。
+    ReadOnly,
+    /// 数据库操作失败。
+    Database(String),
+    /// 序列化 / 反序列化失败。
+    Serialization(String),
+    /// 不支持的导入格式版本。
+    UnsupportedVersion { version: u32 },
+}
+
+impl fmt::Display for CollectionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CollectionError::NotFound { id } => write!(f, "合集不存在: {id}"),
+            CollectionError::ReadOnly => write!(f, "官方合集不可修改"),
+            CollectionError::Database(msg) => write!(f, "{msg}"),
+            CollectionError::Serialization(msg) => write!(f, "{msg}"),
+            CollectionError::UnsupportedVersion { version } => {
+                write!(f, "不支持的导入格式版本: {version}，当前最高支持版本为 1")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CollectionError {}
 
 // ─── 数据结构 ─────────────────────────────────────────────────────────────────
 
@@ -186,10 +224,11 @@ impl CollectionService {
     ///
     /// 调用 `initialize_schema()` 确保数据库表结构存在。
     pub fn new(db_path: &Path, official_json: &[u8]) -> Result<Self, String> {
-        let conn = Connection::open(db_path).map_err(|e| format!("打开合集数据库失败: {e}"))?;
+        let conn = Connection::open(db_path)
+            .map_err(|e| format!("failed to open collection database: {e}"))?;
 
         let file: OfficialCollectionsFile = serde_json::from_slice(official_json)
-            .map_err(|e| format!("解析官方合集 JSON 失败: {e}"))?;
+            .map_err(|e| format!("failed to parse official collections JSON: {e}"))?;
 
         let official: Vec<OfficialCollectionEntry> = file
             .collections
@@ -259,7 +298,7 @@ impl CollectionService {
     /// # 返回值
     ///
     /// 官方合集在前，用户合集在后，均包含歌曲数量。
-    pub fn list_all(&self, locale: &str) -> Result<Vec<CollectionSummary>, String> {
+    pub fn list_all(&self, locale: &str) -> Result<Vec<CollectionSummary>, CollectionError> {
         let mut result: Vec<CollectionSummary> = Vec::new();
 
         // 官方合集：从内存映射，歌曲数量从 sections 计算
@@ -281,7 +320,7 @@ impl CollectionService {
         let conn = self
             .conn
             .lock()
-            .map_err(|e| format!("获取合集数据库锁失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("获取合集数据库锁失败: {e}")))?;
 
         let mut stmt = conn
             .prepare(
@@ -292,7 +331,7 @@ impl CollectionService {
                  GROUP BY c.id
                  ORDER BY c.updated_at DESC",
             )
-            .map_err(|e| format!("准备合集查询语句失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("准备合集查询语句失败: {e}")))?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -307,10 +346,11 @@ impl CollectionService {
                     is_official: false,
                 })
             })
-            .map_err(|e| format!("查询合集列表失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("查询合集列表失败: {e}")))?;
 
         for row in rows {
-            result.push(row.map_err(|e| format!("读取合集行失败: {e}"))?);
+            result
+                .push(row.map_err(|e| CollectionError::Database(format!("读取合集行失败: {e}")))?);
         }
 
         Ok(result)
@@ -326,14 +366,14 @@ impl CollectionService {
     /// # 返回值
     ///
     /// 成功返回 `Collection`，合集不存在时返回错误。
-    pub fn get(&self, id: &str, locale: &str) -> Result<Collection, String> {
+    pub fn get(&self, id: &str, locale: &str) -> Result<Collection, CollectionError> {
         if id.starts_with(OFFICIAL_PREFIX) {
             // 官方合集：从内存查找
             let entry = self
                 .official
                 .iter()
                 .find(|e| e.id == id)
-                .ok_or_else(|| format!("官方合集不存在: {id}"))?;
+                .ok_or_else(|| CollectionError::NotFound { id: id.to_string() })?;
 
             let sections: Vec<CollectionSection> = entry
                 .sections
@@ -360,7 +400,7 @@ impl CollectionService {
         let conn = self
             .conn
             .lock()
-            .map_err(|e| format!("获取合集数据库锁失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("获取合集数据库锁失败: {e}")))?;
 
         let (name, description, cover, created_at, updated_at): (String, String, Option<String>, i64, i64) = conn
             .query_row(
@@ -368,7 +408,7 @@ impl CollectionService {
                 params![id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
-            .map_err(|e| format!("查询合集失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("查询合集失败: {e}")))?;
 
         let mut song_stmt = conn
             .prepare(
@@ -376,13 +416,13 @@ impl CollectionService {
                  WHERE collection_id = ?1
                  ORDER BY position ASC",
             )
-            .map_err(|e| format!("准备歌曲查询语句失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("准备歌曲查询语句失败: {e}")))?;
 
         let song_ids: Vec<String> = song_stmt
             .query_map(params![id], |row| row.get(0))
-            .map_err(|e| format!("查询合集歌曲失败: {e}"))?
+            .map_err(|e| CollectionError::Database(format!("查询合集歌曲失败: {e}")))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("读取合集歌曲行失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("读取合集歌曲行失败: {e}")))?;
 
         Ok(Collection {
             id: id.to_string(),
@@ -417,21 +457,21 @@ impl CollectionService {
         name: &str,
         description: &str,
         cover_path: Option<&str>,
-    ) -> Result<Collection, String> {
+    ) -> Result<Collection, CollectionError> {
         let id = Uuid::new_v4().to_string();
         let now = now_millis();
 
         let conn = self
             .conn
             .lock()
-            .map_err(|e| format!("获取合集数据库锁失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("获取合集数据库锁失败: {e}")))?;
 
         conn.execute(
             "INSERT INTO collections (id, name, description, cover, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![id, name, description, cover_path, now, now],
         )
-        .map_err(|e| format!("创建合集失败: {e}"))?;
+        .map_err(|e| CollectionError::Database(format!("创建合集失败: {e}")))?;
 
         drop(conn);
         self.get(&id, "zh-CN")
@@ -455,7 +495,7 @@ impl CollectionService {
         name: Option<&str>,
         description: Option<&str>,
         cover_path: Option<Option<&str>>,
-    ) -> Result<Collection, String> {
+    ) -> Result<Collection, CollectionError> {
         guard_not_official(id)?;
 
         let now = now_millis();
@@ -463,14 +503,14 @@ impl CollectionService {
         let conn = self
             .conn
             .lock()
-            .map_err(|e| format!("获取合集数据库锁失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("获取合集数据库锁失败: {e}")))?;
 
         if let Some(n) = name {
             conn.execute(
                 "UPDATE collections SET name = ?1, updated_at = ?2 WHERE id = ?3",
                 params![n, now, id],
             )
-            .map_err(|e| format!("更新合集名称失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("更新合集名称失败: {e}")))?;
         }
 
         if let Some(d) = description {
@@ -478,7 +518,7 @@ impl CollectionService {
                 "UPDATE collections SET description = ?1, updated_at = ?2 WHERE id = ?3",
                 params![d, now, id],
             )
-            .map_err(|e| format!("更新合集描述失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("更新合集描述失败: {e}")))?;
         }
 
         if let Some(c) = cover_path {
@@ -486,7 +526,7 @@ impl CollectionService {
                 "UPDATE collections SET cover = ?1, updated_at = ?2 WHERE id = ?3",
                 params![c, now, id],
             )
-            .map_err(|e| format!("更新合集封面失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("更新合集封面失败: {e}")))?;
         }
 
         // 必须 drop conn，避免 Mutex 死锁（Mutex 不可重入）
@@ -503,20 +543,20 @@ impl CollectionService {
     /// # 返回值
     ///
     /// 成功返回 `()`，合集不存在时返回错误。
-    pub fn delete(&self, id: &str) -> Result<(), String> {
+    pub fn delete(&self, id: &str) -> Result<(), CollectionError> {
         guard_not_official(id)?;
 
         let conn = self
             .conn
             .lock()
-            .map_err(|e| format!("获取合集数据库锁失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("获取合集数据库锁失败: {e}")))?;
 
         let affected = conn
             .execute("DELETE FROM collections WHERE id = ?1", params![id])
-            .map_err(|e| format!("删除合集失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("删除合集失败: {e}")))?;
 
         if affected == 0 {
-            return Err(format!("合集不存在: {id}"));
+            return Err(CollectionError::NotFound { id: id.to_string() });
         }
 
         Ok(())
@@ -534,13 +574,13 @@ impl CollectionService {
     /// # 副作用
     ///
     /// 更新合集的 `updated_at` 时间戳。
-    pub fn add_songs(&self, id: &str, song_ids: &[String]) -> Result<(), String> {
+    pub fn add_songs(&self, id: &str, song_ids: &[String]) -> Result<(), CollectionError> {
         guard_not_official(id)?;
 
         let conn = self
             .conn
             .lock()
-            .map_err(|e| format!("获取合集数据库锁失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("获取合集数据库锁失败: {e}")))?;
 
         let max_pos: i64 = conn
             .query_row(
@@ -548,25 +588,23 @@ impl CollectionService {
                 params![id],
                 |row| row.get(0),
             )
-            .map_err(|e| format!("查询最大 position 失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("查询最大 position 失败: {e}")))?;
 
-        let mut pos = max_pos + 1;
         let now = now_millis();
-        for song_id in song_ids {
+        for (pos, song_id) in (max_pos + 1..).zip(song_ids) {
             conn.execute(
                 "INSERT OR IGNORE INTO collection_songs (collection_id, song_id, position, added_at)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![id, song_id, pos, now],
             )
-            .map_err(|e| format!("添加歌曲失败: {e}"))?;
-            pos += 1;
+            .map_err(|e| CollectionError::Database(format!("添加歌曲失败: {e}")))?;
         }
 
         conn.execute(
             "UPDATE collections SET updated_at = ?1 WHERE id = ?2",
             params![now, id],
         )
-        .map_err(|e| format!("更新合集时间戳失败: {e}"))?;
+        .map_err(|e| CollectionError::Database(format!("更新合集时间戳失败: {e}")))?;
 
         Ok(())
     }
@@ -581,20 +619,20 @@ impl CollectionService {
     /// # 副作用
     ///
     /// 更新合集的 `updated_at` 时间戳。
-    pub fn remove_songs(&self, id: &str, song_ids: &[String]) -> Result<(), String> {
+    pub fn remove_songs(&self, id: &str, song_ids: &[String]) -> Result<(), CollectionError> {
         guard_not_official(id)?;
 
         let conn = self
             .conn
             .lock()
-            .map_err(|e| format!("获取合集数据库锁失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("获取合集数据库锁失败: {e}")))?;
 
         for song_id in song_ids {
             conn.execute(
                 "DELETE FROM collection_songs WHERE collection_id = ?1 AND song_id = ?2",
                 params![id, song_id],
             )
-            .map_err(|e| format!("移除歌曲失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("移除歌曲失败: {e}")))?;
         }
 
         let now = now_millis();
@@ -602,7 +640,7 @@ impl CollectionService {
             "UPDATE collections SET updated_at = ?1 WHERE id = ?2",
             params![now, id],
         )
-        .map_err(|e| format!("更新合集时间戳失败: {e}"))?;
+        .map_err(|e| CollectionError::Database(format!("更新合集时间戳失败: {e}")))?;
 
         Ok(())
     }
@@ -617,18 +655,18 @@ impl CollectionService {
     /// # 副作用
     ///
     /// 在事务中批量更新 position，并更新合集的 `updated_at` 时间戳。
-    pub fn reorder_songs(&self, id: &str, song_ids: &[String]) -> Result<(), String> {
+    pub fn reorder_songs(&self, id: &str, song_ids: &[String]) -> Result<(), CollectionError> {
         guard_not_official(id)?;
 
         let conn = self
             .conn
             .lock()
-            .map_err(|e| format!("获取合集数据库锁失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("获取合集数据库锁失败: {e}")))?;
 
         // SAFETY: unchecked_transaction 在 Mutex 保护下安全使用
         let tx = conn
             .unchecked_transaction()
-            .map_err(|e| format!("开启事务失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("开启事务失败: {e}")))?;
 
         for (pos, song_id) in song_ids.iter().enumerate() {
             tx.execute(
@@ -636,7 +674,7 @@ impl CollectionService {
                  WHERE collection_id = ?2 AND song_id = ?3",
                 params![pos as i64, id, song_id],
             )
-            .map_err(|e| format!("更新歌曲排序失败: {e}"))?;
+            .map_err(|e| CollectionError::Database(format!("更新歌曲排序失败: {e}")))?;
         }
 
         let now = now_millis();
@@ -644,9 +682,10 @@ impl CollectionService {
             "UPDATE collections SET updated_at = ?1 WHERE id = ?2",
             params![now, id],
         )
-        .map_err(|e| format!("更新合集时间戳失败: {e}"))?;
+        .map_err(|e| CollectionError::Database(format!("更新合集时间戳失败: {e}")))?;
 
-        tx.commit().map_err(|e| format!("提交排序事务失败: {e}"))?;
+        tx.commit()
+            .map_err(|e| CollectionError::Database(format!("提交排序事务失败: {e}")))?;
 
         Ok(())
     }
@@ -663,7 +702,7 @@ impl CollectionService {
     /// # 返回值
     ///
     /// 成功返回格式化的 JSON 字符串（pretty-printed）。
-    pub fn export(&self, id: &str, locale: &str) -> Result<String, String> {
+    pub fn export(&self, id: &str, locale: &str) -> Result<String, CollectionError> {
         let collection = self.get(id, locale)?;
 
         let mut name_map = HashMap::new();
@@ -686,7 +725,8 @@ impl CollectionService {
             },
         };
 
-        serde_json::to_string_pretty(&exported).map_err(|e| format!("序列化合集失败: {e}"))
+        serde_json::to_string_pretty(&exported)
+            .map_err(|e| CollectionError::Serialization(format!("序列化合集失败: {e}")))
     }
 
     /// 从 JSON 字符串导入合集，创建新的用户合集。
@@ -703,15 +743,14 @@ impl CollectionService {
     ///
     /// - JSON 格式不合法。
     /// - `schema_version` 大于 1（不兼容的未来版本）。
-    pub fn import(&self, json: &str) -> Result<Collection, String> {
-        let exported: ExportedCollection =
-            serde_json::from_str(json).map_err(|e| format!("解析导入 JSON 失败: {e}"))?;
+    pub fn import(&self, json: &str) -> Result<Collection, CollectionError> {
+        let exported: ExportedCollection = serde_json::from_str(json)
+            .map_err(|e| CollectionError::Serialization(format!("解析导入 JSON 失败: {e}")))?;
 
         if exported.schema_version > 1 {
-            return Err(format!(
-                "不支持的导入格式版本: {}，当前最高支持版本为 1",
-                exported.schema_version
-            ));
+            return Err(CollectionError::UnsupportedVersion {
+                version: exported.schema_version,
+            });
         }
 
         let data = exported.collection;
@@ -762,9 +801,9 @@ fn resolve_locale(value: &LocalizedValue, locale: &str) -> String {
 /// # 返回值
 ///
 /// 若 ID 以 `OFFICIAL_PREFIX` 开头，返回错误；否则返回 `Ok(())`。
-fn guard_not_official(id: &str) -> Result<(), String> {
+fn guard_not_official(id: &str) -> Result<(), CollectionError> {
     if id.starts_with(OFFICIAL_PREFIX) {
-        return Err("官方合集不可修改".to_string());
+        return Err(CollectionError::ReadOnly);
     }
     Ok(())
 }

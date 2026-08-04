@@ -15,10 +15,12 @@ export function transition(
     case CapsuleState.Closed:
       return event === 'OPEN' ? CapsuleState.Expanding : state;
     case CapsuleState.Expanding:
-      return event === 'EXPANDED' ? CapsuleState.Open : state;
+      if (event === 'EXPANDED') return CapsuleState.Open;
+      return event === 'CLOSE' ? CapsuleState.Collapsing : state;
     case CapsuleState.Open:
       return event === 'CLOSE' ? CapsuleState.Collapsing : state;
     case CapsuleState.Collapsing:
-      return event === 'COLLAPSED' ? CapsuleState.Closed : state;
+      if (event === 'COLLAPSED') return CapsuleState.Closed;
+      return event === 'OPEN' ? CapsuleState.Expanding : state;
   }
 }

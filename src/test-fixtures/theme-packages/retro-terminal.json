@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "retro-terminal",
+    "name": "Retro Terminal",
+    "version": "1.0.0",
+    "description": "Monochrome green-on-black terminal aesthetic with snappier motion.",
+    "author": "harubble",
+    "license": "MIT"
+  },
+  "slots": {
+    "accent": "#00ff41",
+    "surface": "#000000",
+    "textPrimary": "#00ff41",
+    "textSecondary": "#00b32b",
+    "tint": "#003c11",
+    "danger": "#ff0033"
+  },
+  "motion": {
+    "fast": 90,
+    "base": 120,
+    "slow": 180,
+    "page": 220
+  },
+  "visualContract": {
+    "family": "terminal",
+    "depth": "flat"
+  },
+  "shape": {
+    "xs": 0,
+    "sm": 0,
+    "md": 0,
+    "lg": 2,
+    "xl": 2,
+    "2xl": 4,
+    "pill": 0
+  },
+  "density": {
+    "xs": 2,
+    "sm": 6,
+    "md": 10,
+    "lg": 14,
+    "xl": 20
+  }
+}

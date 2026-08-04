@@ -21,16 +21,31 @@
 - `pull_request` 到 `main`
 - `pull_request` 到 `develop`
 
-当前 CI 执行内容：
+CI 会先用 `dorny/paths-filter` 判断本次 PR 是否命中 workflow 中配置的代码路径；据此分流为两条互斥路径：
 
+- **未命中代码路径**：只跑 `docs-lint` job，命令为 `bunx prettier --check "**/*.md"`。
+- **命中代码路径**：跑 `quality`、`test` 与跨平台 `build-check` job。
+
+`bun run check` 聚合脚本一次性覆盖以下步骤：
+
+- `bun run i18n:generate`（Paraglide 生成）
 - `bun run format:check`
 - `bun run lint:eslint`
+- `bun run lint:rustfmt`（等价于 `cargo fmt --all --check`）
 - `bun run check:types`
 - `bun run check:svelte`
 - `bun run check:build`
-- `cargo fmt --all --check`
-- `cargo check --workspace`
+- `bun run check:cargo`（等价于 `cargo check --workspace`）
+
+`test` job 单独执行三组门禁：
+
 - `cargo test --workspace`
+- `bun run test`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+
+macOS / Windows 的 `build-check` 只运行 `cargo check --workspace`，用于验证跨平台编译兼容性，不打包或上传制品。实际安装包与便携程序只由发布矩阵构建。
+
+代码路径清单以 `.github/workflows/ci.yml` 为准；它不等同于“除 Markdown 外的所有文件”。调整目录结构或新增构建输入时，应同步更新过滤规则。
 
 PR 阶段不会执行以下行为：
 
@@ -127,40 +142,22 @@ PR 阶段不会执行以下行为：
 
 - `macos_intel` 对应 Intel Mac
 - `macos_apple_silicon` 对应 Apple Silicon Mac
-- macOS 当前发布的是未签名、未公证的 DMG；workflow 会在 DMG 内加入 `README-macOS.txt` 和 Applications 快捷方式，但不会执行 codesign 或 notarization
+- macOS 当前发布的是未签名、未公证的 DMG；workflow 会加入双语 `README-macOS.txt`、双语背景和 Applications 快捷方式，并设置 Finder 图标布局，但不会执行 codesign 或 notarization
 - Windows 当前发布的是依赖系统 `WebView2` 运行时的精简便携 `.exe`，不是 NSIS 安装包
 - Linux 当前发布的是 AppImage 格式；构建环境为 Ubuntu 22.04，要求 glibc 2.35+，但发布包尚未经过完整测试，用户反馈应优先收敛到 Issues
 
-## 推荐用法
+## Windows 构建约束
 
-### 普通合并
+Windows release 必须保持 GUI 子系统，避免启动应用时出现额外终端窗口：
 
-如果这次 PR 只是普通功能、修复、文档或维护更新：
+```rust
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+```
 
-1. 正常提 PR 到 `main` 或 `develop`
-2. 等待 CI 通过
-3. 合并 PR
-4. 不触发 release
-
-### 自动升版本发布
-
-如果这次合并需要发版，但不想手动指定版本号：
-
-1. 在 PR 模板里勾选 `合并到 `main` 后发布新版本`
-2. 不填写 `Release-As:`
-3. 等待 CI 通过
-4. 合并 PR
-5. 发布 workflow 会自动按最新正式版升一个小版本号并发布
-
-### 指定版本发布
-
-如果这次合并需要明确版本号：
-
-1. 在 PR 标题或描述中填写 `Release-As: vX.Y.Z`
-2. 可选地勾选发布开关，但即使不勾选，只要填写了 `Release-As:` 也会触发发布
-3. 等待 CI 通过
-4. 合并 PR
-5. 发布 workflow 会使用你指定的版本号进行发布
+- 该属性必须位于 `src-tauri/src/main.rs` 顶部；重命名入口或新增 GUI 二进制入口时同步设置。
+- `@tauri-apps/api` 与 Rust `tauri` crate 的 minor 版本必须一致。
+- Windows 本地安装包验证使用 `bun run tauri:build`；平台配置会生成 NSIS。发布 workflow 通过 `tauri-apps/tauri-action` 向 `bun tauri` 传入 `--target x86_64-pc-windows-msvc --no-bundle`；本地等价复现命令为 `bun run tauri:build -- --target x86_64-pc-windows-msvc --no-bundle`。
+- 构建完成后直接启动对应产物；发布等价路径是 `target/x86_64-pc-windows-msvc/release/harubble.exe`。确认不出现控制台窗口，且关闭 GUI 后进程正常退出。
 
 ## 注意事项
 

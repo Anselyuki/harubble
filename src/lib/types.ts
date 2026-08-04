@@ -29,6 +29,21 @@ export interface LocalInventorySnapshot {
   lastError: string | null;
 }
 
+/**
+ * 本地库存扫描过程中由后端推送到前端的进度事件载荷。
+ *
+ * 对应 Rust 侧 `LocalInventoryScanProgressEvent`（`crates/harubble-core/src/local_inventory/mod.rs`），
+ * 通过 `local-inventory-scan-progress` 事件发布。
+ */
+export interface LocalInventoryScanProgressEvent {
+  rootOutputDir: string;
+  inventoryVersion: string;
+  filesScanned: number;
+  matchedTrackCount: number;
+  verifiedTrackCount: number;
+  currentPath: string | null;
+}
+
 export interface AlbumDownloadBadge {
   isDownloaded: boolean;
   downloadStatus: LocalTrackDownloadStatus;
@@ -53,6 +68,19 @@ export interface Album {
   artists: string[];
   download: AlbumDownloadBadge;
   tags: TagEntry[];
+}
+
+export interface AlbumCatalogSnapshot {
+  albums: Album[];
+  revision: number;
+  checkedAt: number;
+}
+
+export interface AlbumCatalogRefreshedEvent {
+  revision: number;
+  checkedAt: number;
+  changed: boolean;
+  albumCount: number;
 }
 
 export interface SongEntry {
@@ -179,6 +207,10 @@ export interface ThemePreferences {
   customColors: Partial<ThemeColorSlots>;
   colorScheme?: ColorScheme;
   dynamicAlbumAccent?: boolean;
+  /** v2：当前激活的主题包 id；null / 缺失表示走 preset 派生路径 */
+  activePackageId?: string | null;
+  /** v2：主题偏好 CAS 版本号，每次成功写入递增 1；缺失时视为 0 */
+  revision?: number;
 }
 
 export interface ThemeTokenSet {
@@ -195,6 +227,8 @@ export interface ThemeTokenSet {
   textPrimary: string;
   textSecondary: string;
   textTertiary: string;
+  tint: string;
+  tintRgb: string;
   border: string;
   ring: string;
   destructive: string;
@@ -203,6 +237,159 @@ export interface ThemeTokenSet {
   surfaceBase: string;
   surfaceSidebar: string;
   surfaceOverlay: string;
+}
+
+// ---------------------------------------------------------------------------
+// Theme package types (mirrors src-tauri/src/theme_packages/types.rs)
+// ---------------------------------------------------------------------------
+
+export type ThemePackageStatus = 'staging' | 'committed' | 'pendingDelete';
+
+export interface ThemePackageManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  license?: string;
+  minAppVersion?: string;
+}
+
+export interface ThemePackageVariants {
+  light?: Partial<ThemeColorSlots>;
+  dark?: Partial<ThemeColorSlots>;
+}
+
+/**
+ * 主题包声明的 motion 档位覆盖（毫秒）。
+ *
+ * 与后端 ThemePackageMotion 形状一致；每个字段对应 gsap.ts 中 MOTION 常量的一档。
+ * 主题包激活时前端 applyMotionOverride 会同步到 GSAP + CSS 变量。
+ */
+export interface ThemePackageMotion {
+  micro?: number;
+  fast?: number;
+  base?: number;
+  slow?: number;
+  page?: number;
+  baseOut?: number;
+  slowOut?: number;
+  pageOut?: number;
+  overlayIn?: number;
+}
+
+/**
+ * 主题包 shape 档位覆盖（像素）。与 --shape-* CSS 变量一一对应。
+ */
+export interface ThemePackageShape {
+  xs?: number;
+  sm?: number;
+  md?: number;
+  lg?: number;
+  xl?: number;
+  '2xl'?: number;
+  pill?: number;
+}
+
+/**
+ * 主题包 density 档位覆盖（像素）。与 --density-* CSS 变量一一对应。
+ */
+export interface ThemePackageDensity {
+  xs?: number;
+  sm?: number;
+  md?: number;
+  lg?: number;
+  xl?: number;
+}
+
+/**
+ * 主题包 elevation 档位覆盖（完整 box-shadow 字符串）。
+ * 与 --elevation-* CSS 变量一一对应。sanitizer 会拒绝含 url/expression 等的值。
+ */
+export interface ThemePackageElevation {
+  none?: string;
+  xs?: string;
+  sm?: string;
+  md?: string;
+  lg?: string;
+  xl?: string;
+}
+
+/**
+ * 主题包 blur 档位覆盖（backdrop-filter 半径，像素）。
+ */
+export interface ThemePackageBlur {
+  sm?: number;
+  md?: number;
+  lg?: number;
+  xl?: number;
+}
+
+/**
+ * 主题包字体族声明（Phase 4 JSON 最小安全子集）。
+ *
+ * 声明 body / display / mono 三个语义角色的字体名，前端覆盖
+ * `--font-body` / `--font-display` / `--font-mono` CSS 变量。
+ * sanitizer 强制值不含 CSS 注入关键字与非法字符。
+ */
+export interface ThemePackageFontFamily {
+  body?: string;
+  display?: string;
+  mono?: string;
+}
+
+/**
+ * 主题包自定义 CSS 变量的昼夜覆盖。
+ *
+ * 每个模式仅需声明相对顶层 `cssVariables` 变化的变量；运行时会先应用基础变量，
+ * 再合并当前 effective scheme 的覆盖。缺失该字段的旧主题包保持原有行为。
+ */
+export interface ThemePackageCssVariableVariants {
+  light?: Record<string, string>;
+  dark?: Record<string, string>;
+}
+
+/**
+ * 主题包 visualContract 声明（Phase 3）。
+ *
+ * `family`：视觉语言族。当前 app 版本支持集在 SUPPORTED_THEME_FAMILIES 常量里；
+ * 不在支持集内的值会 fallback 到 `glass`。
+ * `depth`：视觉深度。同上；同时兼容 legacy 三档与 Ark UI 四档，未知值
+ * fallback 到 `balanced`。
+ */
+export interface ThemePackageVisualContract {
+  family?: string;
+  depth?: string;
+}
+
+export interface ThemePackageDocument {
+  schemaVersion: number;
+  manifest: ThemePackageManifest;
+  slots: Partial<ThemeColorSlots>;
+  variants?: ThemePackageVariants;
+  motion?: ThemePackageMotion;
+  shape?: ThemePackageShape;
+  density?: ThemePackageDensity;
+  elevation?: ThemePackageElevation;
+  blur?: ThemePackageBlur;
+  visualContract?: ThemePackageVisualContract;
+  /** Phase 4 JSON 最小安全子集：字体族声明，覆盖 --font-body / --font-display / --font-mono。 */
+  fontFamily?: ThemePackageFontFamily;
+  /** Phase 4 JSON 最小安全子集：自定义 CSS 变量，key 必须以 `--theme-custom-` 开头。 */
+  cssVariables?: Record<string, string>;
+  /** 自定义 CSS 变量的稀疏昼夜覆盖。 */
+  cssVariableVariants?: ThemePackageCssVariableVariants;
+  warnings?: string[];
+}
+
+export interface ThemePackageSummary {
+  id: string;
+  name: string;
+  version: string;
+  status: ThemePackageStatus;
+  builtin?: boolean;
+  sha256?: string | null;
+  warnings?: string[];
 }
 
 export type OutputFormat = 'flac' | 'wav' | 'mp3';
@@ -236,7 +423,7 @@ export type DownloadTaskStatus =
   | 'failed'
   | 'cancelled';
 
-export type DownloadErrorCode =
+export type DownloadTaskErrorCode =
   | 'network'
   | 'api'
   | 'io'
@@ -247,8 +434,8 @@ export type DownloadErrorCode =
   | 'invalidRequest'
   | 'internal';
 
-export interface DownloadErrorInfo {
-  code: DownloadErrorCode;
+export interface DownloadTaskErrorInfo {
+  code: DownloadTaskErrorCode;
   message: string;
   retryable: boolean;
   details: string | null;
@@ -272,7 +459,7 @@ export interface DownloadTaskSnapshot {
   bytesDone: number;
   bytesTotal: number | null;
   outputPath: string | null;
-  error: DownloadErrorInfo | null;
+  error: DownloadTaskErrorInfo | null;
   attempt: number;
   songIndex: number;
   songCount: number;
@@ -292,7 +479,7 @@ export interface DownloadJobSnapshot {
   failedTaskCount: number;
   cancelledTaskCount: number;
   tasks: DownloadTaskSnapshot[];
-  error: DownloadErrorInfo | null;
+  error: DownloadTaskErrorInfo | null;
 }
 
 export interface DownloadManagerSnapshot {
@@ -331,6 +518,8 @@ export interface PlaybackFormatState {
   resampling: boolean;
   channelRemix: boolean;
 }
+
+export type RepeatMode = 'off' | 'all' | 'one';
 
 export interface PlayerState {
   sessionId: number;
@@ -382,6 +571,7 @@ export interface PlaybackEndedEvent {
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface AppPreferences {
+  schemaVersion: number;
   outputFormat: OutputFormat;
   outputDir: string;
   downloadLyrics: boolean;
@@ -546,3 +736,123 @@ export interface CollectionSection {
 export interface Collection extends CollectionSummary {
   sections: CollectionSection[];
 }
+
+export type CollectionErrorCode =
+  | 'notFound'
+  | 'readOnly'
+  | 'database'
+  | 'serialization'
+  | 'unsupportedVersion';
+
+export type CollectionError =
+  | { code: 'notFound'; detail: { id: string } }
+  | { code: 'readOnly' }
+  | { code: 'database'; detail: string }
+  | { code: 'serialization'; detail: string }
+  | { code: 'unsupportedVersion'; detail: { version: number } };
+
+// ── Search ───────────────────────────────────────────────────────────────────
+
+export type SearchErrorCode = 'notReady' | 'internal';
+
+export type SearchError =
+  | { code: 'notReady' }
+  | { code: 'internal'; detail: string };
+
+// ── Library ──────────────────────────────────────────────────────────────────
+
+export type LibraryErrorCode = 'network' | 'notFound' | 'internal';
+
+export type LibraryError =
+  | { code: 'network'; detail: string }
+  | { code: 'notFound'; detail: { cid: string } }
+  | { code: 'internal'; detail: string };
+
+// ── Download ─────────────────────────────────────────────────────────────────
+
+export type DownloadErrorCode =
+  | 'notFound'
+  | 'network'
+  | 'io'
+  | 'invalidState'
+  | 'internal';
+
+export type DownloadError =
+  | { code: 'notFound'; detail: { id: string } }
+  | { code: 'network'; detail: string }
+  | { code: 'io'; detail: string }
+  | { code: 'invalidState'; detail: { reason: string } }
+  | { code: 'internal'; detail: string };
+
+// ── TagEditor ────────────────────────────────────────────────────────────────
+
+export type TagEditorErrorCode =
+  | 'io'
+  | 'serialization'
+  | 'unsupportedVersion'
+  | 'internal';
+
+export type TagEditorError =
+  | { code: 'io'; detail: string }
+  | { code: 'serialization'; detail: string }
+  | { code: 'unsupportedVersion'; detail: { version: number } }
+  | { code: 'internal'; detail: string };
+
+// ── Preferences ──────────────────────────────────────────────────────────────
+
+export type PreferencesErrorCode =
+  | 'notFound'
+  | 'io'
+  | 'revisionMismatch'
+  | 'internal';
+
+export type PreferencesError =
+  | { code: 'notFound' }
+  | { code: 'io'; detail: string }
+  | {
+      code: 'revisionMismatch';
+      detail: {
+        currentRevision: number;
+        expectedRevision: number;
+        message: string;
+      };
+    }
+  | { code: 'internal'; detail: string };
+
+// ── Logging ───────────────────────────────────────────────────────────────────
+
+export type LoggingErrorCode = 'io' | 'internal';
+
+export type LoggingError =
+  | { code: 'io'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── LocalInventory ────────────────────────────────────────────────────────────
+
+export type LocalInventoryErrorCode = 'io' | 'internal';
+
+export type LocalInventoryError =
+  | { code: 'io'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── Homepage ──────────────────────────────────────────────────────────────────
+
+export type HomepageErrorCode = 'network' | 'internal';
+
+export type HomepageError =
+  | { code: 'network'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── TagRegistry ───────────────────────────────────────────────────────────────
+
+export type TagRegistryErrorCode = 'network' | 'internal';
+
+export type TagRegistryError =
+  | { code: 'network'; detail: string }
+  | { code: 'internal'; detail: string };
+
+// ── Window ────────────────────────────────────────────────────────────────────
+
+export type WindowErrorCode = 'internal';
+
+export type WindowError = { code: 'internal'; detail: string };

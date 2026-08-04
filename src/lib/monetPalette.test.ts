@@ -64,6 +64,8 @@ describe('resolveMonetTokenSet', () => {
       'textPrimary',
       'textSecondary',
       'textTertiary',
+      'tint',
+      'tintRgb',
       'border',
       'ring',
       'destructive',

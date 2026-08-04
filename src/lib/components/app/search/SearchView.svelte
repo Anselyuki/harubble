@@ -6,14 +6,18 @@
   import SearchBar from './SearchBar.svelte';
   import SearchRecentQueries from './SearchRecentQueries.svelte';
   import SearchRecentlyPlayed from './SearchRecentlyPlayed.svelte';
-  import SearchResultsPlaceholder from './SearchResultsPlaceholder.svelte';
+  import SearchResults from './SearchResults.svelte';
   import type { createSearchController } from '$lib/features/search/controller.svelte';
-  import type { Album } from '$lib/types';
+  import type { Album, SearchLibraryResultItem } from '$lib/types';
 
   interface Props {
     runtime: {
       searchController: ReturnType<typeof createSearchController>;
       handleSelectAlbum: (album: Album) => void | Promise<void>;
+      handleSelectSearchResult: (
+        item: SearchLibraryResultItem
+      ) => void | Promise<void>;
+      albums: Album[];
       prefersReducedMotion: boolean;
       loadingAlbumCid: string | null;
     };
@@ -27,7 +31,7 @@
   const isSearchMode = $derived(searchController.query.trim().length > 0);
 
   let discoveryEl: HTMLDivElement | undefined = $state();
-  let placeholderEl: HTMLDivElement | undefined = $state();
+  let resultsEl: HTMLDivElement | undefined = $state();
 
   $effect(() => {
     if (!discoveryEl || runtime.prefersReducedMotion) return;
@@ -39,9 +43,9 @@
   });
 
   $effect(() => {
-    if (!placeholderEl || runtime.prefersReducedMotion) return;
+    if (!resultsEl || runtime.prefersReducedMotion) return;
     gsap.fromTo(
-      placeholderEl,
+      resultsEl,
       { opacity: 0, y: 10 },
       {
         opacity: 1,
@@ -74,10 +78,20 @@
     </div>
 
     {#if isSearchMode}
-      <div class="content-region" bind:this={placeholderEl}>
-        <SearchResultsPlaceholder
-          query={searchController.query}
-          scope={searchController.scope}
+      <div class="content-region" bind:this={resultsEl}>
+        <SearchResults
+          response={searchController.response}
+          indexState={searchController.indexState}
+          searchLoading={searchController.searchLoading}
+          loadingMore={searchController.loadingMore}
+          searchError={searchController.searchError}
+          albums={runtime.albums}
+          reducedMotion={runtime.prefersReducedMotion}
+          onSelectResult={(item) => {
+            void runtime.handleSelectSearchResult(item);
+          }}
+          onRetry={searchController.retrySearch}
+          onLoadMore={searchController.loadMore}
         />
       </div>
     {:else}
@@ -89,7 +103,7 @@
         />
         <SearchRecentlyPlayed
           albums={searchController.recentPlayed}
-          loading={searchController.loading}
+          loading={searchController.recentPlayedLoading}
           loadingAlbumCid={runtime.loadingAlbumCid}
           reducedMotion={runtime.prefersReducedMotion}
           onSelectAlbum={(album) => {

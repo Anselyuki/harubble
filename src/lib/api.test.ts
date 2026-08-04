@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeMock = vi.hoisted(() => vi.fn());
+const convertFileSrcMock = vi.hoisted(() =>
+  vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`)
+);
 const openMock = vi.hoisted(() => vi.fn());
 const idbStore = vi.hoisted(() => new Map<string, unknown>());
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+  convertFileSrc: convertFileSrcMock,
 }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -50,12 +54,13 @@ describe('image resource API scheduling', () => {
   beforeEach(() => {
     vi.resetModules();
     invokeMock.mockReset();
+    convertFileSrcMock.mockClear();
     openMock.mockReset();
     idbStore.clear();
   });
 
-  it('coalesces concurrent data URL requests for the same image', async () => {
-    const { getImageDataUrl } = await import('./api');
+  it('coalesces concurrent cached image requests for the same image', async () => {
+    const { getImageSrc } = await import('./api');
     let resolveInvoke!: (value: string) => void;
     invokeMock.mockImplementation(
       () =>
@@ -64,24 +69,25 @@ describe('image resource API scheduling', () => {
         })
     );
 
-    const first = getImageDataUrl(coverUrl);
-    const second = getImageDataUrl(coverUrl);
+    const first = getImageSrc(coverUrl);
+    const second = getImageSrc(coverUrl);
 
     await waitForInvokeCount(1);
     expect(invokeMock).toHaveBeenCalledTimes(1);
-    expect(invokeMock).toHaveBeenCalledWith('get_image_data_url', {
+    expect(invokeMock).toHaveBeenCalledWith('get_cached_image_path', {
       imageUrl: coverUrl,
     });
 
-    resolveInvoke('data:image/png;base64,cover');
+    resolveInvoke('/tmp/harubble/image-cache/cover.png');
     await expect(Promise.all([first, second])).resolves.toEqual([
-      'data:image/png;base64,cover',
-      'data:image/png;base64,cover',
+      'asset://localhost/%2Ftmp%2Fharubble%2Fimage-cache%2Fcover.png',
+      'asset://localhost/%2Ftmp%2Fharubble%2Fimage-cache%2Fcover.png',
     ]);
+    expect(convertFileSrcMock).toHaveBeenCalledTimes(1);
   });
 
-  it('serializes album visual resource requests', async () => {
-    const { extractImageTheme, getImageDataUrl } = await import('./api');
+  it('does not serialize cached image lookup behind theme extraction', async () => {
+    const { extractImageTheme, getImageSrc } = await import('./api');
     const commands: string[] = [];
     let resolveTheme!: (value: unknown) => void;
 
@@ -93,16 +99,16 @@ describe('image resource API scheduling', () => {
         });
       }
 
-      return Promise.resolve('data:image/png;base64,cover');
+      return Promise.resolve('/tmp/harubble/image-cache/cover.png');
     });
 
     const theme = extractImageTheme(themeUrl);
     await waitForInvokeCount(1);
     expect(commands).toEqual(['extract_image_theme']);
 
-    const cover = getImageDataUrl(coverUrl);
-    await flushPromises();
-    expect(commands).toEqual(['extract_image_theme']);
+    const cover = getImageSrc(coverUrl);
+    await waitForInvokeCount(2);
+    expect(commands).toEqual(['extract_image_theme', 'get_cached_image_path']);
 
     resolveTheme({
       accentHex: '#111111',
@@ -114,10 +120,10 @@ describe('image resource API scheduling', () => {
     await expect(theme).resolves.toMatchObject({
       accentHex: '#111111',
     });
-    await waitForInvokeCount(2);
-
-    expect(commands).toEqual(['extract_image_theme', 'get_image_data_url']);
-    await expect(cover).resolves.toBe('data:image/png;base64,cover');
+    expect(commands).toEqual(['extract_image_theme', 'get_cached_image_path']);
+    await expect(cover).resolves.toBe(
+      'asset://localhost/%2Ftmp%2Fharubble%2Fimage-cache%2Fcover.png'
+    );
   });
 
   it('coalesces concurrent theme requests for the same image', async () => {
@@ -150,5 +156,50 @@ describe('image resource API scheduling', () => {
       expect.objectContaining({ accentHex: '#111111' }),
       expect.objectContaining({ accentHex: '#111111' }),
     ]);
+  });
+
+  it('removes legacy IndexedDB cover payloads during cache warmup', async () => {
+    idbStore.set('phase9-cache:covers:image_data_url:old-cover', {
+      type: 'covers',
+      data: 'data:image/png;base64,legacy',
+    });
+    idbStore.set('unrelated-key', { keep: true });
+    const { warmCacheManager } = await import('./cache');
+
+    await warmCacheManager();
+
+    expect(idbStore.has('phase9-cache:covers:image_data_url:old-cover')).toBe(
+      false
+    );
+    expect(idbStore.has('unrelated-key')).toBe(true);
+  });
+
+  it('refreshes one album detail and replaces its tagged frontend cache', async () => {
+    const oldDetail = { cid: 'album-a', name: 'Old detail' };
+    const freshDetail = { cid: 'album-a', name: 'Fresh detail' };
+    invokeMock
+      .mockResolvedValueOnce(oldDetail)
+      .mockResolvedValueOnce(freshDetail);
+    const { getAlbumDetail, refreshAlbumDetail } = await import('./api');
+
+    await expect(getAlbumDetail('album-a', 'inventory-v1')).resolves.toBe(
+      oldDetail
+    );
+    await expect(getAlbumDetail('album-a', 'inventory-v1')).resolves.toBe(
+      oldDetail
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    await expect(refreshAlbumDetail('album-a', 'inventory-v1')).resolves.toBe(
+      freshDetail
+    );
+    expect(invokeMock).toHaveBeenLastCalledWith('refresh_album_detail', {
+      albumCid: 'album-a',
+    });
+
+    await expect(getAlbumDetail('album-a', 'inventory-v1')).resolves.toBe(
+      freshDetail
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 });

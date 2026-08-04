@@ -7,9 +7,9 @@ use harubble::desktop_lifecycle::{
 };
 
 #[test]
-fn desktop_background_entrypoint_is_enabled_only_on_windows_and_macos() {
+fn desktop_background_entrypoint_is_enabled_on_windows_and_macos() {
     assert!(should_install_background_entrypoint("windows"));
-    assert!(!should_install_background_entrypoint("macos"));
+    assert!(should_install_background_entrypoint("macos"));
     assert!(!should_install_background_entrypoint("linux"));
     assert!(!should_install_background_entrypoint("freebsd"));
 }

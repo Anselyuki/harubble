@@ -16,6 +16,6 @@
   );
 </script>
 
-<main class={contentClass}>
+<div class={contentClass}>
   {@render children()}
-</main>
+</div>

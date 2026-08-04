@@ -4,15 +4,23 @@ import type {
   PlayerState,
   PlaybackEndedEvent,
   PlaybackFormatState,
+  RepeatMode,
 } from '$lib/types';
 import { parseLyricText } from './lyrics';
 import { buildPlaybackContext } from './queue';
 import {
+  hasPlaybackCompleted,
+  isPlaybackSupersededError,
   shouldApplyPlaybackEnded,
+  shouldApplyPlaybackProgress,
   shouldIgnorePlaybackError,
   type PlaybackSnapshot,
 } from './playback-contract';
 import * as m from '$lib/paraglide/messages.js';
+import {
+  formatLibraryError,
+  formatPlaybackError,
+} from '$lib/features/shell/domainErrors';
 
 interface PlayerControllerDeps {
   playSong: (
@@ -20,6 +28,8 @@ interface PlayerControllerDeps {
     coverUrl: string | null,
     context: PlaybackContext | null
   ) => Promise<void>;
+  playNextTrack: () => Promise<void>;
+  playPreviousTrack: () => Promise<void>;
   pausePlayback: () => Promise<void>;
   resumePlayback: () => Promise<void>;
   seekCurrentPlayback: (positionSecs: number) => Promise<void>;
@@ -30,7 +40,6 @@ interface PlayerControllerDeps {
   notifyError: (message: string) => void;
 }
 
-type RepeatMode = 'all' | 'one';
 type PlayToggleTarget = 'playing' | 'paused';
 
 interface PlayerSong {
@@ -58,7 +67,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let progress = $state(0);
   let duration = $state(0);
   let shuffleEnabled = $state(false);
-  let repeatMode = $state<RepeatMode>('all');
+  let repeatMode = $state<RepeatMode>('off');
   let playbackEntries = $state<PlaybackQueueEntry[]>([]);
   let playbackOrder = $state<PlaybackQueueEntry[]>([]);
   let playbackIndex = $state(-1);
@@ -77,11 +86,16 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   let playbackEndRequestSeq = 0;
   let playRequestSeq = 0;
   let heatFiredSessionId = -1;
+  // 记录本地对 volume/muted 的最近一次用户修改时间。事件回环期间不允许后端事件
+  // 覆盖用户在拖动过程中的临时值，否则滑块会明显 "弹回"。
+  let localVolumeMutationAt = 0;
+  const LOCAL_VOLUME_GUARD_MS = 600;
   let lastPlaybackSnapshot: PlaybackSnapshot = {
     cid: null as string | null,
     active: false,
     sessionId: 0,
   };
+  let lastHandledPlaybackEndedSessionId = 0;
   let lyricRequestSeq = 0;
 
   function init() {
@@ -134,11 +148,17 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     if (hasNext !== state.hasNext) hasNext = state.hasNext;
     if (progress !== state.progress) progress = state.progress;
     if (duration !== state.duration) duration = state.duration;
-    if (Math.abs(volume - state.volume) > 0.001) volume = state.volume;
+    // 保护 volume/muted：用户刚刚在本地做了修改的短窗口内，忽略后端事件的回环，
+    // 否则一条稍稍滞后的 player-state-changed 会让滑块或静音图标"弹回"旧值。
+    const volumeGuardActive =
+      Date.now() - localVolumeMutationAt < LOCAL_VOLUME_GUARD_MS;
+    if (!volumeGuardActive) {
+      if (Math.abs(volume - state.volume) > 0.001) volume = state.volume;
+      if (state.volume > 0 && muted) muted = false;
+    }
     if (playbackFormat !== state.playbackFormat) {
       playbackFormat = state.playbackFormat;
     }
-    if (state.volume > 0 && muted) muted = false;
   }
 
   function clearPlayTogglePendingWhenSettled(state: PlayerState) {
@@ -261,7 +281,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       lyricsLines = parseLyricText(lyricText);
     } catch (error) {
       if (requestSeq !== lyricRequestSeq) return;
-      lyricsError = error instanceof Error ? error.message : String(error);
+      lyricsError = formatLibraryError(error);
     } finally {
       if (requestSeq === lyricRequestSeq) {
         lyricsLoading = false;
@@ -270,6 +290,14 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   function syncPlayerState(state: PlayerState) {
+    if (
+      state.sessionId < lastPlaybackSnapshot.sessionId ||
+      (lastHandledPlaybackEndedSessionId !== 0 &&
+        state.sessionId === lastHandledPlaybackEndedSessionId)
+    ) {
+      return;
+    }
+
     const nextSong = normalizePlayerSong(state);
     if (!arePlayerSongsEqual(currentSong, nextSong)) {
       currentSong = nextSong;
@@ -282,9 +310,28 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     }
 
     syncPlaybackQueueWithSong(currentSong);
+
+    if (hasPlaybackCompleted(state) && state.songCid) {
+      syncPlaybackEnded({
+        sessionId: state.sessionId,
+        songCid: state.songCid,
+        progress: state.progress,
+        duration: state.duration,
+      });
+    }
   }
 
   function syncPlayerProgress(state: PlayerState) {
+    if (
+      !shouldApplyPlaybackProgress(state, {
+        sessionId: lastPlaybackSnapshot.sessionId,
+        songCid: currentSong?.cid ?? null,
+        isPlaying,
+      })
+    ) {
+      return;
+    }
+
     if (progress !== state.progress) progress = state.progress;
     if (duration !== state.duration) duration = state.duration;
 
@@ -315,7 +362,11 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       lyricsOpen = false;
       playlistOpen = false;
       if (previousSnapshot.cid !== null || previousSnapshot.active) {
-        lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
+        lastPlaybackSnapshot = {
+          cid: null,
+          active: false,
+          sessionId: previousSnapshot.sessionId,
+        };
       }
       return;
     }
@@ -364,16 +415,28 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       }
     }
 
+    // pendingPlayToggleTarget 只表达对当前曲目 pause/resume 的意图；一旦切歌，
+    // 旧意图便无法再由后续 player-state-changed 匹配上（新曲目会立即 is_playing=true，
+    // 而不会经过对应的 is_paused=true），必须在此清掉，否则会导致按钮永远停在 loading。
+    pendingPlayToggleTarget = null;
     playingCid = entry.cid;
     const requestSeq = ++playRequestSeq;
     try {
       const context = buildPlaybackContext(playbackOrder, playbackIndex);
       await deps.playSong(entry.cid, entry.coverUrl ?? null, context ?? null);
       if (requestSeq !== playRequestSeq) return;
-      try {
-        syncPlayerState(await deps.getPlayerState());
-      } catch {
-        // 后端事件仍会同步播放状态；这里仅用于避免首帧 UI 依赖事件到达。
+      // loading 事件通常先于 IPC ack 到达，因此不能只用 currentSong 判断是否已经
+      // 落定；否则最终 state-changed 一旦漏掉，播放按钮会永久停在 loading。
+      if (currentSong?.cid !== entry.cid || isLoading) {
+        try {
+          const state = await deps.getPlayerState();
+          if (requestSeq !== playRequestSeq) return;
+          // 读取期间事件可能已经把状态推进到最终态，此时保留更新的事件结果。
+          if (currentSong?.cid === entry.cid && !isLoading) return;
+          syncPlayerState(state);
+        } catch {
+          // 兜底拉取失败无需向用户呈现，后续事件仍会继续同步。
+        }
       }
     } catch (error) {
       if (shouldIgnorePlaybackError(error, requestSeq, playRequestSeq)) {
@@ -382,7 +445,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       playingCid = null;
       deps.notifyError(
         m.player_error_play_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
     }
@@ -393,33 +456,24 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       !shouldApplyPlaybackEnded(
         event,
         currentSong?.cid ?? null,
-        lastPlaybackSnapshot
+        lastPlaybackSnapshot.sessionId,
+        lastHandledPlaybackEndedSessionId
       )
     )
       return;
+    lastHandledPlaybackEndedSessionId = event.sessionId;
     lastPlaybackSnapshot = {
       cid: event.songCid,
       active: false,
       sessionId: event.sessionId,
     };
+    isPlaying = false;
+    isPaused = false;
+    isLoading = false;
+    pendingPlayToggleTarget = null;
     progress = event.progress;
     duration = event.duration;
     void handlePlaybackEnded(event.songCid);
-  }
-
-  function resolveWrappedQueueIndex(step: 1 | -1): number {
-    if (!playbackOrder.length) return -1;
-
-    const base = playbackIndex >= 0 ? playbackIndex : 0;
-    const next = base + step;
-
-    if (next < 0) {
-      return playbackOrder.length - 1;
-    }
-    if (next >= playbackOrder.length) {
-      return 0;
-    }
-    return next;
   }
 
   function toggleShuffle(next: boolean) {
@@ -463,8 +517,23 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     }
   }
 
+  function shouldRestartCompletedTrack() {
+    return hasPlaybackCompleted({
+      songCid: currentSong?.cid ?? null,
+      isPlaying,
+      isPaused,
+      isLoading,
+      progress,
+      duration,
+    });
+  }
+
   async function handlePlaybackEnded(songCid: string) {
     const requestSeq = ++playbackEndRequestSeq;
+
+    // 关闭循环时，用户点播的歌曲在自然结束后停留在当前曲目；队列导航仍由
+    // “下一首”按钮或系统媒体控制显式触发。只有“全部循环”才自动推进队列。
+    if (repeatMode === 'off') return;
 
     if (repeatMode === 'one') {
       const entry = playbackOrder.find((e) => e.cid === songCid);
@@ -483,8 +552,9 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     );
     if (currentIndex < 0) return;
 
-    const nextIndex =
-      currentIndex + 1 >= playbackOrder.length ? 0 : currentIndex + 1;
+    const reachedQueueEnd = currentIndex === playbackOrder.length - 1;
+
+    const nextIndex = reachedQueueEnd ? 0 : currentIndex + 1;
     if (requestSeq !== playbackEndRequestSeq) return;
     await playQueueEntry(playbackOrder[nextIndex], playbackOrder, nextIndex, {
       forceRestart: true,
@@ -500,7 +570,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       pendingPlayToggleTarget = null;
       deps.notifyError(
         m.player_error_pause_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
       return;
@@ -514,15 +584,19 @@ export function createPlayerController(deps: PlayerControllerDeps) {
   }
 
   async function resume() {
-    if (pendingPlayToggleTarget || isLoading) return;
+    if (pendingPlayToggleTarget || isLoading || playingCid !== null) return;
     pendingPlayToggleTarget = 'playing';
     try {
-      await deps.resumePlayback();
+      if (shouldRestartCompletedTrack()) {
+        await deps.seekCurrentPlayback(0);
+      } else {
+        await deps.resumePlayback();
+      }
     } catch (error) {
       pendingPlayToggleTarget = null;
       deps.notifyError(
         m.player_error_resume_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
       return;
@@ -540,18 +614,32 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     try {
       await deps.seekCurrentPlayback(positionSecs);
     } catch (error) {
+      // 快速拖动进度条 / 连点歌词行会让后一次 seek supersede 前一次，
+      // 前一次返回的 superseded 错误不能弹为用户看得见的 toast。
+      if (isPlaybackSupersededError(error)) return;
       deps.notifyError(
         m.player_error_seek_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatPlaybackError(error),
         })
       );
     }
   }
 
   async function playNext() {
-    const nextIndex = resolveWrappedQueueIndex(1);
-    if (nextIndex < 0) return;
-    await playQueueEntry(playbackOrder[nextIndex], playbackOrder, nextIndex);
+    if (!playbackOrder.length) return;
+    // 走后端 play_next 命令而不是重新用 play_song 触发 —— 后者会使用 NewSelection
+    // 5 秒缓冲预算，而 play_next / play_previous 使用 InteractiveRestart 的 1 秒
+    // 缓冲，切歌响应更贴近用户预期，也与 OS 媒体键行为保持一致。
+    try {
+      await deps.playNextTrack();
+    } catch (error) {
+      if (isPlaybackSupersededError(error)) return;
+      deps.notifyError(
+        m.player_error_play_failed({
+          error: formatPlaybackError(error),
+        })
+      );
+    }
   }
 
   async function playPrevious() {
@@ -562,23 +650,27 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       return;
     }
 
-    const previousIndex = resolveWrappedQueueIndex(-1);
-    if (previousIndex < 0) return;
-    await playQueueEntry(
-      playbackOrder[previousIndex],
-      playbackOrder,
-      previousIndex
-    );
+    try {
+      await deps.playPreviousTrack();
+    } catch (error) {
+      if (isPlaybackSupersededError(error)) return;
+      deps.notifyError(
+        m.player_error_play_failed({
+          error: formatPlaybackError(error),
+        })
+      );
+    }
   }
 
   async function setVolume(gain: number) {
     const clamped = Math.max(0, Math.min(1, gain));
     volume = clamped;
     if (clamped > 0) muted = false;
+    localVolumeMutationAt = Date.now();
     try {
       await deps.setPlaybackVolume(clamped);
     } catch (error) {
-      deps.notifyError(error instanceof Error ? error.message : String(error));
+      deps.notifyError(formatPlaybackError(error));
     }
   }
 
@@ -592,6 +684,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
       void setVolume(0);
       muted = true;
     }
+    localVolumeMutationAt = Date.now();
   }
 
   function dispose() {
@@ -606,7 +699,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     progress = 0;
     duration = 0;
     shuffleEnabled = false;
-    repeatMode = 'all';
+    repeatMode = 'off';
     playbackEntries = [];
     playbackOrder = [];
     playbackIndex = -1;
@@ -623,6 +716,7 @@ export function createPlayerController(deps: PlayerControllerDeps) {
     playbackFormat = null;
     volumeBeforeMute = 1.0;
     lastPlaybackSnapshot = { cid: null, active: false, sessionId: 0 };
+    lastHandledPlaybackEndedSessionId = 0;
     lyricRequestSeq += 1;
     playbackEndRequestSeq += 1;
   }

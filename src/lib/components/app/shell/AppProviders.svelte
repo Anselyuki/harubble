@@ -246,18 +246,6 @@
     get errorMsg() {
       return runtime.errorMsg;
     },
-    get librarySearchQuery() {
-      return runtime.librarySearchQuery;
-    },
-    get librarySearchScope() {
-      return runtime.librarySearchScope;
-    },
-    get librarySearchLoading() {
-      return runtime.librarySearchLoading;
-    },
-    get librarySearchResponse() {
-      return runtime.librarySearchResponse;
-    },
     get showDetailSkeleton() {
       return runtime.showDetailSkeleton;
     },
@@ -273,18 +261,13 @@
     get selectedSongCids() {
       return runtime.selectedSongCids;
     },
-    setSearchQuery: (query) => runtime.libraryController.setSearchQuery(query),
-    setSearchScope: (scope) => runtime.libraryController.setSearchScope(scope),
     handleSelectAlbum: (album) => runtime.handleSelectAlbum(album),
-    handleSelectSearchResult: (item) => runtime.handleSelectSearchResult(item),
     toggleSelectionMode: () => runtime.toggleSelectionMode(),
     selectAllSongs: () => runtime.selectAllSongs(),
     deselectAllSongs: () => runtime.deselectAllSongs(),
     invertSongSelection: () => runtime.invertSongSelection(),
     toggleSongSelection: (songCid) => runtime.toggleSongSelection(songCid),
     isSongSelected: (songCid) => runtime.isSongSelected(songCid),
-    handleDownloadSelection: (songCids) =>
-      runtime.handleDownloadSelection(songCids),
   });
 
   setCollectionContext({

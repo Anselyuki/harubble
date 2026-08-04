@@ -71,6 +71,7 @@
           selected={false}
           loading={loadingAlbumCid === album.cid}
           {reducedMotion}
+          testId="search-recent-album-item"
           onclick={() => onSelectAlbum(album)}
         />
       {/each}
@@ -109,7 +110,7 @@
 
   .loading-grid :global(.skeleton-card) {
     aspect-ratio: 1;
-    border-radius: 12px;
+    border-radius: var(--shape-lg);
     background: var(--surface-secondary, rgba(255, 255, 255, 0.18));
   }
 </style>

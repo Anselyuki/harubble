@@ -3,6 +3,7 @@ use crate::logging::{LogCenter, LogLevel, LogPayload};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// 应用支持的界面语言
@@ -29,6 +30,8 @@ pub enum ColorScheme {
 }
 
 const DEFAULT_THEME_PRESET_ID: &str = "harubble-classic";
+pub(crate) const CURRENT_PREFERENCES_SCHEMA_VERSION: i32 = 2;
+const MAX_PREFERENCES_IMPORT_BYTES: u64 = 512 * 1024;
 const THEME_PRESET_IDS: &[&str] = &["harubble-classic", "clear-aqua", "night-console"];
 const THEME_COLOR_SLOTS: &[&str] = &[
     "accent",
@@ -71,6 +74,15 @@ where
 }
 
 /// 应用主题偏好，保存当前预设以及覆盖预设的自定义颜色槽。
+///
+/// # 版本兼容
+///
+/// v1（`schemaVersion = 1`）：仅 `preset_id / custom_colors / color_scheme / dynamic_album_accent`。
+/// v2（`schemaVersion = 2`）：新增 `active_package_id`（主题包激活 ID）与 `revision`（CAS 版本号）。
+///
+/// v1 → v2 迁移策略：所有新字段带 `#[serde(default)]`，反序列化时缺失字段自动填默认值。
+/// - `active_package_id` 缺失 → `None`（使用 `preset_id + custom_colors` 派生路径）
+/// - `revision` 缺失 → `0`（首次 CAS 从零开始，未来更新单调递增）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ThemePreferences {
@@ -90,6 +102,12 @@ pub(crate) struct ThemePreferences {
         deserialize_with = "deserialize_dynamic_album_accent"
     )]
     pub(crate) dynamic_album_accent: bool,
+    /// v2 新增：当前激活的主题包 ID；`None` 表示走 preset + customColors 派生路径。
+    #[serde(default)]
+    pub(crate) active_package_id: Option<String>,
+    /// v2 新增：主题偏好修订号，Compare-And-Swap 依据。每次成功写入递增 1。
+    #[serde(default)]
+    pub(crate) revision: u64,
 }
 
 impl Default for ThemePreferences {
@@ -99,6 +117,8 @@ impl Default for ThemePreferences {
             custom_colors: BTreeMap::new(),
             color_scheme: ColorScheme::default(),
             dynamic_album_accent: true,
+            active_package_id: None,
+            revision: 0,
         }
     }
 }
@@ -217,7 +237,10 @@ impl AppPreferences {
         if !path.is_dir() {
             return Err(tr(locale, "preferences-output-dir-not-directory"));
         }
-        if !is_known_theme_preset_id(&self.theme.preset_id) {
+        // v2：当 active_package_id 存在时跳过 preset_id 白名单校验（preset_id 仅作为 fallback）
+        if self.theme.active_package_id.is_none()
+            && !is_known_theme_preset_id(&self.theme.preset_id)
+        {
             return Err("unsupported theme preset".to_string());
         }
         for (slot, value) in &self.theme.custom_colors {
@@ -226,6 +249,23 @@ impl AppPreferences {
             }
         }
         Ok(())
+    }
+
+    /// 将 v1 偏好升级到 v2。
+    ///
+    /// v1 → v2 只添加新字段（`active_package_id: None`、`revision: 0`），
+    /// 不改动任何已有字段语义。`#[serde(default)]` 保证 v1 TOML 反序列化到 v2 结构时
+    /// 自动填默认值，因此该函数对已经反序列化后的实例是幂等操作。
+    ///
+    /// 用途：`PreferencesStore::load` 在识别到 `schema_version < 2` 时调用一次并原地写回，
+    /// 让后续的 CAS 从 revision=0 起步。
+    pub(crate) fn migrate_v1_to_v2(&mut self) {
+        if self.schema_version < CURRENT_PREFERENCES_SCHEMA_VERSION {
+            self.schema_version = CURRENT_PREFERENCES_SCHEMA_VERSION;
+            // active_package_id 与 revision 已由 serde default 填充，此处仅显式重置以保证语义
+            self.theme.active_package_id = None;
+            self.theme.revision = 0;
+        }
     }
 }
 
@@ -312,6 +352,100 @@ presetId = "future-theme"
     }
 
     #[test]
+    fn v1_prefs_deserialize_with_default_active_package_id_and_revision() {
+        // v1 TOML 缺少 activePackageId 与 revision，反序列化后应填默认值
+        let prefs: AppPreferences = toml::from_str(&existing_preferences_toml(
+            r#"
+[theme]
+presetId = "harubble-classic"
+"#,
+        ))
+        .unwrap();
+
+        assert_eq!(prefs.schema_version, 1); // schemaVersion 保持 v1，等待 migrate 时 bump
+        assert_eq!(prefs.theme.active_package_id, None);
+        assert_eq!(prefs.theme.revision, 0);
+    }
+
+    #[test]
+    fn migrate_v1_to_v2_bumps_schema_version_and_initializes_new_fields() {
+        let mut prefs: AppPreferences = toml::from_str(&existing_preferences_toml(
+            r#"
+[theme]
+presetId = "harubble-classic"
+"#,
+        ))
+        .unwrap();
+        assert_eq!(prefs.schema_version, 1);
+
+        prefs.migrate_v1_to_v2();
+
+        assert_eq!(prefs.schema_version, 2);
+        assert_eq!(prefs.theme.active_package_id, None);
+        assert_eq!(prefs.theme.revision, 0);
+    }
+
+    #[test]
+    fn migrate_is_idempotent_on_v2_prefs() {
+        let mut prefs = AppPreferences {
+            schema_version: 2,
+            ..AppPreferences::default()
+        };
+        prefs.theme.active_package_id = Some("acme-glass".to_string());
+        prefs.theme.revision = 42;
+
+        prefs.migrate_v1_to_v2();
+
+        // v2 已经是最新版本，migrate 应该跳过（不重置 active_package_id/revision）
+        assert_eq!(prefs.schema_version, 2);
+        assert_eq!(
+            prefs.theme.active_package_id,
+            Some("acme-glass".to_string())
+        );
+        assert_eq!(prefs.theme.revision, 42);
+    }
+
+    fn valid_output_dir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("create temp output_dir for tests")
+    }
+
+    fn base_prefs_with_output_dir(output_dir: &Path) -> AppPreferences {
+        AppPreferences {
+            schema_version: 2,
+            output_format: "flac".to_string(),
+            output_dir: output_dir.to_string_lossy().to_string(),
+            download_lyrics: true,
+            notify_on_download_complete: true,
+            notify_on_playback_change: true,
+            log_level: default_log_level(),
+            locale: Locale::default(),
+            volume: default_volume(),
+            theme: ThemePreferences::default(),
+        }
+    }
+
+    #[test]
+    fn validate_accepts_arbitrary_preset_id_when_active_package_id_set() {
+        let dir = valid_output_dir();
+        let mut prefs = base_prefs_with_output_dir(dir.path());
+        prefs.theme.preset_id = "future-third-party-preset".to_string();
+        prefs.theme.active_package_id = Some("acme-glass".to_string());
+        prefs.theme.revision = 1;
+
+        assert!(prefs.validate(Locale::default()).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_unknown_preset_id_when_no_active_package_id() {
+        let dir = valid_output_dir();
+        let mut prefs = base_prefs_with_output_dir(dir.path());
+        prefs.theme.preset_id = "future-third-party-preset".to_string();
+        prefs.theme.active_package_id = None;
+
+        assert!(prefs.validate(Locale::default()).is_err());
+    }
+
+    #[test]
     fn unknown_theme_color_slot_is_ignored() {
         let prefs: AppPreferences = toml::from_str(&existing_preferences_toml(
             r##"
@@ -328,6 +462,42 @@ futureSlot = "#222222"
         assert_eq!(prefs.theme.preset_id, "clear-aqua");
         assert_eq!(prefs.theme.custom_colors.get("accent").unwrap(), "#111111");
         assert!(!prefs.theme.custom_colors.contains_key("futureSlot"));
+    }
+
+    #[test]
+    fn import_accepts_preferences_at_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PreferencesStore::new(dir.path().to_path_buf());
+        let import_path = dir.path().join("preferences-at-limit.toml");
+        let prefs = base_prefs_with_output_dir(dir.path());
+        let mut content = toml::to_string_pretty(&prefs).unwrap().into_bytes();
+        content.extend_from_slice(b"\n#");
+        content.resize(MAX_PREFERENCES_IMPORT_BYTES as usize, b'x');
+        fs::write(&import_path, content).unwrap();
+
+        let imported = store
+            .import_from(&import_path, Locale::default())
+            .expect("an exact-boundary preferences file should import");
+
+        assert_eq!(imported.output_dir, dir.path().to_string_lossy());
+    }
+
+    #[test]
+    fn import_rejects_preferences_above_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PreferencesStore::new(dir.path().to_path_buf());
+        let import_path = dir.path().join("preferences-too-large.toml");
+        fs::write(
+            &import_path,
+            vec![b'#'; MAX_PREFERENCES_IMPORT_BYTES as usize + 1],
+        )
+        .unwrap();
+
+        let error = store
+            .import_from(&import_path, Locale::default())
+            .expect_err("an oversized preferences file must be rejected");
+
+        assert!(error.contains("size limit"));
     }
 }
 
@@ -379,7 +549,7 @@ fn ensure_not_symlink(path: &Path, message: &str) -> Result<(), String> {
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: CURRENT_PREFERENCES_SCHEMA_VERSION,
             output_format: "flac".to_string(),
             output_dir: String::new(),
             download_lyrics: true,
@@ -416,8 +586,15 @@ impl PreferencesStore {
         if self.path.exists() {
             match fs::read_to_string(&self.path) {
                 Ok(content) => match toml::from_str::<AppPreferences>(&content) {
-                    Ok(prefs) => match prefs.validate(prefs.locale) {
-                        Ok(()) => return prefs,
+                    Ok(mut prefs) => match prefs.validate(prefs.locale) {
+                        Ok(()) => {
+                            // v1 → v2 迁移：`#[serde(default)]` 已填 None/0，此处仅 bump schemaVersion
+                            if prefs.schema_version < 2 {
+                                prefs.migrate_v1_to_v2();
+                                let _ = self.save(&prefs, prefs.locale);
+                            }
+                            return prefs;
+                        }
                         Err(error) => {
                             if let Some(log_center) = log_center {
                                 log_center.record(
@@ -482,7 +659,7 @@ impl PreferencesStore {
                 .unwrap_or_else(|| std::path::PathBuf::from("/"))
         };
         let default_prefs = AppPreferences {
-            schema_version: 1,
+            schema_version: CURRENT_PREFERENCES_SCHEMA_VERSION,
             output_format: "flac".to_string(),
             output_dir: resolved_output_dir.to_string_lossy().to_string(),
             download_lyrics: true,
@@ -557,8 +734,31 @@ impl PreferencesStore {
         locale: Locale,
     ) -> Result<AppPreferences, String> {
         validate_explicit_import_path(path, locale)?;
-        let content = fs::read_to_string(path)
+        let file =
+            fs::File::open(path).map_err(|_| tr(locale, "preferences-import-file-read-failed"))?;
+        let metadata = file
+            .metadata()
             .map_err(|_| tr(locale, "preferences-import-file-read-failed"))?;
+        if metadata.len() > MAX_PREFERENCES_IMPORT_BYTES {
+            return Err(format!(
+                "preferences import exceeds size limit ({} > {} bytes)",
+                metadata.len(),
+                MAX_PREFERENCES_IMPORT_BYTES
+            ));
+        }
+
+        // Keep the read bounded even if the file grows after the metadata check.
+        let mut content = String::with_capacity(metadata.len() as usize);
+        file.take(MAX_PREFERENCES_IMPORT_BYTES + 1)
+            .read_to_string(&mut content)
+            .map_err(|_| tr(locale, "preferences-import-file-read-failed"))?;
+        if content.len() as u64 > MAX_PREFERENCES_IMPORT_BYTES {
+            return Err(format!(
+                "preferences import exceeds size limit ({} > {} bytes)",
+                content.len(),
+                MAX_PREFERENCES_IMPORT_BYTES
+            ));
+        }
         let prefs: AppPreferences =
             toml::from_str(&content).map_err(|e| format!("failed to parse TOML: {e}"))?;
         prefs.validate(locale)?;

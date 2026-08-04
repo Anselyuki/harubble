@@ -7,7 +7,9 @@
 //! # 主要能力
 //!
 //! - 启动时从本地缓存文件加载注册表；缓存缺失或 schema 不兼容时降级为空注册表。
-//! - 内存中以 `Arc<RwLock<TagRegistry>>` 存储，读操作无锁竞争，写操作（`update`）原子替换并持久化。
+//! - registry 与派生索引分别存放在 `Arc<RwLock<_>>` 中；并发读取使用共享锁，
+//!   `replace_in_memory` 依次换入 registry、album index 与 song index。磁盘持久化由
+//!   调用方单独执行，远端同步路径会先原子写缓存，再替换这些内存结构。
 //! - 支持 zh-CN / en-US 双语解析，缺失时按 locale → zh-CN → en-US → 第一个可用项的顺序回退。
 //! - 单曲标签支持继承专辑标签（同维度 values 去重合并）。
 //! - `get_all_locale_tag_values_*` 方法为搜索索引提供所有语种的标签值拼接串。
@@ -228,7 +230,8 @@ pub struct TagDimensionResolved {
 ///
 /// 1. 启动时调用 [`TagRegistryService::new`] 初始化（尝试从缓存加载）。
 /// 2. 在 Tauri command 中调用 `get_album_tags` / `get_song_tags` 获取已本地化的标签。
-/// 3. 后台拉取到新版本后调用 [`TagRegistryService::update`] 原子替换并持久化。
+/// 3. 后台拉取到新版本后先调用 [`TagRegistryService::persist_registry`] 持久化，
+///    成功后再调用 [`TagRegistryService::replace_in_memory`] 替换内存状态与索引。
 ///
 /// # 线程安全
 ///
@@ -237,7 +240,7 @@ pub struct TagDimensionResolved {
 /// # 错误处理
 ///
 /// - 缓存缺失或 schema 版本不兼容时，静默降级为空注册表（无任何 tag 数据）。
-/// - `update` 原子写入失败时返回 `Err`，但内存中的注册表状态已更新；调用方应记录日志后继续运行。
+/// - `persist_registry` 写入失败时返回 `Err`，调用方不得替换内存状态；持久化成功后再更新内存，保证磁盘与运行时顺序一致。
 #[derive(Clone)]
 pub(crate) struct TagRegistryService {
     registry: Arc<RwLock<TagRegistry>>,
@@ -437,6 +440,22 @@ impl TagRegistryService {
     pub(crate) fn current_updated_at(&self) -> String {
         let registry = self.registry.read().expect("tag registry RwLock poisoned");
         registry.updated_at.clone()
+    }
+
+    /// 克隆当前内存中的注册表快照。
+    ///
+    /// 适用于需要在 `replace_in_memory` 之前捕获旧状态、并在替换后与新版本进行
+    /// 对比的场景（例如增量搜索索引刷新）。返回值为独立的 [`TagRegistry`] 副本，
+    /// 之后对本服务的写操作不会再影响返回的快照。
+    ///
+    /// # 返回值
+    /// 当前内存中注册表的深拷贝；若尚未加载任何注册表，则返回默认空注册表。
+    ///
+    /// # 注意
+    /// 读操作使用共享锁；调用方持有返回值期间无需持有本服务的任何锁。
+    pub(crate) fn clone_current(&self) -> TagRegistry {
+        let registry = self.registry.read().expect("tag registry RwLock poisoned");
+        registry.clone()
     }
 }
 

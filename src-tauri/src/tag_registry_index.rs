@@ -243,7 +243,6 @@ pub(super) fn resolve_merged_tag_set(
 }
 
 /// PLACEHOLDER_BUILD_TAG_ENTRIES
-
 fn build_tag_entries(
     tags: &HashMap<String, Vec<LocalizedValue>>,
     dims: &[TagDimension],

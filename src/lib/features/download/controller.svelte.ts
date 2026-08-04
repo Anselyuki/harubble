@@ -32,6 +32,7 @@ import {
   getJobSummaryLabel,
   getJobDisplayTitle,
 } from './presenters';
+import { formatDownloadError } from '$lib/features/shell/domainErrors';
 import * as m from '$lib/paraglide/messages.js';
 
 interface DownloadControllerDeps {
@@ -321,7 +322,7 @@ export function createDownloadController(deps: DownloadControllerDeps) {
     } catch (error) {
       deps.notifyError(
         m.download_error_song_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatDownloadError(error),
         })
       );
     }
@@ -371,7 +372,7 @@ export function createDownloadController(deps: DownloadControllerDeps) {
     } catch (error) {
       deps.notifyError(
         m.download_error_album_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatDownloadError(error),
         })
       );
     }
@@ -433,7 +434,7 @@ export function createDownloadController(deps: DownloadControllerDeps) {
     } catch (error) {
       deps.notifyError(
         m.download_error_selection_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatDownloadError(error),
         })
       );
     }
@@ -466,7 +467,7 @@ export function createDownloadController(deps: DownloadControllerDeps) {
     } catch (error) {
       deps.notifyError(
         m.download_error_cancel_job_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatDownloadError(error),
         })
       );
     }
@@ -478,7 +479,7 @@ export function createDownloadController(deps: DownloadControllerDeps) {
     } catch (error) {
       deps.notifyError(
         m.download_error_cancel_task_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatDownloadError(error),
         })
       );
     }
@@ -490,7 +491,7 @@ export function createDownloadController(deps: DownloadControllerDeps) {
     } catch (error) {
       deps.notifyError(
         m.download_error_retry_job_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatDownloadError(error),
         })
       );
     }
@@ -502,7 +503,7 @@ export function createDownloadController(deps: DownloadControllerDeps) {
     } catch (error) {
       deps.notifyError(
         m.download_error_retry_task_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatDownloadError(error),
         })
       );
     }
@@ -517,7 +518,7 @@ export function createDownloadController(deps: DownloadControllerDeps) {
     } catch (error) {
       deps.notifyError(
         m.download_error_clear_history_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatDownloadError(error),
         })
       );
     }

@@ -1,12 +1,64 @@
 //! 媒体库与详情读取相关的 Tauri command。
 //!
 //! 当前暴露的接口覆盖专辑列表、专辑详情、单曲详情、歌词文本、远程封面主题提取，
-//! 以及远程封面 data URL 转换与默认下载目录建议值读取，主要服务于前端的浏览、播放前预取与展示增强场景。
+//! 以及远程封面磁盘缓存与默认下载目录建议值读取，主要服务于前端的浏览、播放前预取与展示增强场景。
 
 use crate::app_state::AppState;
+use crate::image_cache;
+use crate::storage_paths;
 use crate::theme;
-use base64::Engine;
-use tauri::State;
+use std::fmt;
+use tauri::{AppHandle, State};
+
+// ─── 错误类型 ─────────────────────────────────────────────────────────────────
+
+/// 媒体库操作错误。
+///
+/// 实现 `Serialize`，可直接通过 Tauri IPC 序列化返回前端。
+/// 序列化格式：`{ "code": "<variant>", "detail": <payload> }`。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "code", content = "detail")]
+pub enum LibraryError {
+    /// HTTP / API 请求失败，属于可重试错误。
+    Network(String),
+    /// 专辑或歌曲不存在。
+    NotFound { cid: String },
+    /// 其他内部错误，不可重试。
+    Internal(String),
+}
+
+impl fmt::Display for LibraryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LibraryError::Network(msg) => write!(f, "网络请求失败: {msg}"),
+            LibraryError::NotFound { cid } => write!(f, "资源不存在: {cid}"),
+            LibraryError::Internal(msg) => write!(f, "内部错误: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for LibraryError {}
+
+fn map_image_cache_error(error: image_cache::ImageCacheError) -> LibraryError {
+    match error {
+        image_cache::ImageCacheError::Network(error) => LibraryError::Network(error.to_string()),
+        image_cache::ImageCacheError::Storage(error) => LibraryError::Internal(error.to_string()),
+    }
+}
+
+async fn fetch_enriched_album_detail(
+    state: &AppState,
+    album_cid: &str,
+) -> Result<harubble_core::api::AlbumDetail, LibraryError> {
+    let album = state
+        .api_client()
+        .get_album_detail(album_cid)
+        .await
+        .map_err(|e| LibraryError::Network(e.to_string()))?;
+    Ok(state.attach_album_detail_enrichment(album).await)
+}
+
+// ─── Commands ─────────────────────────────────────────────────────────────────
 
 /// 获取专辑列表，并附带本地库存增强后的下载徽标与 tag 信息。
 ///
@@ -16,14 +68,14 @@ use tauri::State;
 #[tauri::command]
 pub async fn get_albums(
     state: State<'_, AppState>,
-) -> Result<Vec<harubble_core::api::Album>, String> {
-    let albums = state.api.get_albums().await.map_err(|e| e.to_string())?;
-    let mut enriched = state.local_inventory_service.enrich_albums(albums).await;
-    let locale = state.preferences().locale;
-    for album in &mut enriched {
-        album.tags = state.tag_registry.get_album_tags(&album.cid, locale);
-    }
-    Ok(enriched)
+) -> Result<Vec<harubble_core::api::Album>, LibraryError> {
+    let albums = state
+        .album_catalog()
+        .get()
+        .await
+        .map_err(LibraryError::Network)?
+        .albums;
+    Ok(state.attach_album_enrichment(albums).await)
 }
 
 /// 根据专辑 CID 获取专辑详情，并补充本地库存相关信息。
@@ -36,31 +88,23 @@ pub async fn get_albums(
 pub async fn get_album_detail(
     state: State<'_, AppState>,
     album_cid: String,
-) -> Result<harubble_core::api::AlbumDetail, String> {
-    let album = state
-        .api
-        .get_album_detail(&album_cid)
-        .await
-        .map_err(|e| e.to_string())?;
-    let cache = state.album_metadata_cache.clone();
-    let album_cid_for_cache = album.cid.clone();
-    let album_belong_for_cache = album.belong.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        cache.upsert_belong(&album_cid_for_cache, &album_belong_for_cache)
-    })
-    .await;
-    let mut enriched = state
-        .local_inventory_service
-        .enrich_album_detail(album)
-        .await;
-    let locale = state.preferences().locale;
-    enriched.tags = state.tag_registry.get_album_tags(&enriched.cid, locale);
-    for song in &mut enriched.songs {
-        song.tags = state
-            .tag_registry
-            .get_song_tags(&song.cid, &enriched.cid, locale);
-    }
-    Ok(enriched)
+) -> Result<harubble_core::api::AlbumDetail, LibraryError> {
+    fetch_enriched_album_detail(state.inner(), &album_cid).await
+}
+
+/// 强制刷新指定专辑详情，并应用与普通详情读取相同的本地增强。
+///
+/// 仅失效当前 `album_cid` 对应的已完成详情缓存；其他专辑、全量目录和其他 API 域
+/// 均不受影响。若同一详情已有请求在执行，则复用该请求而不启动重复访问。
+#[tauri::command]
+pub async fn refresh_album_detail(
+    state: State<'_, AppState>,
+    album_cid: String,
+) -> Result<harubble_core::api::AlbumDetail, LibraryError> {
+    state
+        .api_client()
+        .invalidate_album_detail_response_cache(&album_cid);
+    fetch_enriched_album_detail(state.inner(), &album_cid).await
 }
 
 /// 根据歌曲 CID 获取单曲详情，并联动所属专辑补齐库存徽标。
@@ -72,56 +116,48 @@ pub async fn get_album_detail(
 pub async fn get_song_detail(
     state: State<'_, AppState>,
     cid: String,
-) -> Result<harubble_core::api::SongDetail, String> {
+) -> Result<harubble_core::api::SongDetail, LibraryError> {
     let song = state
-        .api
+        .api_client()
         .get_song_detail(&cid)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LibraryError::Network(e.to_string()))?;
     let album = state
-        .api
+        .api_client()
         .get_album_detail(&song.album_cid)
         .await
-        .map_err(|e| e.to_string())?;
-    let mut enriched = state
-        .local_inventory_service
-        .enrich_song_detail(song, &album.name)
-        .await;
-    let locale = state.preferences().locale;
-    enriched.tags = state
-        .tag_registry
-        .get_song_tags(&enriched.cid, &enriched.album_cid, locale);
-    Ok(enriched)
+        .map_err(|e| LibraryError::Network(e.to_string()))?;
+    Ok(state.attach_song_detail_enrichment(song, &album.name).await)
 }
 
 /// 获取歌曲歌词文本；若上游未提供歌词地址则返回 `None`。
 ///
 /// 适用于歌词面板首次展开或切歌后按需加载歌词内容。
 /// 入参 `cid` 为歌曲唯一标识；返回值在成功时要么是歌词文本，要么是显式的 `None`，表示该歌曲没有可下载歌词。
-/// 调用方应区分“无歌词”和“请求失败”两类结果：前者返回 `Ok(None)`，后者返回错误字符串。
+/// 调用方应区分"无歌词"和"请求失败"两类结果：前者返回 `Ok(None)`，后者返回错误字符串。
 #[tauri::command]
 pub async fn get_song_lyrics(
     state: State<'_, AppState>,
     cid: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, LibraryError> {
     state
         .dispatch_visual_aux("get_song_lyrics", move |state| async move {
             let song_detail = state
-                .image_api
+                .image_api_client()
                 .get_song_detail(&cid)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| LibraryError::Network(e.to_string()))?;
 
             let Some(lyric_url) = song_detail.lyric_url else {
                 return Ok(None);
             };
 
             state
-                .api
+                .api_client()
                 .download_text(&lyric_url)
                 .await
                 .map(Some)
-                .map_err(|e| e.to_string())
+                .map_err(|e| LibraryError::Network(e.to_string()))
         })
         .await
 }
@@ -133,58 +169,53 @@ pub async fn get_song_lyrics(
 /// 该接口会发起网络请求并在阻塞线程中执行图片分析，调用方应避免把它作为高频实时操作。
 #[tauri::command]
 pub async fn extract_image_theme(
+    app: AppHandle,
     state: State<'_, AppState>,
     image_url: String,
-) -> Result<theme::ThemePalette, String> {
-    harubble_core::validate_download_url(&image_url).map_err(|e| e.to_string())?;
+) -> Result<theme::ThemePalette, LibraryError> {
+    harubble_core::validate_download_url(&image_url)
+        .map_err(|e| LibraryError::Internal(e.to_string()))?;
+    let cache_dir = storage_paths::image_cache_root(&app).map_err(LibraryError::Internal)?;
     state
         .dispatch_visual_aux("extract_image_theme", move |state| async move {
-            let bytes = state
-                .image_api
-                .download_bytes_coalesced(&image_url)
-                .await
-                .map_err(|e| e.to_string())?;
+            let image_path = image_cache::get_or_download(
+                cache_dir,
+                image_url,
+                state.image_api_client().clone(),
+            )
+            .await
+            .map_err(map_image_cache_error)?;
+            let bytes = tokio::fs::read(&image_path).await.map_err(|error| {
+                LibraryError::Internal(format!(
+                    "failed to read cached image {}: {error}",
+                    image_path.display()
+                ))
+            })?;
 
             tokio::task::spawn_blocking(move || theme::extract_theme_palette(&bytes))
                 .await
-                .map_err(|e| e.to_string())?
-                .map_err(|e| e.to_string())
+                .map_err(|e| LibraryError::Internal(e.to_string()))?
+                .map_err(|e| LibraryError::Internal(e.to_string()))
         })
         .await
 }
 
-fn encode_image_data_url(mime: &str, bytes: &[u8]) -> String {
-    format!(
-        "data:{};base64,{}",
-        mime,
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
-}
-
-/// 下载图片并返回 data URL，供前端直接渲染。
+/// 下载图片到受控磁盘缓存，并返回供 asset protocol 使用的绝对路径。
 ///
-/// 适用于需要把远端封面转换为可直接绑定到 `<img>` 或 CSS 背景的内联资源场景。
-/// 入参 `image_url` 为远端图片地址；返回值为带 MIME 前缀的完整 data URL 字符串。
-/// 该接口会把整张图片载入内存并进行 Base64 编码，不适合对大图或高频批量列表长时间重复调用。
+/// 缓存按 URL 哈希命名并按总字节数回收，命中时不会访问远端 CDN。
 #[tauri::command]
-pub async fn get_image_data_url(
+pub async fn get_cached_image_path(
+    app: AppHandle,
     state: State<'_, AppState>,
     image_url: String,
-) -> Result<String, String> {
-    harubble_core::validate_download_url(&image_url).map_err(|e| e.to_string())?;
-    state
-        .dispatch_visual_aux("get_image_data_url", move |state| async move {
-            let bytes = state
-                .image_api
-                .download_bytes_coalesced(&image_url)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            let mime = harubble_core::audio::detect_image_mime(&bytes)
-                .unwrap_or("application/octet-stream");
-            Ok(encode_image_data_url(mime, &bytes))
-        })
+) -> Result<String, LibraryError> {
+    harubble_core::validate_download_url(&image_url)
+        .map_err(|e| LibraryError::Internal(e.to_string()))?;
+    let cache_dir = storage_paths::image_cache_root(&app).map_err(LibraryError::Internal)?;
+    let path = image_cache::get_or_download(cache_dir, image_url, state.image_api_client().clone())
         .await
+        .map_err(map_image_cache_error)?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// 返回默认下载输出目录。

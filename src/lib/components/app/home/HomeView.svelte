@@ -16,6 +16,7 @@
     HistoryEntry,
     HomepageStatus,
     SongEntry,
+    PlaybackQueueEntry,
     TagDimension,
     TagGroup,
   } from '$lib/types';
@@ -33,12 +34,15 @@
         tagGroups: TagGroup[];
         selectedDimensionKey: string | null;
         selectDimension: (key: string) => void;
-        handleClearHistory: () => Promise<void>;
       };
       handleSelectAlbum: (album: Album) => void | Promise<void>;
-      handlePlay: (song: SongEntry) => void | Promise<void>;
+      handlePlayCollectionSong: (
+        song: SongEntry,
+        queue: PlaybackQueueEntry[]
+      ) => void | Promise<void>;
       prefersReducedMotion: boolean;
       loadingAlbumCid: string | null;
+      requestClearListeningHistory: () => void;
     };
   }
 
@@ -67,7 +71,7 @@
       groups={runtime.homeController.seriesGroups}
       belongReady={runtime.homeController.belongReady}
       reducedMotion={runtime.prefersReducedMotion}
-      onSelectSeries={() => {}}
+      onSelectAlbum={runtime.handleSelectAlbum}
     />
 
     <HomeTagGroups
@@ -81,19 +85,28 @@
     <HomeRecentHistory
       entries={runtime.homeController.recentHistory}
       onPlay={(entry) => {
-        void runtime.handlePlay({
+        const queueEntry = {
           cid: entry.songCid,
           name: entry.songName,
           artists: entry.artists,
-          download: {
-            isDownloaded: false,
-            downloadStatus: 'unknown',
-            inventoryVersion: '',
+          coverUrl: entry.coverUrl,
+        };
+        void runtime.handlePlayCollectionSong(
+          {
+            cid: entry.songCid,
+            name: entry.songName,
+            artists: entry.artists,
+            download: {
+              isDownloaded: false,
+              downloadStatus: 'unknown',
+              inventoryVersion: '',
+            },
+            tags: [],
           },
-          tags: [],
-        });
+          [queueEntry]
+        );
       }}
-      onClear={runtime.homeController.handleClearHistory}
+      onClear={runtime.requestClearListeningHistory}
     />
 
     <HomeStatusDashboard

@@ -1,4 +1,4 @@
-import { getImageDataUrl } from './api';
+import { getImageSrc } from './api';
 
 type ImageSource = string | null | undefined;
 type ImageLoadingMode = 'eager' | 'lazy';
@@ -70,10 +70,10 @@ export function imageDataSrc(
     if (!normalizedSource) return;
 
     try {
-      const dataUrl = await getImageDataUrl(normalizedSource);
+      const imageSrc = await getImageSrc(normalizedSource);
       if (seq !== requestSeq) return;
 
-      node.src = dataUrl;
+      node.src = imageSrc;
       setState('loaded');
     } catch {
       if (seq !== requestSeq) return;

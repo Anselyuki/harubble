@@ -209,6 +209,8 @@ export function resolveMonetTokenSet(
     textPrimary: rgbToHex(palette.textPrimary),
     textSecondary: rgbToHex(palette.textSecondary),
     textTertiary: rgbToHex(palette.textTertiary),
+    tint: rgbToHex(palette.textSecondary),
+    tintRgb: palette.textSecondary.join(', '),
     border:
       scheme === 'light'
         ? `rgba(${palette.border.join(', ')}, 0.35)`

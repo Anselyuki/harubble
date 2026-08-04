@@ -1,28 +1,58 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
-  import { listen } from '@tauri-apps/api/event';
+  // MiniPlayerWindow 是 secondary window 的受控 IPC 例外 — 详见 miniPlayerBridge.ts。
+  import { flushSync, onDestroy, onMount } from 'svelte';
   import {
     getPlayerState,
+    getPreferences,
+    inspectThemePackage,
     pausePlayback,
     playNext,
     playPrevious,
     resumePlayback,
     seekCurrentPlayback,
     showMainWindow,
-  } from '$lib/api';
-  import type { PlayerState } from '$lib/types';
+    listenPlayerStateChanged,
+    listenPlayerProgress,
+    listenPreferencesSnapshot,
+  } from '$lib/features/player/miniPlayerBridge';
+  import type {
+    AppPreferences,
+    ColorScheme,
+    PlayerState,
+    ThemePackageDocument,
+  } from '$lib/types';
   import {
-    ExternalLink,
-    Loader2,
-    Music2,
-    Pause,
-    Play,
-    SkipBack,
-    SkipForward,
-  } from '@lucide/svelte';
+    applyAppThemeTokenSet,
+    applyContextThemePalette,
+    deriveGlobalTokensFromSlots,
+    resolveAppThemeTokenSet,
+  } from '$lib/themeTokens';
+  import { resolveThemeColors } from '$lib/themePresets';
+  import { resolveThemePackageColors } from '$lib/features/shell/themePackageRuntime.svelte';
+  import { applyThemePackageDocument } from '$lib/features/shell/themePackageManager.svelte';
+  import { runThemePackageTransition } from '$lib/features/shell/themePackageTransition';
+  import { shouldAcceptThemeSnapshot } from '$lib/features/player/themeSnapshotGuard';
+  import { formatTime } from '$lib/features/player/formatUtils';
+  import {
+    hasPlaybackCompleted,
+    shouldApplyPlaybackProgress,
+  } from '$lib/features/player/playback-contract';
+  import PlayToggleGlyph from '$lib/components/app/player/PlayToggleGlyph.svelte';
+  import { ExternalLink, Music2, SkipBack, SkipForward } from '@lucide/svelte';
+  import * as m from '$lib/paraglide/messages.js';
+  import { imageDataSrc } from '$lib/imageDataSrc';
 
   type PendingAction = 'play' | 'previous' | 'next' | 'seek';
   type PlayToggleTarget = 'playing' | 'paused';
+  type MiniThemeScheme = 'light' | 'dark';
+
+  interface MiniThemeRequest {
+    revision: number;
+    activePackageId: string | null;
+    scheme: MiniThemeScheme;
+  }
+
+  const MINI_THEME_INSPECT_RETRY_MS = 250;
 
   const EMPTY_PLAYER_STATE: PlayerState = {
     sessionId: 0,
@@ -44,13 +74,28 @@
   let playerState = $state<PlayerState>(EMPTY_PLAYER_STATE);
   let pendingAction = $state<PendingAction | null>(null);
   let pendingPlayTarget = $state<PlayToggleTarget | null>(null);
+  let playToggleTransitionKey = $state(0);
   let seekPreview = $state<number | null>(null);
+  let prefersReducedMotion = $state(false);
   let mediaQuery: MediaQueryList | null = null;
+  let reducedMotionQuery: MediaQueryList | null = null;
+  // 本窗口自持的 theme.revision，供 preferences_snapshot 事件 reducer 单调筛选
+  let miniThemeRevision = -1;
+  let miniThemeActivePackageId: string | null = null;
+  let miniThemeApplySeq = 0;
+  let hasCommittedThemeSnapshot = false;
+  let committedThemePackageId: string | null = null;
+  let lastThemePreferences: AppPreferences | null = null;
+  let pendingMiniThemeRequest: MiniThemeRequest | null = null;
+  let retriedMiniThemeRequest: MiniThemeRequest | null = null;
+  let miniThemeRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   const hasSong = $derived(Boolean(playerState.songCid));
   const title = $derived(playerState.songName || 'Harubble');
   const artists = $derived(
-    playerState.artists.length ? playerState.artists.join(' / ') : 'No track'
+    playerState.artists.length
+      ? playerState.artists.join(' / ')
+      : m.mini_player_no_track()
   );
   const duration = $derived(Math.max(0, playerState.duration || 0));
   const progress = $derived(Math.max(0, playerState.progress || 0));
@@ -63,20 +108,193 @@
     playerState.isLoading || pendingPlayTarget !== null
   );
   const playLabel = $derived(
-    playButtonLoading ? 'Loading' : playerState.isPlaying ? 'Pause' : 'Play'
+    playButtonLoading
+      ? m.player_status_loading()
+      : playerState.isPlaying
+        ? m.player_aria_pause()
+        : m.player_aria_play()
   );
 
   function applySystemTheme() {
     const dark = mediaQuery?.matches ?? false;
+    const colorScheme = lastThemePreferences?.theme?.colorScheme;
+    const followsSystem = colorScheme === undefined || colorScheme === 'auto';
+    if (lastThemePreferences && !followsSystem) {
+      return;
+    }
+    if (lastThemePreferences) {
+      void applyThemePreferences(lastThemePreferences);
+      return;
+    }
     document.documentElement.classList.toggle('dark', dark);
     document.documentElement.classList.toggle('light', !dark);
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
   }
 
-  function formatTime(value: number): string {
-    const total = Math.max(0, Math.floor(value));
-    const minutes = Math.floor(total / 60);
-    const seconds = total % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  function isSameMiniThemeRequest(
+    left: MiniThemeRequest | null,
+    right: MiniThemeRequest
+  ): boolean {
+    return (
+      left?.revision === right.revision &&
+      left.activePackageId === right.activePackageId &&
+      left.scheme === right.scheme
+    );
+  }
+
+  function scheduleMiniThemeInspectRetry(
+    snapshot: AppPreferences,
+    request: MiniThemeRequest,
+    applySeq: number
+  ): void {
+    if (isSameMiniThemeRequest(retriedMiniThemeRequest, request)) return;
+    retriedMiniThemeRequest = request;
+    if (miniThemeRetryTimer !== null) clearTimeout(miniThemeRetryTimer);
+    miniThemeRetryTimer = setTimeout(() => {
+      miniThemeRetryTimer = null;
+      if (applySeq !== miniThemeApplySeq) return;
+      void applyThemePreferences(snapshot);
+    }, MINI_THEME_INSPECT_RETRY_MS);
+  }
+
+  function clearMiniThemeInspectRetry(request: MiniThemeRequest): void {
+    if (!isSameMiniThemeRequest(retriedMiniThemeRequest, request)) return;
+    retriedMiniThemeRequest = null;
+    if (miniThemeRetryTimer !== null) {
+      clearTimeout(miniThemeRetryTimer);
+      miniThemeRetryTimer = null;
+    }
+  }
+
+  /**
+   * 单调 reducer：接收来自主窗口的 preferences_snapshot 广播并同步 Mini Player DOM 令牌。
+   *
+   * 严格按 `theme.revision` 单调递增接受快照：老事件直接丢弃。
+   * 解析 scheme（跟随系统时依赖 mediaQuery）后调用 `resolveAppThemeTokenSet` 派生
+   * 23 个全局 token；首次快照和同包重算同步提交，跨包切换在遮罩中点原子提交。
+   */
+  async function applyThemePreferences(
+    snapshot: AppPreferences
+  ): Promise<void> {
+    const theme = snapshot.theme;
+    if (!theme) return;
+    const incomingRevision = theme.revision ?? 0;
+    const incomingActivePackageId = theme.activePackageId ?? null;
+    if (
+      !shouldAcceptThemeSnapshot(
+        miniThemeRevision,
+        miniThemeActivePackageId,
+        incomingRevision,
+        incomingActivePackageId
+      )
+    ) {
+      return;
+    }
+    const scheme = resolveScheme(theme.colorScheme);
+    const request: MiniThemeRequest = {
+      revision: incomingRevision,
+      activePackageId: incomingActivePackageId,
+      scheme,
+    };
+    if (isSameMiniThemeRequest(pendingMiniThemeRequest, request)) {
+      // The bridge may replay the same snapshot while its package inspect or
+      // reveal is still pending. The existing request owns that transition;
+      // restarting it would make a same-target wipe visibly jump backwards.
+      return;
+    }
+    miniThemeRevision = incomingRevision;
+    miniThemeActivePackageId = incomingActivePackageId;
+    lastThemePreferences = snapshot;
+    const applySeq = ++miniThemeApplySeq;
+    if (
+      retriedMiniThemeRequest !== null &&
+      !isSameMiniThemeRequest(retriedMiniThemeRequest, request)
+    ) {
+      clearMiniThemeInspectRetry(retriedMiniThemeRequest);
+    }
+    pendingMiniThemeRequest = request;
+
+    try {
+      let packageDocument: ThemePackageDocument | null = null;
+      let packageInspectFailed = false;
+      if (incomingActivePackageId) {
+        try {
+          const inspected = await inspectThemePackage(incomingActivePackageId);
+          if (inspected?.manifest.id === incomingActivePackageId) {
+            packageDocument = inspected;
+          } else {
+            packageInspectFailed = true;
+          }
+        } catch {
+          packageInspectFailed = true;
+        }
+      }
+      if (
+        applySeq !== miniThemeApplySeq ||
+        incomingRevision !== miniThemeRevision ||
+        incomingActivePackageId !== miniThemeActivePackageId
+      ) {
+        return;
+      }
+
+      const themeColors = packageDocument
+        ? resolveThemePackageColors(theme, packageDocument, scheme)
+        : resolveThemeColors({
+            presetId: theme.presetId,
+            customColors: theme.customColors,
+          });
+      const tokens = packageDocument
+        ? deriveGlobalTokensFromSlots(themeColors, scheme)
+        : resolveAppThemeTokenSet(themeColors, scheme);
+      const animate =
+        !packageInspectFailed &&
+        hasCommittedThemeSnapshot &&
+        incomingActivePackageId !== committedThemePackageId;
+
+      await runThemePackageTransition(
+        () => {
+          if (
+            applySeq !== miniThemeApplySeq ||
+            incomingRevision !== miniThemeRevision ||
+            incomingActivePackageId !== miniThemeActivePackageId
+          ) {
+            return;
+          }
+          document.documentElement.classList.toggle('dark', scheme === 'dark');
+          document.documentElement.classList.toggle('light', scheme !== 'dark');
+          document.documentElement.style.colorScheme = scheme;
+          applyThemePackageDocument(packageDocument, scheme);
+          applyAppThemeTokenSet(tokens, { animate: false });
+          applyContextThemePalette(null, tokens, scheme, { animate: false });
+          hasCommittedThemeSnapshot = true;
+          committedThemePackageId = packageDocument?.manifest.id ?? null;
+        },
+        {
+          animate,
+          reason: 'activate',
+          targetPackageId: packageDocument?.manifest.id ?? null,
+        }
+      );
+      if (packageInspectFailed && applySeq === miniThemeApplySeq) {
+        scheduleMiniThemeInspectRetry(snapshot, request, applySeq);
+      } else if (!packageInspectFailed) {
+        clearMiniThemeInspectRetry(request);
+      }
+    } finally {
+      if (pendingMiniThemeRequest === request) {
+        pendingMiniThemeRequest = null;
+      }
+    }
+  }
+
+  function resolveScheme(preference: ColorScheme | undefined): MiniThemeScheme {
+    if (preference === 'dark') return 'dark';
+    if (preference === 'light') return 'light';
+    return mediaQuery?.matches ? 'dark' : 'light';
+  }
+
+  function applyReducedMotion() {
+    prefersReducedMotion = reducedMotionQuery?.matches ?? false;
   }
 
   function hasTauriRuntime(): boolean {
@@ -133,11 +351,16 @@
   function togglePlayback() {
     if (!hasSong || playerState.isLoading || pendingAction || pendingPlayTarget)
       return;
+    playToggleTransitionKey += 1;
+    flushSync();
     pendingPlayTarget = playerState.isPlaying ? 'paused' : 'playing';
     void runAction('play', () =>
-      (playerState.isPlaying ? pausePlayback() : resumePlayback()).then(
-        refreshPlayerStateAfterPlaybackCommand
-      )
+      (playerState.isPlaying
+        ? pausePlayback()
+        : hasPlaybackCompleted(playerState)
+          ? seekCurrentPlayback(0)
+          : resumePlayback()
+      ).then(refreshPlayerStateAfterPlaybackCommand)
     );
   }
 
@@ -172,6 +395,10 @@
     applySystemTheme();
     mediaQuery.addEventListener('change', applySystemTheme);
 
+    reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    applyReducedMotion();
+    reducedMotionQuery.addEventListener('change', applyReducedMotion);
+
     if (hasTauriRuntime()) {
       void getPlayerState()
         .then((state) => {
@@ -179,34 +406,60 @@
         })
         .catch((_error: unknown) => {});
 
-      void (async () => {
-        const stateUnlisten = await listen<PlayerState>(
-          'player-state-changed',
-          (event) => {
-            playerState = event.payload;
-            clearPlayPendingIfSettled(event.payload);
+      // Playback subscriptions are independent of theme hydration. A slow or
+      // failed preferences/inspect request must not create a startup event gap.
+      void listenPlayerStateChanged((state) => {
+        if (lifecycle.disposed) return;
+        playerState = state;
+        clearPlayPendingIfSettled(state);
+      })
+        .then((stateUnlisten) => {
+          if (lifecycle.disposed) {
+            stateUnlisten();
+            return;
           }
-        );
-        const progressUnlisten = await listen<PlayerState>(
-          'player-progress',
-          (event) => {
-            if (event.payload.sessionId < playerState.sessionId) return;
-            playerState = {
-              ...playerState,
-              sessionId: event.payload.sessionId,
-              progress: event.payload.progress,
-              duration: event.payload.duration,
-            };
-          }
-        );
-
-        if (lifecycle.disposed) {
-          stateUnlisten();
-          progressUnlisten();
+          unlisteners.push(stateUnlisten);
+        })
+        .catch((_error: unknown) => {});
+      void listenPlayerProgress((state) => {
+        if (
+          lifecycle.disposed ||
+          !shouldApplyPlaybackProgress(state, playerState)
+        ) {
           return;
         }
+        playerState = {
+          ...playerState,
+          sessionId: state.sessionId,
+          progress: state.progress,
+          duration: state.duration,
+        };
+      })
+        .then((progressUnlisten) => {
+          if (lifecycle.disposed) {
+            progressUnlisten();
+            return;
+          }
+          unlisteners.push(progressUnlisten);
+        })
+        .catch((_error: unknown) => {});
 
-        unlisteners.push(stateUnlisten, progressUnlisten);
+      void (async () => {
+        // 先订阅主题事件，再读取初始快照，避免两步之间发生的切换丢失。
+        const prefsUnlisten = await listenPreferencesSnapshot((snapshot) => {
+          if (lifecycle.disposed) return;
+          void applyThemePreferences(snapshot);
+        });
+        if (lifecycle.disposed) {
+          prefsUnlisten();
+          return;
+        }
+        unlisteners.push(prefsUnlisten);
+        await getPreferences()
+          .then((prefs) => {
+            if (!lifecycle.disposed) return applyThemePreferences(prefs);
+          })
+          .catch((_error: unknown) => {});
       })().catch((_error: unknown) => {});
     }
 
@@ -214,6 +467,8 @@
       lifecycle.disposed = true;
       mediaQuery?.removeEventListener('change', applySystemTheme);
       mediaQuery = null;
+      reducedMotionQuery?.removeEventListener('change', applyReducedMotion);
+      reducedMotionQuery = null;
       while (unlisteners.length) {
         unlisteners.pop()?.();
       }
@@ -221,6 +476,11 @@
   });
 
   onDestroy(() => {
+    miniThemeApplySeq += 1;
+    if (miniThemeRetryTimer !== null) {
+      clearTimeout(miniThemeRetryTimer);
+      miniThemeRetryTimer = null;
+    }
     document.documentElement.classList.remove('mini-player-document');
   });
 
@@ -234,16 +494,16 @@
 </svelte:head>
 
 <main class="mini-player">
-  <section class="track-row" aria-label="Current track">
-    <div class="cover-shell" aria-hidden="true" data-tauri-drag-region>
+  <section class="track-row" aria-label={m.mini_player_track_section_aria()}>
+    <div class="cover-shell" aria-hidden="true" data-tauri-drag-region="deep">
       {#if playerState.coverUrl}
-        <img class="cover-art" src={playerState.coverUrl} alt="" />
+        <img class="cover-art" use:imageDataSrc={playerState.coverUrl} alt="" />
       {:else}
         <Music2 size={24} strokeWidth={1.8} />
       {/if}
     </div>
 
-    <div class="track-meta" data-tauri-drag-region>
+    <div class="track-meta" data-tauri-drag-region="deep">
       <p class="track-title" {title}>{title}</p>
       <p class="track-artists" title={artists}>{artists}</p>
     </div>
@@ -251,15 +511,15 @@
     <button
       type="button"
       class="icon-button open-button"
-      aria-label="Open Harubble"
-      title="Open Harubble"
+      aria-label={m.mini_player_open_aria()}
+      title={m.mini_player_open_aria()}
       onclick={openMainWindow}
     >
       <ExternalLink size={16} strokeWidth={1.8} />
     </button>
   </section>
 
-  <section class="progress-row" aria-label="Playback progress">
+  <section class="progress-row" aria-label={m.player_aria_timeline()}>
     <span class="time-label">{formatTime(shownProgress)}</span>
     <input
       class="progress-slider"
@@ -269,7 +529,7 @@
       step="0.1"
       value={shownProgress}
       disabled={!canSeek || pendingAction === 'seek'}
-      aria-label="Seek playback"
+      aria-label={m.player_aria_seek()}
       aria-valuetext={`${formatTime(shownProgress)} of ${formatTime(duration)}`}
       oninput={handleSeekInput}
       onchange={handleSeekCommit}
@@ -278,12 +538,12 @@
     <span class="time-label">{formatTime(duration)}</span>
   </section>
 
-  <section class="controls-row" aria-label="Playback controls">
+  <section class="controls-row" aria-label={m.player_aria_transport()}>
     <button
       type="button"
       class="icon-button"
-      aria-label="Previous track"
-      title="Previous track"
+      aria-label={m.mini_player_previous_aria()}
+      title={m.mini_player_previous_aria()}
       disabled={!playerState.hasPrevious || pendingAction !== null}
       onclick={handlePrevious}
     >
@@ -296,24 +556,24 @@
       aria-label={playLabel}
       title={playLabel}
       disabled={!hasSong || playerState.isLoading || pendingAction !== null}
+      aria-busy={playButtonLoading}
       onclick={togglePlayback}
     >
-      {#if playerState.isLoading || pendingPlayTarget !== null}
-        <span class="spin">
-          <Loader2 size={19} strokeWidth={1.8} />
-        </span>
-      {:else if playerState.isPlaying}
-        <Pause size={19} strokeWidth={2} />
-      {:else}
-        <Play size={19} strokeWidth={2} />
-      {/if}
+      <PlayToggleGlyph
+        isPlaying={playerState.isPlaying}
+        isLoading={playerState.isLoading}
+        isPending={pendingPlayTarget !== null}
+        transitionKey={playToggleTransitionKey}
+        reducedMotion={prefersReducedMotion}
+        size="19px"
+      />
     </button>
 
     <button
       type="button"
       class="icon-button"
-      aria-label="Next track"
-      title="Next track"
+      aria-label={m.mini_player_next_aria()}
+      title={m.mini_player_next_aria()}
       disabled={!playerState.hasNext || pendingAction !== null}
       onclick={handleNext}
     >
@@ -375,7 +635,7 @@
   .track-row {
     min-width: 0;
     display: grid;
-    grid-template-columns: 54px minmax(0, 1fr) 30px;
+    grid-template-columns: 54px minmax(0, 1fr) 40px;
     align-items: center;
     gap: 10px;
   }
@@ -386,7 +646,7 @@
     display: grid;
     place-items: center;
     overflow: hidden;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background:
       linear-gradient(135deg, rgba(var(--accent-rgb), 0.18), transparent),
       var(--bg-tertiary);
@@ -459,7 +719,7 @@
 
   .progress-slider::-webkit-slider-runnable-track {
     height: 4px;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     background: linear-gradient(
       90deg,
       var(--album-accent) var(--progress-ratio, 0%),
@@ -487,20 +747,20 @@
 
   .icon-button,
   .play-button {
-    width: 30px;
-    height: 30px;
+    width: 40px;
+    height: 40px;
     display: grid;
     place-items: center;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--mini-control-bg);
     color: var(--player-control-color);
     transition: var(--motion-hover);
   }
 
   .play-button {
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     background: linear-gradient(
       135deg,
       var(--album-accent),
@@ -537,19 +797,11 @@
     opacity: 0.42;
   }
 
+  .play-button[aria-busy='true']:disabled {
+    opacity: 1;
+  }
+
   .open-button {
     align-self: start;
-  }
-
-  .spin {
-    display: grid;
-    place-items: center;
-    animation: motion-spin var(--motion-spinner) linear infinite;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .spin {
-      animation: none;
-    }
   }
 </style>

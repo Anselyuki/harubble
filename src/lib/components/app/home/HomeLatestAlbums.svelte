@@ -3,7 +3,9 @@
   import { localeState } from '$lib/i18n';
   import { imageDataSrc } from '$lib/imageDataSrc';
   import MotionPulseBlock from '$lib/components/MotionPulseBlock.svelte';
+  import MotionSpinner from '$lib/components/MotionSpinner.svelte';
   import type { Album } from '$lib/types';
+  import { shouldConsumeVerticalWheel } from './horizontalScroll';
 
   interface Props {
     albums: Album[];
@@ -21,6 +23,7 @@
     onSelect,
   }: Props = $props();
 
+  let scrollEl: HTMLDivElement | undefined = $state();
   const labels = $derived.by(() => {
     void localeState.current;
     return {
@@ -28,6 +31,22 @@
       empty: m.home_empty_albums(),
     };
   });
+
+  function handleWheel(e: WheelEvent): void {
+    if (!scrollEl) return;
+    const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
+    if (
+      !shouldConsumeVerticalWheel(
+        e.deltaX,
+        e.deltaY,
+        scrollEl.scrollLeft,
+        maxScroll
+      )
+    )
+      return;
+    e.preventDefault();
+    scrollEl.scrollLeft += e.deltaY;
+  }
 </script>
 
 <section class="latest-albums" aria-label={labels.title}>
@@ -42,7 +61,7 @@
   {:else if albums.length === 0}
     <p class="empty-hint">{labels.empty}</p>
   {:else}
-    <div class="album-scroll">
+    <div class="album-scroll" bind:this={scrollEl} onwheel={handleWheel}>
       {#each albums as album, index (album.cid)}
         <button
           class="album-card-wrapper"
@@ -62,7 +81,10 @@
             />
             {#if loadingAlbumCid === album.cid}
               <div class="album-cover-loading" aria-hidden="true">
-                <span class="album-cover-spinner"></span>
+                <MotionSpinner
+                  className="album-cover-spinner"
+                  {reducedMotion}
+                />
               </div>
             {/if}
           </div>
@@ -79,6 +101,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    overflow-x: clip;
   }
 
   .section-title {
@@ -94,8 +117,21 @@
     align-items: flex-start;
     gap: 0.75rem;
     overflow-x: auto;
+    overflow-y: hidden;
     padding-bottom: 0.5rem;
     scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-tertiary) 55%, transparent)
+      transparent;
+    overscroll-behavior-x: contain;
+  }
+
+  .album-scroll::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .album-scroll::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+    border-radius: var(--shape-pill);
   }
 
   .album-card-wrapper {
@@ -110,7 +146,7 @@
     cursor: pointer;
     text-align: left;
     color: inherit;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     transition: var(--motion-hover);
   }
 
@@ -122,7 +158,7 @@
     position: relative;
     width: 140px;
     height: 140px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     overflow: hidden;
     flex-shrink: 0;
   }
@@ -132,7 +168,7 @@
     width: 140px;
     height: 140px;
     object-fit: cover;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--surface-secondary, rgba(255, 255, 255, 0.06));
   }
 
@@ -146,13 +182,10 @@
     backdrop-filter: blur(2px);
   }
 
-  .album-cover-spinner {
+  .album-cover-loading :global(.album-cover-spinner) {
     width: 22px;
     height: 22px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: motion-spin 0.9s linear infinite;
+    color: white;
   }
 
   .album-name {
@@ -185,7 +218,7 @@
     flex-shrink: 0;
     width: 140px;
     height: 188px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: var(--surface-secondary, rgba(255, 255, 255, 0.06));
   }
 

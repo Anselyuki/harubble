@@ -3,9 +3,10 @@
 //! 该模块负责选择可用输出设备与格式、创建音频输出流，并把播放器解码后的样本缓冲
 //! 推送到系统音频设备，供桌面端实际发声使用。
 
+use super::cpal_helpers::*;
 use crate::player::backend::{
-    AudioCallbackMetrics, AudioMetricsHandler, AudioUnderrunHandler, OutputFormat,
-    OutputSampleFormat, PlaybackBackend,
+    AudioCallbackMetrics, AudioMetricsHandler, AudioUnderrunHandler, OutputFormat, PlaybackBackend,
+    CALLBACK_DURATION_BUCKETS,
 };
 use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
 use anyhow::{Context, Result};
@@ -18,8 +19,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-
-const OUTPUT_SMOOTHING_FRAMES: usize = 64;
 
 fn choose_negotiated_output_config(
     device: &cpal::Device,
@@ -109,9 +108,7 @@ fn choose_output_config_from_ranges(
         })
         .context("No supported output configuration found")?;
 
-    Ok(fallback
-        .clone()
-        .with_sample_rate(clamp_sample_rate(fallback, audio_format.sample_rate)))
+    Ok(fallback.with_sample_rate(clamp_sample_rate(fallback, audio_format.sample_rate)))
 }
 
 fn choose_exact_output_config_from_ranges(
@@ -132,7 +129,7 @@ fn choose_exact_output_config_from_ranges(
                     .is_none_or(|sample_format| sample_format == config.sample_format())
         })
         .min_by_key(|config| sample_format_priority(config.sample_format()).unwrap_or(usize::MAX))
-        .map(|config| config.clone().with_sample_rate(audio_format.sample_rate))
+        .map(|config| (*config).with_sample_rate(audio_format.sample_rate))
 }
 
 fn choose_exact_output_config_from_default(
@@ -170,95 +167,27 @@ impl From<OutputFormat> for ExactOutputFormat {
     }
 }
 
-fn is_supported_sample_format(format: SampleFormat) -> bool {
-    sample_format_priority(format).is_some()
-}
-
-fn is_supported_output_config(config: &SupportedStreamConfig) -> bool {
-    is_supported_sample_format(config.sample_format())
-        && config.channels() > 0
-        && config.sample_rate() > 0
-}
-
-fn sample_format_priority(format: SampleFormat) -> Option<usize> {
-    match format {
-        SampleFormat::F32 => Some(0),
-        SampleFormat::F64 => Some(1),
-        SampleFormat::I16 => Some(2),
-        SampleFormat::U16 => Some(3),
-        SampleFormat::I24 => Some(4),
-        SampleFormat::U24 => Some(5),
-        SampleFormat::I32 => Some(6),
-        SampleFormat::U32 => Some(7),
-        SampleFormat::I8 => Some(8),
-        SampleFormat::U8 => Some(9),
-        SampleFormat::I64 => Some(10),
-        SampleFormat::U64 => Some(11),
-        _ => None,
-    }
-}
-
-fn output_sample_format(format: SampleFormat) -> Option<OutputSampleFormat> {
-    match format {
-        SampleFormat::F32 => Some(OutputSampleFormat::F32),
-        SampleFormat::F64 => Some(OutputSampleFormat::F64),
-        SampleFormat::I8 => Some(OutputSampleFormat::I8),
-        SampleFormat::I16 => Some(OutputSampleFormat::I16),
-        SampleFormat::I24 => Some(OutputSampleFormat::I24),
-        SampleFormat::I32 => Some(OutputSampleFormat::I32),
-        SampleFormat::I64 => Some(OutputSampleFormat::I64),
-        SampleFormat::U8 => Some(OutputSampleFormat::U8),
-        SampleFormat::U16 => Some(OutputSampleFormat::U16),
-        SampleFormat::U24 => Some(OutputSampleFormat::U24),
-        SampleFormat::U32 => Some(OutputSampleFormat::U32),
-        SampleFormat::U64 => Some(OutputSampleFormat::U64),
-        _ => None,
-    }
-}
-
-fn output_dither_lsb(format: SampleFormat) -> f32 {
-    match format {
-        SampleFormat::F32 | SampleFormat::F64 => 0.0,
-        SampleFormat::I8 | SampleFormat::U8 => 1.0 / 128.0,
-        SampleFormat::I16 | SampleFormat::U16 => 1.0 / 32_768.0,
-        SampleFormat::I24 | SampleFormat::U24 => 1.0 / 8_388_608.0,
-        SampleFormat::I32 | SampleFormat::U32 => 1.0 / 2_147_483_648.0,
-        SampleFormat::I64 | SampleFormat::U64 => 1.0 / 9_223_372_036_854_775_808.0,
-        _ => 0.0,
-    }
-}
-
-fn cpal_sample_format(format: OutputSampleFormat) -> SampleFormat {
-    match format {
-        OutputSampleFormat::F32 => SampleFormat::F32,
-        OutputSampleFormat::F64 => SampleFormat::F64,
-        OutputSampleFormat::I8 => SampleFormat::I8,
-        OutputSampleFormat::I16 => SampleFormat::I16,
-        OutputSampleFormat::I24 => SampleFormat::I24,
-        OutputSampleFormat::I32 => SampleFormat::I32,
-        OutputSampleFormat::I64 => SampleFormat::I64,
-        OutputSampleFormat::U8 => SampleFormat::U8,
-        OutputSampleFormat::U16 => SampleFormat::U16,
-        OutputSampleFormat::U24 => SampleFormat::U24,
-        OutputSampleFormat::U32 => SampleFormat::U32,
-        OutputSampleFormat::U64 => SampleFormat::U64,
-    }
-}
-
-fn clamp_sample_rate(config: &SupportedStreamConfigRange, source_rate: u32) -> u32 {
-    source_rate
-        .max(config.min_sample_rate())
-        .min(config.max_sample_rate())
-}
-
-fn sample_rate_distance(config: &SupportedStreamConfigRange, source_rate: u32) -> u32 {
-    clamp_sample_rate(config, source_rate).abs_diff(source_rate)
-}
-
-#[derive(Default)]
 struct CallbackMetricCounters {
     silence_due_to_lock: AtomicU64,
     underrun_frames: AtomicU64,
+    callback_count: AtomicU64,
+    callback_elapsed_ns_total: AtomicU64,
+    callback_elapsed_ns_max: AtomicU64,
+    /// 回调运行时间 log2μs 直方图；桶预分配以避免回调路径分配。
+    callback_duration_buckets: [AtomicU64; CALLBACK_DURATION_BUCKETS],
+}
+
+impl Default for CallbackMetricCounters {
+    fn default() -> Self {
+        Self {
+            silence_due_to_lock: AtomicU64::new(0),
+            underrun_frames: AtomicU64::new(0),
+            callback_count: AtomicU64::new(0),
+            callback_elapsed_ns_total: AtomicU64::new(0),
+            callback_elapsed_ns_max: AtomicU64::new(0),
+            callback_duration_buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
 }
 
 impl CallbackMetricCounters {
@@ -272,12 +201,57 @@ impl CallbackMetricCounters {
         }
     }
 
+    /// 记录一次回调运行时间（纳秒），只在实时回调路径的收尾处调用。
+    ///
+    /// 所有操作使用 Relaxed 原子，不引入内存屏障；直方图桶预分配，路径内无堆分配。
+    fn record_callback_elapsed(&self, elapsed_ns: u64) {
+        self.callback_count.fetch_add(1, Ordering::Relaxed);
+        self.callback_elapsed_ns_total
+            .fetch_add(elapsed_ns, Ordering::Relaxed);
+        // fetch_max 更新历史峰值
+        let mut current = self.callback_elapsed_ns_max.load(Ordering::Relaxed);
+        while elapsed_ns > current {
+            match self.callback_elapsed_ns_max.compare_exchange_weak(
+                current,
+                elapsed_ns,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+        let bucket = callback_duration_bucket(elapsed_ns);
+        self.callback_duration_buckets[bucket].fetch_add(1, Ordering::Relaxed);
+    }
+
     fn drain(&self) -> AudioCallbackMetrics {
+        let mut buckets = [0u64; CALLBACK_DURATION_BUCKETS];
+        for (i, slot) in buckets.iter_mut().enumerate() {
+            *slot = self.callback_duration_buckets[i].swap(0, Ordering::Relaxed);
+        }
         AudioCallbackMetrics {
             silence_due_to_lock: self.silence_due_to_lock.swap(0, Ordering::Relaxed),
             underrun_frames: self.underrun_frames.swap(0, Ordering::Relaxed),
+            callback_count: self.callback_count.swap(0, Ordering::Relaxed),
+            callback_elapsed_ns_total: self.callback_elapsed_ns_total.swap(0, Ordering::Relaxed),
+            callback_elapsed_ns_max: self.callback_elapsed_ns_max.swap(0, Ordering::Relaxed),
+            callback_duration_buckets: buckets,
         }
     }
+}
+
+/// 把纳秒转成 log2μs 直方图桶索引。
+///
+/// 桶 i 覆盖 `[2^i μs, 2^(i+1) μs)`；桶 15（最后一桶）为 ≥32768μs 的溢出桶。
+/// 不使用浮点，只用整数移位，回调路径开销可忽略。
+fn callback_duration_bucket(elapsed_ns: u64) -> usize {
+    let micros = elapsed_ns / 1000;
+    if micros == 0 {
+        return 0;
+    }
+    let log2 = 63 - micros.leading_zeros() as usize;
+    log2.min(CALLBACK_DURATION_BUCKETS - 1)
 }
 
 pub struct CpalBackend {
@@ -327,6 +301,7 @@ impl PlaybackBackend for CpalBackend {
         metrics_handler: AudioMetricsHandler,
         underrun_handler: AudioUnderrunHandler,
     ) -> Result<()> {
+        #[cfg(not(target_os = "macos"))]
         self.stop()?;
 
         let host = cpal::default_host();
@@ -382,6 +357,17 @@ impl PlaybackBackend for CpalBackend {
             sample_format => anyhow::bail!("Unsupported output sample format {sample_format}"),
         };
 
+        stream.play().context("Failed to start output stream")?;
+
+        // macOS 上旧流已被会话 stop flag 切到 equilibrium，等新流真正运行后再释放，
+        // 避免 USB 音频设备在歌曲加载期间失去稳定的静音时钟。其他平台已在开流前 stop。
+        let previous_stream = self.stream.replace(stream);
+        let previous_samples = self.samples.replace(samples);
+        if let Some(previous_samples) = previous_samples {
+            previous_samples.finish();
+        }
+        drop(previous_stream);
+
         spawn_stream_monitor(
             Arc::clone(&stop_flag),
             frames_rendered,
@@ -395,10 +381,18 @@ impl PlaybackBackend for CpalBackend {
             underrun_requested,
             underrun_handler,
         );
+        Ok(())
+    }
 
-        stream.play().context("Failed to start output stream")?;
-        self.stream = Some(stream);
-        self.samples = Some(samples);
+    fn quiesce_for_transition(&mut self) -> Result<()> {
+        if let Some(samples) = self.samples.take() {
+            samples.finish();
+        }
+        if let Some(stream) = &self.stream {
+            stream
+                .play()
+                .context("Failed to keep output stream active during playback transition")?;
+        }
         Ok(())
     }
 
@@ -566,15 +560,6 @@ impl OutputSmoother {
     }
 }
 
-fn step_toward(current: f32, target: f32) -> f32 {
-    let step = 1.0 / OUTPUT_SMOOTHING_FRAMES as f32;
-    if current < target {
-        (current + step).min(target)
-    } else {
-        (current - step).max(target)
-    }
-}
-
 struct TpdfDither {
     lsb: f32,
     state: u64,
@@ -681,8 +666,15 @@ fn write_output_data_with_metrics<T>(
 ) where
     T: Sample + FromSample<f32>,
 {
+    // P1-6 基准：记录回调运行时间。Instant::now() 在主流平台由 vDSO 实现，开销
+    // 约几十纳秒，远低于我们关心的微秒级抖动。收尾使用 record_callback_elapsed。
+    let callback_start = std::time::Instant::now();
+
     if stop_flag.load(Ordering::SeqCst) {
         data.fill(T::EQUILIBRIUM);
+        callback_metrics.record_callback_elapsed(
+            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
         return;
     }
 
@@ -697,6 +689,9 @@ fn write_output_data_with_metrics<T>(
     let Some(status) = samples.try_pop_realtime_frames_into(output, channels) else {
         write_smoothed_silence(data, output, channels, smoother, gain);
         callback_metrics.record_silence_due_to_lock();
+        callback_metrics.record_callback_elapsed(
+            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
         return;
     };
     if let Some(error) = status.error {
@@ -704,13 +699,21 @@ fn write_output_data_with_metrics<T>(
         if !buffer_error_reported.swap(true, Ordering::SeqCst) {
             error_handler(error);
         }
+        callback_metrics.record_callback_elapsed(
+            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
         return;
     }
 
     smoother.smooth_audio(output, status.written, channels);
 
-    for (target, sample) in data.iter_mut().zip(output.iter().copied()) {
-        let dithered = sample * gain + dither.next();
+    for (index, (target, sample)) in data.iter_mut().zip(output.iter().copied()).enumerate() {
+        let scaled = sample * gain;
+        let dithered = if index < status.written && gain > 0.0 {
+            scaled + dither.next()
+        } else {
+            scaled
+        };
         *target = T::from_sample(sanitize_output_sample(dithered));
     }
 
@@ -727,6 +730,9 @@ fn write_output_data_with_metrics<T>(
     if status.finished {
         finish_fired.store(true, Ordering::SeqCst);
     }
+
+    callback_metrics
+        .record_callback_elapsed(callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
 }
 
 fn output_gain(volume: &AtomicU64) -> f32 {
@@ -738,14 +744,7 @@ fn output_gain(volume: &AtomicU64) -> f32 {
     }
 }
 
-fn sanitize_output_sample(sample: f32) -> f32 {
-    if sample.is_finite() {
-        sample.clamp(-1.0, 1.0)
-    } else {
-        0.0
-    }
-}
-
+#[allow(clippy::too_many_arguments)]
 fn spawn_stream_monitor(
     stop_flag: Arc<AtomicBool>,
     frames_rendered: Arc<AtomicU64>,
@@ -798,7 +797,10 @@ fn report_callback_metrics(
     metrics_handler: &AudioMetricsHandler,
 ) {
     let metrics = callback_metrics.drain();
-    if metrics.silence_due_to_lock > 0 || metrics.underrun_frames > 0 {
+    // 只要有任意非零观测就上报：过去是"仅告警"（silence/underrun），P1-6 之后加入
+    // 回调计数与耗时；无回调时（stop/未开始）保持沉默。
+    if metrics.callback_count > 0 || metrics.silence_due_to_lock > 0 || metrics.underrun_frames > 0
+    {
         metrics_handler(metrics);
     }
 }
@@ -810,10 +812,10 @@ mod tests {
         choose_output_config_from_ranges, output_dither_lsb, write_output_data,
         write_output_data_with_metrics, CallbackMetricCounters, OutputSmoother, TpdfDither,
     };
-    use crate::player::backend::{AudioCallbackMetrics, OutputFormat, OutputSampleFormat};
+    use crate::player::backend::{OutputFormat, OutputSampleFormat};
     use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
     use cpal::{SampleFormat, SupportedBufferSize};
-    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
 
     fn config(
@@ -1034,6 +1036,123 @@ mod tests {
     }
 
     #[test]
+    fn integer_output_does_not_dither_empty_initial_buffer() {
+        let samples = SampleBuffer::new();
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::new(2);
+        let mut dither = TpdfDither::new(output_dither_lsb(SampleFormat::I16));
+        let mut output = [1_i16; 256];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert!(output.iter().all(|sample| *sample == 0));
+        assert_eq!(frames_rendered.load(Ordering::Relaxed), 0);
+        assert!(underrun_requested.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn integer_output_keeps_stopped_transition_at_equilibrium() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25; 256]);
+        let stop_flag = AtomicBool::new(true);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::primed(2);
+        let mut dither = TpdfDither::new(output_dither_lsb(SampleFormat::I16));
+        let mut output = [1_i16; 256];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert!(output.iter().all(|sample| *sample == 0));
+        assert_eq!(frames_rendered.load(Ordering::Relaxed), 0);
+        assert!(!finish_fired.load(Ordering::SeqCst));
+        assert!(!underrun_requested.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn integer_output_keeps_muted_audio_at_equilibrium() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25; 256]);
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(0.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::new(2);
+        let mut dither = TpdfDither::new(output_dither_lsb(SampleFormat::I16));
+        let mut output = [1_i16; 256];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert!(output.iter().all(|sample| *sample == 0));
+        assert_eq!(frames_rendered.load(Ordering::Relaxed), 128);
+        assert!(!underrun_requested.load(Ordering::SeqCst));
+    }
+
+    #[test]
     fn output_config_prefers_f32_for_exact_matches() {
         let source = AudioFormat {
             channels: 2,
@@ -1054,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn output_config_accepts_non_f32_exact_matches() {
+    fn output_config_prefers_highest_precision_integer_exact_match() {
         let source = AudioFormat {
             channels: 2,
             sample_rate: 48_000,
@@ -1068,9 +1187,27 @@ mod tests {
 
         let selected = choose_output_config_from_ranges(None, &configs, source).expect("config");
 
-        assert_eq!(selected.sample_format(), SampleFormat::I16);
+        assert_eq!(selected.sample_format(), SampleFormat::I32);
         assert_eq!(selected.channels(), 2);
         assert_eq!(selected.sample_rate(), 48_000);
+    }
+
+    #[test]
+    fn output_config_prefers_24bit_over_16bit_exact_match() {
+        let source = AudioFormat {
+            channels: 2,
+            sample_rate: 48_000,
+            duration_secs: 0.0,
+            bits_per_sample: Some(24),
+        };
+        let configs = vec![
+            config(2, 48_000, 48_000, SampleFormat::I16),
+            config(2, 48_000, 48_000, SampleFormat::I24),
+        ];
+
+        let selected = choose_output_config_from_ranges(None, &configs, source).expect("config");
+
+        assert_eq!(selected.sample_format(), SampleFormat::I24);
     }
 
     #[test]
@@ -1493,13 +1630,10 @@ mod tests {
             frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
             0
         );
-        assert_eq!(
-            callback_metrics.drain(),
-            AudioCallbackMetrics {
-                silence_due_to_lock: 0,
-                underrun_frames: 2,
-            }
-        );
+        let drained = callback_metrics.drain();
+        assert_eq!(drained.silence_due_to_lock, 0);
+        assert_eq!(drained.underrun_frames, 2);
+        assert_eq!(drained.callback_count, 1);
         assert!(underrun_requested.load(std::sync::atomic::Ordering::SeqCst));
         assert!(errors.lock().unwrap().is_empty());
     }
@@ -1590,13 +1724,10 @@ mod tests {
         );
 
         assert_eq!(output, [0.25, -0.5, 0.75, -1.0]);
-        assert_eq!(
-            callback_metrics.drain(),
-            AudioCallbackMetrics {
-                silence_due_to_lock: 0,
-                underrun_frames: 0,
-            }
-        );
+        let drained = callback_metrics.drain();
+        assert_eq!(drained.silence_due_to_lock, 0);
+        assert_eq!(drained.underrun_frames, 0);
+        assert_eq!(drained.callback_count, 1);
         assert_eq!(
             frames_rendered.load(std::sync::atomic::Ordering::Relaxed),
             2
@@ -1606,5 +1737,50 @@ mod tests {
         assert!(errors.lock().unwrap().is_empty());
 
         handle.join().expect("lock holder should finish");
+    }
+
+    #[test]
+    fn callback_duration_bucket_partitions_log2_microseconds() {
+        use super::callback_duration_bucket;
+        // < 1μs → 桶 0
+        assert_eq!(callback_duration_bucket(500), 0);
+        // 1μs → 桶 0（log2(1)=0）
+        assert_eq!(callback_duration_bucket(1_000), 0);
+        // 2μs → 桶 1
+        assert_eq!(callback_duration_bucket(2_000), 1);
+        // 4μs → 桶 2
+        assert_eq!(callback_duration_bucket(4_000), 2);
+        // 8μs → 桶 3
+        assert_eq!(callback_duration_bucket(8_000), 3);
+        // 1024μs → 桶 10（log2(1024)=10）
+        assert_eq!(callback_duration_bucket(1_024_000), 10);
+        // 32768μs → 溢出到最后一桶（15）
+        assert_eq!(callback_duration_bucket(32_768_000), 15);
+        // 100ms → 溢出到最后一桶
+        assert_eq!(callback_duration_bucket(100_000_000), 15);
+    }
+
+    #[test]
+    fn callback_metric_counters_record_and_drain() {
+        let counters = CallbackMetricCounters::default();
+        counters.record_callback_elapsed(500); // 桶 0
+        counters.record_callback_elapsed(2_000); // 桶 1
+        counters.record_callback_elapsed(4_000); // 桶 2
+        counters.record_underrun_frames(10);
+        counters.record_silence_due_to_lock();
+
+        let drained = counters.drain();
+        assert_eq!(drained.callback_count, 3);
+        assert_eq!(drained.callback_elapsed_ns_total, 6_500);
+        assert_eq!(drained.callback_elapsed_ns_max, 4_000);
+        assert_eq!(drained.underrun_frames, 10);
+        assert_eq!(drained.silence_due_to_lock, 1);
+        assert_eq!(drained.callback_duration_buckets[0], 1);
+        assert_eq!(drained.callback_duration_buckets[1], 1);
+        assert_eq!(drained.callback_duration_buckets[2], 1);
+        // 二次 drain 应清零
+        let empty = counters.drain();
+        assert_eq!(empty.callback_count, 0);
+        assert_eq!(empty.callback_duration_buckets[0], 0);
     }
 }

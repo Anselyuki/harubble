@@ -4,8 +4,29 @@ import { gsap, getMotionDuration, MOTION } from '$lib/design/gsap';
 type RgbTuple = [number, number, number];
 
 const activeTweens = new Map<string, gsap.core.Tween>();
+let atomicCssVariableWriteDepth = 0;
 
 const THEME_TRANSITION_MS = MOTION.SLOW;
+
+/**
+ * 在一个同步提交里更新整组主题变量。
+ *
+ * 主题包切换会同时改变颜色、shape、字体和 visual contract。转场遮罩完全覆盖
+ * 画面时，先终止所有仍在运行的颜色插值，再让提交期间触发的
+ * `transitionCssVariables` 直接落到终值，避免旧 tween 在遮罩退出后回写旧主题。
+ */
+export function runCssVariableWriteTransaction(commit: () => void): void {
+  for (const tween of activeTweens.values()) {
+    tween.kill();
+  }
+  activeTweens.clear();
+  atomicCssVariableWriteDepth += 1;
+  try {
+    commit();
+  } finally {
+    atomicCssVariableWriteDepth -= 1;
+  }
+}
 
 function hexToRgbTuple(hex: string): RgbTuple {
   return [
@@ -127,6 +148,11 @@ export function transitionCssVariables(
   const root = document.documentElement;
   const duration = getMotionDuration(THEME_TRANSITION_MS);
   const tweenKey = groupKey ?? Object.keys(targets).sort().join(',');
+
+  if (atomicCssVariableWriteDepth > 0) {
+    applyCssVariables(targets);
+    return;
+  }
 
   // 快速路径：没有旧值（首次设置），直接写入
   const firstKey = Object.keys(targets)[0];
@@ -301,6 +327,7 @@ export function deriveThemeCssVariables(
       getReadableForegroundColor(accentHoverRgb),
     '--theme-surface': themeColors.surface,
     '--theme-surface-rgb': surfaceRgb.join(', '),
+    '--theme-accent': themeColors.accent,
     '--theme-text-primary': themeColors.textPrimary,
     '--theme-text-secondary': themeColors.textSecondary,
     '--theme-tint': themeColors.tint,

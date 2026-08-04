@@ -19,10 +19,34 @@ export interface BubbleSize {
   height: number;
 }
 
+export interface TriggerPointRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export function resolveTriggerPoint(
+  clientX: number,
+  clientY: number,
+  clickDetail: number,
+  rect: TriggerPointRect
+): CardPosition {
+  if (clickDetail > 0) return { left: clientX, top: clientY };
+  return {
+    left: rect.left + rect.width / 2,
+    top: rect.top + rect.height / 2,
+  };
+}
+
 const DEFAULT_CARD_WIDTH = 280;
 const DEFAULT_CARD_MAX_HEIGHT = 320;
 const DEFAULT_SAFE_MARGIN = 16;
 const DEFAULT_ARROW_SIZE = 8;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
 
 export function calcExpandDirection(
   clickX: number,
@@ -61,6 +85,27 @@ export function calcCardPosition(
     case 'top-left':
       return { top: clickY - offset - cardHeight, left: clickX - cardWidth };
   }
+}
+
+export function clampCardPosition(
+  position: CardPosition,
+  cardSize: BubbleSize,
+  viewport: Viewport,
+  safeMargin = DEFAULT_SAFE_MARGIN
+): CardPosition {
+  const maxLeft = Math.max(
+    safeMargin,
+    viewport.width - cardSize.width - safeMargin
+  );
+  const maxTop = Math.max(
+    safeMargin,
+    viewport.height - cardSize.height - safeMargin
+  );
+
+  return {
+    left: clamp(position.left, safeMargin, maxLeft),
+    top: clamp(position.top, safeMargin, maxTop),
+  };
 }
 
 export function measureBubbleTargetSize(

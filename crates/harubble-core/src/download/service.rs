@@ -58,21 +58,21 @@ fn selection_job_title(
 ) -> String {
     let album_context = first_album_name
         .filter(|name| !name.is_empty())
-        .map(|name| format!("{name} · 已选 {song_count} 首"));
+        .map(|name| format!("{name} · {song_count} songs selected"));
 
     if song_count == 1 {
         return first_song_name
             .filter(|name| !name.is_empty())
             .map(|name| name.to_string())
             .or(album_context)
-            .unwrap_or_else(|| "已选 1 首".to_string());
+            .unwrap_or_else(|| "1 song selected".to_string());
     }
 
     if album_count <= 1 {
-        return album_context.unwrap_or_else(|| format!("已选 {song_count} 首"));
+        return album_context.unwrap_or_else(|| format!("{song_count} songs selected"));
     }
 
-    format!("已选 {song_count} 首 · {album_count} 张专辑")
+    format!("{song_count} songs selected · {album_count} albums")
 }
 
 #[derive(Default)]
@@ -112,7 +112,7 @@ pub struct TaskStateUpdate {
 
 /// 已完成异步准备但尚未注册到队列中的下载批次。
 ///
-/// 该结构体由 [`DownloadService::prepare_job`] 返回，封装了经过请求验证、ID 生成
+/// 该结构体由 [`prepare_job`] 返回，封装了经过请求验证、ID 生成
 /// 与上游 API 查询后的批次元数据与子任务列表，可稳定交由
 /// [`DownloadService::register_prepared_job`] 在短临界区内完成入队。
 pub struct PreparedJob {
@@ -1072,7 +1072,7 @@ mod tests {
     fn adds_album_context_for_single_album_selection() {
         assert_eq!(
             selection_job_title(3, 1, Some("夜航星"), Some("前路未明")),
-            "前路未明 · 已选 3 首"
+            "前路未明 · 3 songs selected"
         );
     }
 
@@ -1080,7 +1080,7 @@ mod tests {
     fn falls_back_to_album_context_when_single_song_name_is_missing() {
         assert_eq!(
             selection_job_title(1, 1, Some(""), Some("前路未明")),
-            "前路未明 · 已选 1 首"
+            "前路未明 · 1 songs selected"
         );
     }
 
@@ -1088,7 +1088,7 @@ mod tests {
     fn shows_album_span_for_cross_album_selection() {
         assert_eq!(
             selection_job_title(5, 2, Some("夜航星"), Some("前路未明")),
-            "已选 5 首 · 2 张专辑"
+            "5 songs selected · 2 albums"
         );
     }
 }

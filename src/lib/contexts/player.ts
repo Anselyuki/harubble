@@ -1,5 +1,9 @@
 import { getContext, setContext } from 'svelte';
-import type { PlaybackFormatState, PlaybackQueueEntry } from '$lib/types';
+import type {
+  PlaybackFormatState,
+  PlaybackQueueEntry,
+  RepeatMode,
+} from '$lib/types';
 import { PLAYER_CONTEXT_KEY } from './keys';
 
 export interface PlayerContextSong {
@@ -20,7 +24,7 @@ export interface PlayerContext {
   readonly progress: number;
   readonly duration: number;
   readonly shuffleEnabled: boolean;
-  readonly repeatMode: 'all' | 'one';
+  readonly repeatMode: RepeatMode;
   readonly playbackOrder: PlaybackQueueEntry[];
   readonly lyricsOpen: boolean;
   readonly playlistOpen: boolean;
@@ -39,7 +43,7 @@ export interface PlayerContext {
   playPrevious: () => void;
   playNext: () => void;
   toggleShuffle: (next: boolean) => void;
-  toggleRepeat: (next: 'all' | 'one') => void;
+  toggleRepeat: (next: RepeatMode) => void;
   toggleLyrics: () => void;
   togglePlaylist: () => void;
   toggleFullscreen: () => void;

@@ -490,7 +490,7 @@ impl AppState {
         song_cid: &str,
         session_id: Option<u64>,
     ) -> Result<harubble_core::SongDetail, PlaybackError> {
-        let api = Arc::clone(&self.playback_api);
+        let api = Arc::clone(&self.api_clients.playback_api);
         let song_cid = song_cid.to_string();
 
         self.playback_runtime
@@ -522,7 +522,7 @@ impl AppState {
         cache_path: PathBuf,
         pending_marker: PathBuf,
     ) {
-        let api = Arc::clone(&self.playback_api);
+        let api = Arc::clone(&self.api_clients.playback_api);
         let log_center = Arc::clone(&self.log_center);
         let download_runtime = Arc::clone(&self.playback_runtime);
         let cleanup_runtime = Arc::clone(&download_runtime);
@@ -738,17 +738,17 @@ fn initial_buffer_samples(
     target.max(minimum).min(maximum)
 }
 
+type PrepareInputResult = (PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput);
+
 fn prepare_cached_or_streaming_input(
     song_cid: &str,
     source_url: &str,
-) -> Result<(PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput)> {
+) -> Result<PrepareInputResult> {
     let cache_path = audio_cache::cached_song_path(song_cid, source_url)?;
     prepare_playback_input_from_cache_path(cache_path)
 }
 
-fn prepare_playback_input_from_cache_path(
-    cache_path: PathBuf,
-) -> Result<(PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput)> {
+fn prepare_playback_input_from_cache_path(cache_path: PathBuf) -> Result<PrepareInputResult> {
     let pending_marker = audio_cache::pending_marker_path(&cache_path);
     if audio_cache::is_song_cached(&cache_path) {
         return Ok((

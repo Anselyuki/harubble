@@ -7,7 +7,9 @@
     type ExpandDirection,
     calcExpandDirection,
     calcCardPosition,
+    clampCardPosition,
     measureBubbleTargetSize,
+    resolveTriggerPoint,
   } from './popoverBubble';
   import { TAG_LOCALES, tagIdentity, displayValue } from './tagAddUtils';
   import TagSearchTab from './TagSearchTab.svelte';
@@ -28,7 +30,7 @@
   }
 
   let {
-    open = $bindable(),
+    open = false,
     dimensionKey,
     dimensionLabel,
     values,
@@ -44,11 +46,14 @@
   let createValues = $state<Record<string, string>>({});
   let createI18n = $state(false);
   let cardEl: HTMLElement | undefined = $state();
+  let triggerEl: HTMLButtonElement | undefined = $state();
   let tabContentEl: HTMLElement | undefined = $state();
   let sliderEl: HTMLElement | undefined = $state();
-  let searchTabRef: TagSearchTab | undefined = $state();
+  let editingTag = $state<TagEditorLocalizedValue | null>(null);
   let cardTop = $state(0);
   let cardLeft = $state(0);
+  let wasOpen = false;
+  let restoreTriggerFocus = true;
 
   let allDimensionTags = $derived(tagLibrary[dimensionKey] ?? []);
   let searchResults = $derived(
@@ -126,16 +131,19 @@
     createValues = {};
     createI18n = false;
     activeTab = 'search';
-    searchTabRef?.cancelEdit();
+    editingTag = null;
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      if (searchTabRef?.hasEditingTag()) {
-        searchTabRef.cancelEdit();
+      e.preventDefault();
+      e.stopPropagation();
+      if (editingTag !== null) {
+        editingTag = null;
       } else {
         closeCard();
       }
+      return;
     }
     const target = e.target as HTMLElement;
     const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
@@ -154,7 +162,8 @@
     }
   }
 
-  function closeCard() {
+  function closeCard(restoreFocus = true) {
+    restoreTriggerFocus = restoreFocus;
     resetState();
     onOpenChange(false);
   }
@@ -165,8 +174,15 @@
 
   function handleTriggerClick(e: MouseEvent) {
     e.stopPropagation();
-    clickX = e.clientX;
-    clickY = e.clientY;
+    triggerEl = e.currentTarget as HTMLButtonElement;
+    const triggerPoint = resolveTriggerPoint(
+      e.clientX,
+      e.clientY,
+      e.detail,
+      triggerEl.getBoundingClientRect()
+    );
+    clickX = triggerPoint.left;
+    clickY = triggerPoint.top;
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     expandDir = calcExpandDirection(
       e.clientX,
@@ -185,9 +201,29 @@
   function handleOutsideClick(e: MouseEvent) {
     if (Date.now() - openedAt < 100) return;
     if (cardEl && !cardEl.contains(e.target as Node)) {
-      closeCard();
+      // Preserve the user's pointer target. Restoring focus here would run after
+      // the click and pull focus away from the control they just selected.
+      closeCard(false);
     }
   }
+
+  $effect(() => {
+    if (open && cardEl) {
+      const focusTarget = cardEl;
+      const frame = requestAnimationFrame(() => focusTarget.focus());
+      return () => cancelAnimationFrame(frame);
+    }
+  });
+
+  $effect(() => {
+    const isOpen = open;
+    const shouldRestore = !isOpen && wasOpen && restoreTriggerFocus;
+    wasOpen = isOpen;
+    if (!isOpen) restoreTriggerFocus = true;
+    if (!shouldRestore) return;
+    const frame = requestAnimationFrame(() => triggerEl?.focus());
+    return () => cancelAnimationFrame(frame);
+  });
 
   $effect(() => {
     if (open) {
@@ -200,6 +236,43 @@
         document.removeEventListener('pointerdown', handleOutsideClick);
       };
     }
+  });
+
+  $effect(() => {
+    if (!open || !cardEl) return;
+    const card = cardEl;
+    const keepCardInViewport = () => {
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const targetSize = measureBubbleTargetSize(card, targetWidth);
+      expandDir = calcExpandDirection(
+        clickX,
+        clickY,
+        viewport,
+        targetWidth,
+        targetSize.height
+      );
+      const position = clampCardPosition(
+        calcCardPosition(
+          clickX,
+          clickY,
+          expandDir,
+          targetWidth,
+          undefined,
+          targetSize.height
+        ),
+        targetSize,
+        viewport
+      );
+      cardTop = position.top;
+      cardLeft = position.left;
+      gsap.set(card, position);
+    };
+    window.addEventListener('resize', keepCardInViewport);
+    window.visualViewport?.addEventListener('resize', keepCardInViewport);
+    return () => {
+      window.removeEventListener('resize', keepCardInViewport);
+      window.visualViewport?.removeEventListener('resize', keepCardInViewport);
+    };
   });
 
   let hasMounted = false;
@@ -247,13 +320,17 @@
       targetWidth,
       targetSize.height
     );
-    const finalPos = calcCardPosition(
-      clickX,
-      clickY,
-      expandDir,
-      targetWidth,
-      undefined,
-      targetSize.height
+    const finalPos = clampCardPosition(
+      calcCardPosition(
+        clickX,
+        clickY,
+        expandDir,
+        targetWidth,
+        undefined,
+        targetSize.height
+      ),
+      targetSize,
+      viewport
     );
     cardTop = finalPos.top;
     cardLeft = finalPos.left;
@@ -305,7 +382,14 @@
   }
 </script>
 
-<button type="button" class="add-trigger" onclick={handleTriggerClick}>
+<button
+  type="button"
+  class="add-trigger"
+  bind:this={triggerEl}
+  aria-expanded={open}
+  aria-haspopup="dialog"
+  onclick={handleTriggerClick}
+>
   {#if values.length === 0}
     <span class="add-trigger-placeholder"
       >+ {m.tag_editor_add_tag_button()}</span
@@ -323,6 +407,7 @@
     style="top: {cardTop}px; left: {cardLeft}px;"
     onkeydown={handleKeydown}
     role="dialog"
+    aria-label={dimensionLabel}
     tabindex="-1"
   >
     <div class="bubble-content">
@@ -334,6 +419,7 @@
             type="button"
             class="toggle-item"
             class:active={activeTab === 'search'}
+            aria-pressed={activeTab === 'search'}
             onclick={() => (activeTab = 'search')}
             >{m.tag_editor_tab_search()}</button
           >
@@ -341,6 +427,7 @@
             type="button"
             class="toggle-item"
             class:active={activeTab === 'create'}
+            aria-pressed={activeTab === 'create'}
             onclick={() => (activeTab = 'create')}
             >{m.tag_editor_tab_create()}</button
           >
@@ -366,8 +453,8 @@
       <div class="tab-content" bind:this={tabContentEl}>
         {#if activeTab === 'search'}
           <TagSearchTab
-            bind:this={searchTabRef}
             bind:searchQuery
+            bind:editingTag
             {searchResults}
             {values}
             tagLocales={TAG_LOCALES}
@@ -394,7 +481,7 @@
     align-items: center;
     justify-content: center;
     border: 1px dashed var(--color-border, #d1d5db);
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     background: transparent;
     cursor: pointer;
     padding: 0.125rem 0.5rem;
@@ -420,8 +507,10 @@
 
   .bubble-card {
     position: fixed;
-    z-index: 50;
-    overflow: visible;
+    z-index: var(--z-popover);
+    overflow-x: hidden;
+    overflow-y: auto;
+    max-height: calc(100vh - 32px);
     padding: 0.75rem;
     border-radius: 10px;
     background: var(--bg-popover, var(--popover));
@@ -462,7 +551,7 @@
   .tab-toggle {
     position: relative;
     display: flex;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     background: var(--color-primary, #6366f1);
     padding: 2px;
     gap: 0;
@@ -474,7 +563,7 @@
     left: 2px;
     width: calc(50% - 2px);
     height: calc(100% - 4px);
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     background: var(--bg-popover, white);
     pointer-events: none;
   }
@@ -488,7 +577,7 @@
     color: white;
     background: none;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     cursor: pointer;
     font-family: var(--font-body);
     line-height: 1.4;
@@ -519,7 +608,7 @@
     font-size: 0.75rem;
     background: transparent;
     border: 1px solid var(--color-primary, #6366f1);
-    border-radius: 9999px;
+    border-radius: var(--shape-pill);
     color: var(--color-primary, #6366f1);
     font-family: var(--font-body);
   }

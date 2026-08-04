@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Theme Baseline Fixture</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+        background-color: var(--bg-primary);
+        color: var(--text-primary);
+      }
+      .swatch-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+        padding: 24px;
+      }
+      .swatch {
+        border-radius: 8px;
+        padding: 20px;
+        border: 1px solid var(--border);
+      }
+      .swatch--bg-primary {
+        background-color: var(--bg-primary);
+      }
+      .swatch--bg-secondary {
+        background-color: var(--bg-secondary);
+      }
+      .swatch--bg-tertiary {
+        background-color: var(--bg-tertiary);
+      }
+      .swatch--bg-elevated {
+        background-color: var(--bg-elevated);
+        backdrop-filter: blur(12px);
+      }
+      .swatch--surface-sidebar {
+        background-color: var(--surface-sidebar);
+      }
+      .swatch--surface-overlay {
+        background-color: var(--surface-overlay);
+      }
+      .swatch__title {
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .swatch__text-primary {
+        color: var(--text-primary);
+      }
+      .swatch__text-secondary {
+        color: var(--text-secondary);
+        margin-top: 4px;
+      }
+      .swatch__text-tertiary {
+        color: var(--text-tertiary);
+        margin-top: 4px;
+        font-size: 0.875rem;
+      }
+      .accent-block {
+        background-color: var(--accent);
+        color: var(--accent-readable-foreground);
+        padding: 12px 20px;
+        border-radius: 6px;
+        margin-top: 12px;
+        display: inline-block;
+      }
+      .accent-hover-block {
+        background-color: var(--accent-hover);
+        color: var(--accent-hover-readable-foreground);
+        padding: 8px 14px;
+        border-radius: 6px;
+        margin-top: 6px;
+        display: inline-block;
+      }
+      .destructive-block {
+        background-color: var(--destructive);
+        color: white;
+        padding: 12px 20px;
+        border-radius: 6px;
+        margin-top: 12px;
+        display: inline-block;
+      }
+      .ring-demo {
+        outline: 3px solid var(--ring);
+        outline-offset: 2px;
+        margin-top: 24px;
+        padding: 10px;
+        display: inline-block;
+      }
+      #baseline-root {
+        min-height: 100vh;
+        transition: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="baseline-root">
+      <div class="swatch-grid">
+        <div class="swatch swatch--bg-primary" data-token="bg-primary">
+          <div class="swatch__title swatch__text-primary">bg-primary</div>
+          <div class="swatch__text-secondary">Primary text</div>
+          <div class="swatch__text-tertiary">Tertiary text</div>
+        </div>
+        <div class="swatch swatch--bg-secondary" data-token="bg-secondary">
+          <div class="swatch__title swatch__text-primary">bg-secondary</div>
+          <div class="accent-block">Accent</div>
+          <div class="accent-hover-block">Accent hover</div>
+        </div>
+        <div class="swatch swatch--bg-tertiary" data-token="bg-tertiary">
+          <div class="swatch__title swatch__text-primary">bg-tertiary</div>
+          <div class="destructive-block">Danger</div>
+        </div>
+        <div class="swatch swatch--bg-elevated" data-token="bg-elevated">
+          <div class="swatch__title swatch__text-primary">bg-elevated</div>
+          <div class="ring-demo swatch__text-primary">Ring</div>
+        </div>
+        <div class="swatch swatch--surface-sidebar" data-token="surface-sidebar">
+          <div class="swatch__title swatch__text-primary">surface-sidebar</div>
+        </div>
+        <div class="swatch swatch--surface-overlay" data-token="surface-overlay">
+          <div class="swatch__title swatch__text-primary">surface-overlay</div>
+        </div>
+      </div>
+    </div>
+    <script type="module">
+      // 由 Playwright 通过 page.evaluate 或 URL query 参数注入主题变量。
+      // 该 fixture 仅供 tests/e2e/visual/theme-tokens.spec.ts 使用。
+      const params = new URLSearchParams(window.location.search);
+      const scheme = params.get('scheme') ?? 'light';
+      document.documentElement.classList.toggle('dark', scheme === 'dark');
+      const tokensParam = params.get('tokens');
+      if (tokensParam) {
+        try {
+          const tokens = JSON.parse(decodeURIComponent(tokensParam));
+          const cssMap = {
+            accent: '--accent',
+            accentHover: '--accent-hover',
+            accentRgb: '--accent-rgb',
+            accentHoverRgb: '--accent-hover-rgb',
+            accentReadableForeground: '--accent-readable-foreground',
+            accentHoverReadableForeground: '--accent-hover-readable-foreground',
+            bgPrimary: '--bg-primary',
+            bgSecondary: '--bg-secondary',
+            bgTertiary: '--bg-tertiary',
+            bgElevated: '--bg-elevated',
+            textPrimary: '--text-primary',
+            textSecondary: '--text-secondary',
+            textTertiary: '--text-tertiary',
+            border: '--border',
+            ring: '--ring',
+            destructive: '--destructive',
+            destructiveRgb: '--destructive-rgb',
+            surfaceState: '--surface-state',
+            surfaceBase: '--surface-base',
+            surfaceSidebar: '--surface-sidebar',
+            surfaceOverlay: '--surface-overlay',
+          };
+          for (const [key, value] of Object.entries(tokens)) {
+            const cssVar = cssMap[key];
+            if (cssVar) document.documentElement.style.setProperty(cssVar, value);
+          }
+        } catch (e) {
+          console.error('Failed to parse tokens:', e);
+        }
+      }
+      // 通知 Playwright 已就绪
+      window.__THEME_FIXTURE_READY__ = true;
+    </script>
+  </body>
+</html>

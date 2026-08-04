@@ -1,5 +1,4 @@
 import type {
-  Album,
   SeriesGroup,
   HistoryEntry,
   HomepageStatus,
@@ -7,9 +6,18 @@ import type {
   TagGroup,
 } from '$lib/types';
 import { homeStore } from './store.svelte';
+import {
+  formatLibraryError,
+  formatTagRegistryError,
+} from '$lib/features/shell/domainErrors';
+import * as m from '$lib/paraglide/messages.js';
+import type { AlbumCatalogController } from '$lib/features/library/albumCatalog.svelte';
 
 interface HomeControllerDeps {
-  getLatestAlbums: (limit: number) => Promise<Album[]>;
+  albumCatalog: Pick<
+    AlbumCatalogController,
+    'albums' | 'initialLoading' | 'bootstrap' | 'refresh'
+  >;
   getAlbumsBySeriesGroup: () => Promise<SeriesGroup[]>;
   getRecentHistory: (limit: number) => Promise<HistoryEntry[]>;
   getHomepageStatus: () => Promise<HomepageStatus>;
@@ -19,7 +27,6 @@ interface HomeControllerDeps {
   notifyError: (message: string) => void;
 }
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
 const LATEST_ALBUMS_LIMIT = 12;
 const RECENT_HISTORY_LIMIT = 20;
 
@@ -33,22 +40,17 @@ export function createHomeController(deps: HomeControllerDeps) {
   }
 
   async function loadHomepageData(options?: { force?: boolean }) {
-    const now = Date.now();
-    const lastLoaded = homeStore.lastLoadedAt;
-
-    if (
-      !options?.force &&
-      lastLoaded !== null &&
-      now - lastLoaded < CACHE_TTL_MS
-    ) {
-      return;
-    }
-
     const requestSeq = ++loadRequestSeq;
     homeStore.loading = true;
 
     const results = await Promise.allSettled([
-      deps.getLatestAlbums(LATEST_ALBUMS_LIMIT),
+      options?.force
+        ? deps.albumCatalog.refresh({
+            forceRemote: true,
+            silent: false,
+            reason: 'manual',
+          })
+        : deps.albumCatalog.bootstrap(),
       deps.getAlbumsBySeriesGroup(),
       deps.getRecentHistory(RECENT_HISTORY_LIMIT),
       deps.getHomepageStatus(),
@@ -57,12 +59,12 @@ export function createHomeController(deps: HomeControllerDeps) {
 
     if (requestSeq !== loadRequestSeq) return;
 
-    if (results[0].status === 'fulfilled') {
-      homeStore.latestAlbums = results[0].value;
-    } else {
+    if (results[0].status === 'rejected') {
       const reason = results[0].reason;
       deps.notifyError(
-        `加载最新专辑失败: ${reason instanceof Error ? reason.message : String(reason)}`
+        m.home_error_load_albums({
+          error: formatLibraryError(reason),
+        })
       );
     }
 
@@ -96,7 +98,6 @@ export function createHomeController(deps: HomeControllerDeps) {
     }
 
     homeStore.loading = false;
-    homeStore.lastLoadedAt = Date.now();
   }
 
   async function loadTagGroups(dimensionKey: string) {
@@ -107,7 +108,9 @@ export function createHomeController(deps: HomeControllerDeps) {
       homeStore.tagGroups = groups;
     } catch (e: unknown) {
       deps.notifyError(
-        `加载标签分组失败: ${e instanceof Error ? e.message : String(e)}`
+        m.home_error_load_tag_groups({
+          error: formatTagRegistryError(e),
+        })
       );
     }
   }
@@ -150,7 +153,9 @@ export function createHomeController(deps: HomeControllerDeps) {
       homeStore.recentHistory = [];
     } catch (e: unknown) {
       deps.notifyError(
-        `清除收听历史失败: ${e instanceof Error ? e.message : String(e)}`
+        m.home_error_clear_history({
+          error: formatLibraryError(e),
+        })
       );
     }
   }
@@ -168,7 +173,7 @@ export function createHomeController(deps: HomeControllerDeps) {
 
   return {
     get latestAlbums() {
-      return homeStore.latestAlbums;
+      return deps.albumCatalog.albums.slice(0, LATEST_ALBUMS_LIMIT);
     },
     get seriesGroups() {
       return homeStore.seriesGroups;
@@ -180,7 +185,11 @@ export function createHomeController(deps: HomeControllerDeps) {
       return homeStore.status;
     },
     get loading() {
-      return homeStore.loading;
+      return (
+        homeStore.loading ||
+        (deps.albumCatalog.initialLoading &&
+          deps.albumCatalog.albums.length === 0)
+      );
     },
     get belongReady() {
       return homeStore.belongReady;

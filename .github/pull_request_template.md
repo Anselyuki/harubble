@@ -5,10 +5,11 @@
 ## 测试计划
 
 - [ ] `bun run check`
-- [ ] `cargo check --workspace`
+- [ ] `bun run test`
 - [ ] `cargo test --workspace`
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
 
-> 当前 CI workflow 会拆分执行前端格式、ESLint、TypeScript、Svelte、构建与 Rust 检查；这里保留为提交前推荐的人工自检组合。
+> `bun run check` 已包含前端格式、ESLint、TypeScript、Svelte、构建、rustfmt 与 `cargo check --workspace`；测试和严格 Clippy 由 CI 的 `test` job 单独执行。
 
 ## 发布信息
 

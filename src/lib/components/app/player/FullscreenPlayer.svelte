@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flushSync, onDestroy } from 'svelte';
   import {
     gsap,
     animateIn,
@@ -7,13 +8,25 @@
     gsapScrollIntoView,
     MOTION,
   } from '$lib/design/gsap';
-  import { getImageDataUrl } from '$lib/api';
+  import { getImageSrc } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
   import { localeState } from '$lib/i18n';
-  import { getPlayerContext, getDownloadContext } from '$lib/contexts';
+  import {
+    getPlayerContext,
+    getDownloadContext,
+    getShellContext,
+  } from '$lib/contexts';
+  import { formatTime } from '$lib/features/player/formatUtils';
+  import { getNextRepeatMode } from '$lib/features/player/repeatMode';
+  import type { RepeatMode } from '$lib/types';
+  import MotionMarqueeInner from '$lib/components/MotionMarqueeInner.svelte';
+  import PlayToggleGlyph from '$lib/components/app/player/PlayToggleGlyph.svelte';
+  import { lyricActiveTween } from '$lib/design/actions';
+  import { Repeat, Repeat1, Shuffle } from '@lucide/svelte';
 
   const player = getPlayerContext();
   const download = getDownloadContext();
+  const shell = getShellContext();
 
   // song is guaranteed non-null by the {#if} guard in App.svelte
   const song = $derived(player.currentSong!);
@@ -34,6 +47,14 @@
   const playButtonLoading = $derived(
     player.isLoading || player.isPlayTogglePending
   );
+  let playToggleTransitionKey = $state(0);
+
+  function handlePlayToggle() {
+    if (playButtonLoading) return;
+    playToggleTransitionKey += 1;
+    flushSync();
+    void onTogglePlay();
+  }
 
   function handleDownload() {
     if (player.currentSong) {
@@ -41,12 +62,143 @@
     }
   }
 
+  function handleClose(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    player.toggleFullscreen();
+  }
+
   let dialogEl: HTMLDivElement | undefined = $state();
+  const restoreFocusEl =
+    typeof document !== 'undefined' &&
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  let inertNodes: {
+    element: HTMLElement;
+    inert: boolean;
+    ariaHidden: string | null;
+  }[] = [];
+
+  const FOCUSABLE_SELECTOR =
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
+  function getFocusableElements(): HTMLElement[] {
+    if (!dialogEl) return [];
+    return Array.from(
+      dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+    ).filter(
+      (element) =>
+        !element.inert && element.getAttribute('aria-hidden') !== 'true'
+    );
+  }
+
+  function handleDialogKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Tab') return;
+    const focusable = getFocusableElements();
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialogEl?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function isTextEntryTarget(target: EventTarget | null): boolean {
+    return (
+      target instanceof HTMLElement &&
+      Boolean(
+        target.closest(
+          'input, textarea, select, [contenteditable="true"], [role="textbox"], [type="range"]'
+        )
+      )
+    );
+  }
+
+  function isUpperLayerTarget(target: EventTarget | null): boolean {
+    return (
+      target instanceof HTMLElement &&
+      Boolean(
+        target.closest(
+          '[data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="alert-dialog-content"], [data-slot="select-content"], [role="menu"], [role="listbox"]'
+        )
+      )
+    );
+  }
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (event.defaultPrevented || !dialogEl) return;
+    const target = event.target;
+    if (isTextEntryTarget(target) || isUpperLayerTarget(target)) return;
+    if (target instanceof Node && !dialogEl.contains(target)) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      player.toggleFullscreen();
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      player.setVolume(Math.min(1, player.volume + 0.05));
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      player.setVolume(Math.max(0, player.volume - 0.05));
+      return;
+    }
+    if (event.key === 'm' || event.key === 'M') {
+      event.preventDefault();
+      player.toggleMute();
+    }
+  }
 
   $effect(() => {
     if (dialogEl) {
       dialogEl.focus();
     }
+  });
+
+  $effect(() => {
+    const root = dialogEl;
+    if (!root) return;
+    const mainRegion = root.closest<HTMLElement>('.main-region');
+    const shellRoot = mainRegion?.closest<HTMLElement>('.app-shell');
+    const candidates = [
+      ...(mainRegion ? Array.from(mainRegion.children) : []),
+      ...(shellRoot
+        ? Array.from(shellRoot.children).filter(
+            (element) => element !== mainRegion
+          )
+        : []),
+    ].filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement && element !== root
+    );
+    inertNodes = candidates.map((element) => ({
+      element,
+      inert: element.inert,
+      ariaHidden: element.getAttribute('aria-hidden'),
+    }));
+    candidates.forEach((element) => {
+      element.inert = true;
+      element.setAttribute('aria-hidden', 'true');
+    });
+    return () => {
+      inertNodes.forEach(({ element, inert, ariaHidden }) => {
+        element.inert = inert;
+        if (ariaHidden === null) element.removeAttribute('aria-hidden');
+        else element.setAttribute('aria-hidden', ariaHidden);
+      });
+      inertNodes = [];
+    };
   });
 
   let lyricsListRef = $state<HTMLElement | null>(null);
@@ -59,20 +211,10 @@
   let artistRef = $state<HTMLElement | null>(null);
   let titleOverflows = $state(false);
   let artistOverflows = $state(false);
+  let metaHovered = $state(false);
 
   function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
-  }
-
-  function formatTime(seconds: number): string {
-    if (!isFinite(seconds) || isNaN(seconds) || seconds < 0) return '0:00';
-    const minute = Math.floor(seconds / 60);
-    const second = Math.floor(seconds % 60);
-    return `${minute}:${second.toString().padStart(2, '0')}`;
-  }
-
-  function nextRepeatMode(mode: 'all' | 'one'): 'all' | 'one' {
-    return mode === 'all' ? 'one' : 'all';
   }
 
   function readRangeValue(event: Event): number {
@@ -122,6 +264,7 @@
       noLyrics: m.player_fullscreen_no_lyrics(),
       lyricsLoading: m.player_lyrics_loading(),
       unknownArtist: m.player_unknown_artist(),
+      repeatOff: m.player_repeat_off(),
       repeatOne: m.player_repeat_one(),
       repeatAll: m.player_repeat_all(),
     };
@@ -130,9 +273,12 @@
   const artistText = $derived(
     song.artists.length ? song.artists.join(' · ') : labels.unknownArtist
   );
-  const repeatLabel = $derived(
-    player.repeatMode === 'one' ? labels.repeatOne : labels.repeatAll
-  );
+  const repeatLabel = $derived.by(() => {
+    const mode: RepeatMode = player.repeatMode;
+    if (mode === 'one') return labels.repeatOne;
+    if (mode === 'all') return labels.repeatAll;
+    return labels.repeatOff;
+  });
 
   const downloadButtonLabel = $derived.by(() => {
     switch (downloadState) {
@@ -161,9 +307,9 @@
     }
     void (async () => {
       try {
-        const dataUrl = await getImageDataUrl(coverUrl);
+        const imageSrc = await getImageSrc(coverUrl);
         if (seq !== coverRequestSeq) return;
-        resolvedCoverUrl = dataUrl;
+        resolvedCoverUrl = imageSrc;
       } catch {
         if (seq !== coverRequestSeq) return;
         resolvedCoverUrl = null;
@@ -180,29 +326,25 @@
   });
 
   $effect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        player.toggleFullscreen();
-        return;
+    document.addEventListener('keydown', handleGlobalKeydown);
+    return () => document.removeEventListener('keydown', handleGlobalKeydown);
+  });
+
+  onDestroy(() => {
+    inertNodes.forEach(({ element, inert, ariaHidden }) => {
+      element.inert = inert;
+      if (ariaHidden === null) element.removeAttribute('aria-hidden');
+      else element.setAttribute('aria-hidden', ariaHidden);
+    });
+    inertNodes = [];
+    requestAnimationFrame(() => {
+      if (
+        restoreFocusEl?.isConnected &&
+        !restoreFocusEl.hasAttribute('inert')
+      ) {
+        restoreFocusEl.focus();
       }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        player.setVolume(Math.min(1, player.volume + 0.05));
-        return;
-      }
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        player.setVolume(Math.max(0, player.volume - 0.05));
-        return;
-      }
-      if (event.key === 'm' || event.key === 'M') {
-        event.preventDefault();
-        player.toggleMute();
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    });
   });
 
   $effect(() => {
@@ -261,6 +403,16 @@
       seekPreview = null;
     }
   }
+
+  function handleLyricSeek(time: number) {
+    if (!canSeek) return;
+    seekPreview = time;
+    try {
+      player.seek(time);
+    } catch {
+      seekPreview = null;
+    }
+  }
 </script>
 
 <div
@@ -270,7 +422,7 @@
   aria-label={song.name}
   tabindex="-1"
   bind:this={dialogEl}
-  onkeydown={(e) => e.key === 'Escape' && player.toggleFullscreen()}
+  onkeydown={handleDialogKeydown}
 >
   <div
     class="fullscreen-drag-region"
@@ -294,8 +446,9 @@
   <button
     type="button"
     class="fullscreen-close"
+    data-testid="fullscreen-close"
     aria-label={labels.close}
-    onclick={player.toggleFullscreen}
+    onclick={handleClose}
   >
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M18 6 6 18"></path>
@@ -324,20 +477,35 @@
     </div>
 
     <div class="fullscreen-meta">
-      <div class="fullscreen-meta-text">
+      <div
+        class="fullscreen-meta-text"
+        role="presentation"
+        onpointerenter={() => (metaHovered = true)}
+        onpointerleave={() => (metaHovered = false)}
+      >
         <h2
           class="fullscreen-title"
           class:overflowing={titleOverflows}
           bind:this={titleRef}
         >
-          <span class="fullscreen-title-inner">{song.name}</span>
+          <MotionMarqueeInner
+            active={metaHovered && titleOverflows}
+            reducedMotion={shell.prefersReducedMotion}
+          >
+            {song.name}
+          </MotionMarqueeInner>
         </h2>
         <p
           class="fullscreen-artist"
           class:overflowing={artistOverflows}
           bind:this={artistRef}
         >
-          <span class="fullscreen-artist-inner">{artistText}</span>
+          <MotionMarqueeInner
+            active={metaHovered && artistOverflows}
+            reducedMotion={shell.prefersReducedMotion}
+          >
+            {artistText}
+          </MotionMarqueeInner>
         </p>
       </div>
       <button
@@ -390,29 +558,23 @@
     <div class="fullscreen-controls">
       <button
         type="button"
-        class="fs-btn"
+        class="fs-btn fs-mode-toggle"
         aria-label={m.player_aria_shuffle()}
         aria-pressed={player.shuffleEnabled}
         disabled={player.isLoading}
         onclick={() => player.toggleShuffle(!player.shuffleEnabled)}
       >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 7h2.2c1.5 0 2.8.6 3.8 1.6L19 16.6"></path>
-          <path d="m16.2 16.6 2.8.1-.1-2.8"></path>
-          <path d="M5 17h2.2c1.5 0 2.8-.6 3.8-1.6l2-2"></path>
-          <path d="m16.2 7.4 2.8-.1-.1 2.8"></path>
-        </svg>
+        <Shuffle class="fs-mode-icon" aria-hidden="true" />
       </button>
 
       <button
         type="button"
-        class="fs-btn"
+        class="fs-btn fs-transport-button"
         aria-label={m.player_aria_previous()}
         disabled={!player.hasPrevious || player.isLoading}
         onclick={() => player.playPrevious()}
       >
         <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="4.75" y="6.15" width="1.95" height="11.7" rx="0.75"></rect>
           <path d="M18.6 6.9v10.2L11.75 12z"></path>
           <path d="M12.2 6.9v10.2L5.35 12z"></path>
         </svg>
@@ -422,45 +584,35 @@
         type="button"
         class="fs-btn fs-play"
         class:playing={player.isPlaying}
-        aria-label={player.isPlaying
-          ? m.player_aria_pause()
-          : player.isPaused
-            ? m.player_aria_resume()
-            : m.player_aria_play()}
+        aria-label={playButtonLoading
+          ? m.player_status_loading()
+          : player.isPlaying
+            ? m.player_aria_pause()
+            : player.isPaused
+              ? m.player_aria_resume()
+              : m.player_aria_play()}
         disabled={playButtonLoading}
-        onclick={() => onTogglePlay()}
+        aria-busy={playButtonLoading}
+        onclick={handlePlayToggle}
       >
-        {#if playButtonLoading}
-          <svg class="fs-spin" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M12 5a7 7 0 1 1-6.3 4"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.2"
-              stroke-linecap="round"
-            ></path>
-          </svg>
-        {:else if player.isPlaying}
-          <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="7.15" y="5.95" width="3.4" height="12.1" rx="1.25"></rect>
-            <rect x="13.45" y="5.95" width="3.4" height="12.1" rx="1.25"></rect>
-          </svg>
-        {:else}
-          <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M8.2 6.3v11.4L17.35 12z"></path>
-          </svg>
-        {/if}
+        <PlayToggleGlyph
+          isPlaying={player.isPlaying}
+          isLoading={player.isLoading}
+          isPending={player.isPlayTogglePending}
+          transitionKey={playToggleTransitionKey}
+          reducedMotion={shell.prefersReducedMotion}
+          size="52px"
+        />
       </button>
 
       <button
         type="button"
-        class="fs-btn"
+        class="fs-btn fs-transport-button"
         aria-label={m.player_aria_next()}
         disabled={!player.hasNext || player.isLoading}
         onclick={() => player.playNext()}
       >
         <svg class="fs-solid" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="17.3" y="6.15" width="1.95" height="11.7" rx="0.75"></rect>
           <path d="M5.4 6.9v10.2L12.25 12z"></path>
           <path d="M11.8 6.9v10.2L18.65 12z"></path>
         </svg>
@@ -468,29 +620,18 @@
 
       <button
         type="button"
-        class="fs-btn"
+        class="fs-btn fs-mode-toggle fs-repeat-toggle"
         aria-label={m.player_aria_repeat_toggle({ mode: repeatLabel })}
-        aria-pressed={player.repeatMode === 'one'}
+        aria-pressed={player.repeatMode !== 'off'}
         disabled={player.isLoading}
-        onclick={() => player.toggleRepeat(nextRepeatMode(player.repeatMode))}
+        onclick={() =>
+          player.toggleRepeat(getNextRepeatMode(player.repeatMode))}
       >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 8h10.8"></path>
-          <path d="m13.3 5.4 2.7 2.6-2.7 2.6"></path>
-          <path d="M19 16H8.2"></path>
-          <path d="m10.7 18.6-2.7-2.6 2.7-2.6"></path>
-          {#if player.repeatMode === 'one'}
-            <circle
-              cx="12"
-              cy="12"
-              r="3.15"
-              fill="rgba(255,255,255,0.12)"
-              stroke="currentColor"
-            ></circle>
-            <path d="M12 10.3v3.4"></path>
-            <path d="m11.4 10.9.6-.6"></path>
-          {/if}
-        </svg>
+        {#if player.repeatMode === 'one'}
+          <Repeat1 class="fs-mode-icon" aria-hidden="true" />
+        {:else}
+          <Repeat class="fs-mode-icon" aria-hidden="true" />
+        {/if}
       </button>
     </div>
   </div>
@@ -503,11 +644,25 @@
     {:else if player.lyricsLines.length > 0}
       <div class="fullscreen-lyrics" bind:this={lyricsListRef}>
         {#each player.lyricsLines as line, index (line.id)}
-          <p
-            class={`fullscreen-lyric-line${index === player.activeLyricIndex ? ' active' : ''}`}
-          >
-            {line.text}
-          </p>
+          {#if line.time !== null && canSeek}
+            <button
+              type="button"
+              class="fullscreen-lyric-line seekable"
+              class:active={index === player.activeLyricIndex}
+              use:lyricActiveTween={index === player.activeLyricIndex}
+              onclick={() => handleLyricSeek(line.time!)}
+            >
+              {line.text}
+            </button>
+          {:else}
+            <p
+              class="fullscreen-lyric-line"
+              class:active={index === player.activeLyricIndex}
+              use:lyricActiveTween={index === player.activeLyricIndex}
+            >
+              {line.text}
+            </p>
+          {/if}
         {/each}
       </div>
     {:else}

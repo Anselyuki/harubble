@@ -1,5 +1,6 @@
 <script lang="ts">
   import type SettingsSheet from '$lib/components/app/shell/SettingsSheet.svelte';
+  import type { SettingsSection } from '$lib/components/app/shell/settingsSection';
   import type DownloadTasksSheet from '$lib/components/app/shell/DownloadTasksSheet.svelte';
   import type { Locale } from '$lib/i18n/types';
   import {
@@ -30,9 +31,11 @@
     colorScheme?: ColorScheme;
     dynamicAlbumAccent?: boolean;
     settingsLogRefreshToken: number;
+    settingsInitialSection?: SettingsSection | null;
     notifyInfo: (message: string) => void;
     notifyError: (message: string) => void;
     onOutputDirChange: (outputDir: string) => boolean | Promise<boolean>;
+    onRequestClearDownloadHistory: () => void;
   }
 
   let {
@@ -52,9 +55,11 @@
     colorScheme = $bindable<ColorScheme>('auto'),
     dynamicAlbumAccent = $bindable<boolean>(true),
     settingsLogRefreshToken,
+    settingsInitialSection = null,
     notifyInfo,
     notifyError,
     onOutputDirChange,
+    onRequestClearDownloadHistory,
   }: Props = $props();
 
   const download = getDownloadContext();
@@ -75,6 +80,7 @@
     bind:colorScheme
     bind:dynamicAlbumAccent
     logRefreshToken={settingsLogRefreshToken}
+    initialSection={settingsInitialSection}
     {notifyInfo}
     {notifyError}
     {onOutputDirChange}
@@ -103,7 +109,7 @@
     canRetryTask={download.canRetryTask}
     getTaskErrorLabel={download.getTaskErrorLabel}
     getTaskStatusLabel={download.getTaskStatusLabel}
-    onClearDownloadHistory={download.handleClearDownloadHistory}
+    onClearDownloadHistory={onRequestClearDownloadHistory}
     onCancelDownloadJob={download.handleCancelDownloadJob}
     onRetryDownloadJob={download.handleRetryDownloadJob}
     onCancelDownloadTask={download.handleCancelDownloadTask}

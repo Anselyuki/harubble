@@ -1,25 +1,24 @@
-import type {
-  Album,
-  AlbumDetail,
-  LibrarySearchScope,
-  LocalInventorySnapshot,
-  SearchLibraryResponse,
-} from '$lib/types';
+import type { Album, AlbumDetail, LocalInventorySnapshot } from '$lib/types';
 import * as m from '$lib/paraglide/messages.js';
+import { formatLibraryError } from '$lib/features/shell/domainErrors';
+import type { AlbumCatalogController } from './albumCatalog.svelte';
 
 interface LibraryControllerDeps {
   delay: (ms: number) => Promise<void>;
   detailSkeletonDelayMs: number;
   minDetailDisplayMs: number;
-  getAlbums: () => Promise<Album[]>;
+  albumCatalog: Pick<
+    AlbumCatalogController,
+    'albums' | 'initialLoading' | 'revision' | 'bootstrap' | 'refresh'
+  >;
   getAlbumDetail: (
     albumCid: string,
     inventoryVersion: string | null
   ) => Promise<AlbumDetail>;
-  searchLibrary: (input: {
-    query: string;
-    scope: LibrarySearchScope;
-  }) => Promise<SearchLibraryResponse>;
+  refreshAlbumDetail: (
+    albumCid: string,
+    inventoryVersion: string | null
+  ) => Promise<AlbumDetail>;
   preloadAlbumArtwork: (album: AlbumDetail) => Promise<number | null>;
   warmAlbumArtwork: (coverUrl: string) => void;
   setAlbumStageAspectRatio: (value: number | null | undefined) => void;
@@ -30,6 +29,11 @@ interface SelectAlbumOptions {
   shouldDispose?: () => boolean;
   beforeReveal?: () => void;
   afterSelect?: () => void | Promise<void>;
+  onSelectionInvalidated?: () => void;
+}
+
+interface RemoteCatalogChangeOptions {
+  onSelectionInvalidated?: () => void;
 }
 
 interface LoadAlbumsOptions {
@@ -47,25 +51,20 @@ interface HandleInventoryStateChangedOptions {
 
 export function createLibraryController(deps: LibraryControllerDeps) {
   let initialized = false;
-  let albums = $state<Album[]>([]);
   let selectedAlbum = $state<AlbumDetail | null>(null);
   let selectedAlbumCid = $state<string | null>(null);
   let loadingAlbums = $state(false);
   let loadingDetail = $state(false);
   let errorMsg = $state('');
-  let librarySearchQuery = $state('');
-  let librarySearchScope = $state<LibrarySearchScope>('all');
-  let librarySearchLoading = $state(false);
-  let librarySearchResponse = $state<SearchLibraryResponse | null>(null);
   let pendingScrollToSongCid = $state<string | null>(null);
   let showDetailSkeleton = $state(false);
   let localInventory = $state<LocalInventorySnapshot | null>(null);
   let localInventoryVersionInitialized = $state(false);
   let albumRequestSeq = $state(0);
-  let librarySearchRequestSeq = 0;
   let inventoryRefreshRequestSeq = 0;
+  let pendingRemoteCatalogChange: { options?: SelectAlbumOptions } | null =
+    null;
   let detailSkeletonTimer: ReturnType<typeof setTimeout> | null = null;
-  let librarySearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   function init() {
     if (initialized) return;
@@ -93,81 +92,26 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     showDetailSkeleton = false;
   }
 
-  async function runLibrarySearch(query: string, scope: LibrarySearchScope) {
-    const trimmedQuery = query.trim();
-    const requestSeq = ++librarySearchRequestSeq;
-
-    if (!trimmedQuery) {
-      librarySearchLoading = false;
-      librarySearchResponse = null;
-      return;
-    }
-
-    librarySearchLoading = true;
-    try {
-      const response = await deps.searchLibrary({
-        query: trimmedQuery,
-        scope,
-      });
-      if (requestSeq !== librarySearchRequestSeq) return;
-      librarySearchResponse = response;
-    } catch (error) {
-      if (requestSeq !== librarySearchRequestSeq) return;
-      const message = error instanceof Error ? error.message : String(error);
-      librarySearchResponse = {
-        items: [],
-        total: 0,
-        query: trimmedQuery,
-        scope,
-        indexState: 'notReady',
-      };
-      deps.notifyError(m.library_error_search_failed({ error: message }));
-    } finally {
-      if (requestSeq === librarySearchRequestSeq) {
-        librarySearchLoading = false;
-      }
-    }
-  }
-
-  function scheduleLibrarySearch() {
-    if (librarySearchDebounceTimer) {
-      clearTimeout(librarySearchDebounceTimer);
-    }
-
-    const trimmedQuery = librarySearchQuery.trim();
-    if (!trimmedQuery) {
-      librarySearchRequestSeq += 1;
-      librarySearchLoading = false;
-      librarySearchResponse = null;
-      return;
-    }
-
-    librarySearchDebounceTimer = setTimeout(() => {
-      void runLibrarySearch(librarySearchQuery, librarySearchScope);
-    }, 220);
-  }
-
   async function loadAlbums(options?: LoadAlbumsOptions): Promise<Album[]> {
     const shouldDispose = options?.shouldDispose;
     const suppressError = options?.suppressError ?? true;
     loadingAlbums = true;
 
     try {
-      const albumList = await deps.getAlbums();
+      const albumList = await deps.albumCatalog.bootstrap();
       if (shouldDispose?.()) {
-        return albums;
+        return deps.albumCatalog.albums;
       }
-      albums = albumList;
       errorMsg = '';
       return albumList;
     } catch (error) {
       if (!shouldDispose?.()) {
-        errorMsg = error instanceof Error ? error.message : String(error);
+        errorMsg = formatLibraryError(error);
       }
       if (!suppressError) {
         throw error;
       }
-      return albums;
+      return deps.albumCatalog.albums;
     } finally {
       if (!shouldDispose?.()) {
         loadingAlbums = false;
@@ -182,6 +126,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     }
 
     if (album.cid === selectedAlbumCid && !loadingDetail) {
+      options?.beforeReveal?.();
       return;
     }
 
@@ -212,7 +157,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       if (shouldDispose?.() || requestSeq !== albumRequestSeq) return;
     } catch (error) {
       if (shouldDispose?.() || requestSeq !== albumRequestSeq) return;
-      errorMsg = error instanceof Error ? error.message : String(error);
+      errorMsg = formatLibraryError(error);
     } finally {
       if (!shouldDispose?.() && requestSeq === albumRequestSeq) {
         const elapsed = Date.now() - startTime;
@@ -236,7 +181,6 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       return;
     }
 
-    albums = nextAlbums;
     if (!selectedAlbumCid) {
       return;
     }
@@ -251,6 +195,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       clearPendingScrollToSong();
       clearDetailSkeleton();
       loadingDetail = false;
+      options?.onSelectionInvalidated?.();
       return;
     }
 
@@ -263,7 +208,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     }
 
     try {
-      const detail = await deps.getAlbumDetail(
+      const detail = await deps.refreshAlbumDetail(
         currentAlbumCid,
         localInventory?.inventoryVersion ?? null
       );
@@ -277,7 +222,7 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       if (shouldDispose?.() || requestSeq !== albumRequestSeq) return;
       deps.notifyError(
         m.library_error_refresh_album_failed({
-          error: error instanceof Error ? error.message : String(error),
+          error: formatLibraryError(error),
         })
       );
     } finally {
@@ -291,14 +236,57 @@ export function createLibraryController(deps: LibraryControllerDeps) {
   async function reloadAlbumsAndRefreshCurrentSelection(
     options?: SelectAlbumOptions
   ) {
-    const nextAlbums = await loadAlbums({
-      shouldDispose: options?.shouldDispose,
-      suppressError: false,
-    });
+    const previousRevision = deps.albumCatalog.revision;
+    const pendingChange = { options };
+    pendingRemoteCatalogChange = pendingChange;
+    let nextAlbums: Album[];
+    try {
+      nextAlbums = await deps.albumCatalog.refresh({
+        forceRemote: true,
+        silent: false,
+        reason: 'manual',
+      });
+      errorMsg = '';
+    } catch (error) {
+      if (pendingRemoteCatalogChange === pendingChange) {
+        pendingRemoteCatalogChange = null;
+      }
+      errorMsg = formatLibraryError(error);
+      throw error;
+    }
     if (options?.shouldDispose?.()) {
+      if (pendingRemoteCatalogChange === pendingChange) {
+        pendingRemoteCatalogChange = null;
+      }
       return;
     }
-    await replaceAlbumsAndRefreshCurrentSelection(nextAlbums, options);
+    if (
+      deps.albumCatalog.revision === previousRevision ||
+      pendingRemoteCatalogChange === pendingChange
+    ) {
+      pendingRemoteCatalogChange = null;
+      await replaceAlbumsAndRefreshCurrentSelection(nextAlbums, options);
+    }
+  }
+
+  async function handleRemoteCatalogChanged(
+    nextAlbums: Album[],
+    options?: RemoteCatalogChangeOptions
+  ) {
+    const pendingOptions = pendingRemoteCatalogChange?.options;
+    pendingRemoteCatalogChange = null;
+    const handleSelectionInvalidated =
+      pendingOptions?.onSelectionInvalidated || options?.onSelectionInvalidated
+        ? () => {
+            pendingOptions?.onSelectionInvalidated?.();
+            options?.onSelectionInvalidated?.();
+          }
+        : undefined;
+
+    await replaceAlbumsAndRefreshCurrentSelection(nextAlbums, {
+      ...pendingOptions,
+      onSelectionInvalidated: handleSelectionInvalidated,
+    });
   }
 
   function initializeInventory(snapshot: LocalInventorySnapshot | null) {
@@ -335,7 +323,11 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       return;
     }
 
-    const refreshedAlbums = await loadAlbums({ shouldDispose });
+    const refreshedAlbums = await deps.albumCatalog.refresh({
+      forceRemote: false,
+      silent: true,
+      reason: 'inventory',
+    });
     if (shouldDispose?.()) {
       return;
     }
@@ -378,16 +370,6 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     }
   }
 
-  function setSearchQuery(query: string) {
-    librarySearchQuery = query;
-    scheduleLibrarySearch();
-  }
-
-  function setSearchScope(scope: LibrarySearchScope) {
-    librarySearchScope = scope;
-    scheduleLibrarySearch();
-  }
-
   function setPendingScrollToSong(songCid: string | null) {
     pendingScrollToSongCid = songCid;
   }
@@ -409,18 +391,14 @@ export function createLibraryController(deps: LibraryControllerDeps) {
   function dispose() {
     initialized = false;
     clearDetailSkeleton();
-    if (librarySearchDebounceTimer) {
-      clearTimeout(librarySearchDebounceTimer);
-      librarySearchDebounceTimer = null;
-    }
-    librarySearchRequestSeq += 1;
     inventoryRefreshRequestSeq += 1;
     albumRequestSeq += 1;
+    pendingRemoteCatalogChange = null;
   }
 
   return {
     get albums() {
-      return albums;
+      return deps.albumCatalog.albums;
     },
     get selectedAlbum() {
       return selectedAlbum;
@@ -429,25 +407,13 @@ export function createLibraryController(deps: LibraryControllerDeps) {
       return selectedAlbumCid;
     },
     get loadingAlbums() {
-      return loadingAlbums;
+      return loadingAlbums || deps.albumCatalog.initialLoading;
     },
     get loadingDetail() {
       return loadingDetail;
     },
     get errorMsg() {
       return errorMsg;
-    },
-    get librarySearchQuery() {
-      return librarySearchQuery;
-    },
-    get librarySearchScope() {
-      return librarySearchScope;
-    },
-    get librarySearchLoading() {
-      return librarySearchLoading;
-    },
-    get librarySearchResponse() {
-      return librarySearchResponse;
     },
     get pendingScrollToSongCid() {
       return pendingScrollToSongCid;
@@ -464,11 +430,10 @@ export function createLibraryController(deps: LibraryControllerDeps) {
     selectAlbum,
     deselectAlbum,
     replaceAlbumsAndRefreshCurrentSelection,
+    handleRemoteCatalogChanged,
     reloadAlbumsAndRefreshCurrentSelection,
     initializeInventory,
     handleInventoryStateChanged,
-    setSearchQuery,
-    setSearchScope,
     setPendingScrollToSong,
     clearPendingScrollToSong,
   };

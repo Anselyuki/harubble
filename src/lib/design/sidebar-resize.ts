@@ -33,6 +33,8 @@ export interface SidebarResizeConfig {
   onCrossThreshold: (collapsed: boolean) => void;
   /** 拖曳结束回调——finalWidth 为松手时宽度，shouldCollapse 为吸附方向 */
   onDragEnd: (finalWidth: number, shouldCollapse: boolean) => void;
+  /** 键盘每次调整的宽度 */
+  keyboardStep?: number;
 }
 
 export interface SidebarResizeHandle {
@@ -58,6 +60,7 @@ export function createSidebarResize(
     onWidthChange,
     onCrossThreshold,
     onDragEnd,
+    keyboardStep = 16,
   } = config;
 
   let isDragging = false;
@@ -117,18 +120,43 @@ export function createSidebarResize(
     onDragEnd(finalWidth, shouldCollapse);
   }
 
+  function handleKeyDown(e: KeyboardEvent) {
+    const currentWidth = getCurrentWidth();
+    let nextWidth: number | null = null;
+    if (e.key === 'ArrowLeft') nextWidth = currentWidth - keyboardStep;
+    if (e.key === 'ArrowRight') {
+      nextWidth = getCollapsed()
+        ? Math.max(threshold, currentWidth + keyboardStep)
+        : currentWidth + keyboardStep;
+    }
+    if (e.key === 'Home') nextWidth = collapsedWidth;
+    if (e.key === 'End') nextWidth = expandedWidth;
+    if (nextWidth === null) return;
+
+    e.preventDefault();
+    nextWidth = clampWidth(nextWidth);
+    const shouldCollapse = nextWidth < threshold;
+    onWidthChange(nextWidth);
+    if (shouldCollapse !== getCollapsed()) {
+      onCrossThreshold(shouldCollapse);
+    }
+    onDragEnd(nextWidth, shouldCollapse);
+  }
+
   // 绑定事件
   handleEl.addEventListener('pointerdown', handlePointerDown);
   handleEl.addEventListener('pointermove', handlePointerMove);
   handleEl.addEventListener('pointerup', handlePointerUp);
   // 防止拖曳取消（如浏览器触摸滑动）
   handleEl.addEventListener('pointercancel', handlePointerUp);
+  handleEl.addEventListener('keydown', handleKeyDown);
 
   function dispose() {
     handleEl.removeEventListener('pointerdown', handlePointerDown);
     handleEl.removeEventListener('pointermove', handlePointerMove);
     handleEl.removeEventListener('pointerup', handlePointerUp);
     handleEl.removeEventListener('pointercancel', handlePointerUp);
+    handleEl.removeEventListener('keydown', handleKeyDown);
     if (isDragging) {
       document.body.style.userSelect = '';
       document.body.style.cursor = '';

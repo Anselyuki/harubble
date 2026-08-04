@@ -1,4 +1,6 @@
 import type { Collection, CollectionSummary } from '$lib/types';
+import * as m from '$lib/paraglide/messages.js';
+import { formatCollectionError } from '$lib/features/shell/domainErrors';
 
 interface CollectionControllerDeps {
   listCollections: () => Promise<CollectionSummary[]>;
@@ -38,8 +40,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     try {
       collections = await deps.listCollections();
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`加载合集列表失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_load_list({ error: formatCollectionError(error) })
+      );
     } finally {
       isLoading = false;
     }
@@ -66,10 +69,11 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       const created = await deps.createCollection(name, description, coverPath);
       await loadCollections();
       await selectCollection(created.id);
-      deps.notifyInfo('合集创建成功');
+      deps.notifyInfo(m.collection_notify_created());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`创建合集失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_create({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -90,10 +94,11 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       if (selectedCollectionId === id) {
         selectedCollection = updated;
       }
-      deps.notifyInfo('合集已更新');
+      deps.notifyInfo(m.collection_notify_updated());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`更新合集失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_update({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -104,10 +109,11 @@ export function createCollectionController(deps: CollectionControllerDeps) {
         deselectCollection();
       }
       await loadCollections();
-      deps.notifyInfo('合集已删除');
+      deps.notifyInfo(m.collection_notify_deleted());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`删除合集失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_delete({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -121,10 +127,11 @@ export function createCollectionController(deps: CollectionControllerDeps) {
         selectedCollection = await deps.getCollection(collectionId);
       }
       await loadCollections();
-      deps.notifyInfo('歌曲已添加到合集');
+      deps.notifyInfo(m.collection_notify_song_added());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`添加歌曲失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_song_add({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -139,8 +146,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       }
       await loadCollections();
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`移除歌曲失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_song_remove({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -154,8 +162,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
         selectedCollection = await deps.getCollection(collectionId);
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`排序失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_sort({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -169,10 +178,11 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       anchor.download = 'collection.json';
       anchor.click();
       URL.revokeObjectURL(url);
-      deps.notifyInfo('合集已导出');
+      deps.notifyInfo(m.collection_notify_exported());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`导出失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_export({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -190,7 +200,8 @@ export function createCollectionController(deps: CollectionControllerDeps) {
           }
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error('文件读取失败'));
+          reader.onerror = () =>
+            reject(new Error(m.collection_error_file_read()));
           reader.readAsText(file);
         };
         input.oncancel = () => resolve(null);
@@ -200,10 +211,11 @@ export function createCollectionController(deps: CollectionControllerDeps) {
       const imported = await deps.importCollection(json);
       await loadCollections();
       await selectCollection(imported.id);
-      deps.notifyInfo('合集已导入');
+      deps.notifyInfo(m.collection_notify_imported());
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`导入失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_import({ error: formatCollectionError(error) })
+      );
     }
   }
 
@@ -232,8 +244,9 @@ export function createCollectionController(deps: CollectionControllerDeps) {
     try {
       selectedCollection = await deps.getCollection(id);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps.notifyError(`加载合集详情失败: ${message}`);
+      deps.notifyError(
+        m.collection_error_load_detail({ error: formatCollectionError(error) })
+      );
       selectedCollection = null;
     } finally {
       isDetailLoading = false;

@@ -1,9 +1,11 @@
 <script lang="ts">
   import * as m from '$lib/paraglide/messages.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import type { TagEditorDimension } from '$lib/types';
+  import Trash2Icon from '@lucide/svelte/icons/trash-2';
 
   interface Props {
     open: boolean;
@@ -28,7 +30,8 @@
   let newDimKey = $state('');
   let newDimZh = $state('');
   let newDimEn = $state('');
-  let confirmingDelete = $state<string | null>(null);
+  let pendingDeleteDimension = $state<TagEditorDimension | null>(null);
+  let isDeleting = $state(false);
 
   async function handleAdd() {
     if (!newDimKey.trim() || !newDimZh.trim()) return;
@@ -38,17 +41,28 @@
     newDimEn = '';
   }
 
-  async function handleRemove(key: string) {
-    if (confirmingDelete === key) {
-      await onRemoveDimension(key);
-      confirmingDelete = null;
-    } else {
-      confirmingDelete = key;
+  function handleDeleteDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen && !isDeleting) pendingDeleteDimension = null;
+  }
+
+  function handleManageDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen) pendingDeleteDimension = null;
+    onOpenChange(nextOpen);
+  }
+
+  async function handleRemove() {
+    if (!pendingDeleteDimension || isDeleting) return;
+    isDeleting = true;
+    try {
+      await onRemoveDimension(pendingDeleteDimension.key);
+      pendingDeleteDimension = null;
+    } finally {
+      isDeleting = false;
     }
   }
 </script>
 
-<Dialog.Root {open} {onOpenChange}>
+<Dialog.Root {open} onOpenChange={handleManageDialogOpenChange}>
   <Dialog.Content class="dimension-manage-dialog">
     <Dialog.Header>
       <Dialog.Title>{m.tag_editor_dimension_manage_title()}</Dialog.Title>
@@ -56,7 +70,7 @@
 
     <div class="dialog-body">
       <section class="sheet-section existing-dims">
-        <h4 class="sub-heading">{m.tag_editor_dimension_existing()}</h4>
+        <h3 class="sub-heading">{m.tag_editor_dimension_existing()}</h3>
         <ul class="dim-list">
           {#each dimensions as dim (dim.key)}
             <li class="dim-item">
@@ -67,14 +81,12 @@
               <button
                 type="button"
                 class="dim-delete-btn"
-                class:confirming={confirmingDelete === dim.key}
-                onclick={() => handleRemove(dim.key)}
+                aria-label={m.tag_editor_remove_dimension_aria({
+                  key: dim.label['zh-CN'] ?? dim.key,
+                })}
+                onclick={() => (pendingDeleteDimension = dim)}
               >
-                {confirmingDelete === dim.key
-                  ? m.tag_editor_dimension_delete_confirm({
-                      key: dim.label['zh-CN'] ?? dim.key,
-                    })
-                  : '×'}
+                <Trash2Icon aria-hidden="true" />
               </button>
             </li>
           {/each}
@@ -82,11 +94,11 @@
       </section>
 
       <section class="sheet-section add-dim">
-        <h4 class="sub-heading">{m.tag_editor_dimension_add_new()}</h4>
+        <h3 class="sub-heading">{m.tag_editor_dimension_add_new()}</h3>
         <div class="add-form">
           <Input
             bind:value={newDimKey}
-            placeholder="key"
+            placeholder={m.tag_editor_placeholder_dim_key()}
             class="h-9 border-[var(--dialog-border)] bg-[var(--dialog-control-bg)]"
           />
           <Input
@@ -112,6 +124,44 @@
   </Dialog.Content>
 </Dialog.Root>
 
+<AlertDialog.Root
+  open={pendingDeleteDimension !== null}
+  onOpenChange={handleDeleteDialogOpenChange}
+>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>
+        {m.tag_editor_remove_dimension_aria({
+          key:
+            pendingDeleteDimension?.label['zh-CN'] ??
+            pendingDeleteDimension?.key ??
+            '',
+        })}
+      </AlertDialog.Title>
+      <AlertDialog.Description>
+        {m.tag_editor_dimension_delete_confirm({
+          key:
+            pendingDeleteDimension?.label['zh-CN'] ??
+            pendingDeleteDimension?.key ??
+            '',
+        })}
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel disabled={isDeleting}
+        >{m.tag_editor_cancel()}</AlertDialog.Cancel
+      >
+      <AlertDialog.Action
+        variant="destructive"
+        disabled={isDeleting}
+        onclick={() => void handleRemove()}
+      >
+        {m.tag_editor_dimension_delete_action()}
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>
+
 <style>
   /* .dialog-body 由全局 .app-dialog .dialog-body 处理，移除局部定义以避免覆盖 */
 
@@ -135,7 +185,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 8px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     font-size: 13px;
   }
 
@@ -163,20 +213,23 @@
     border: none;
     cursor: pointer;
     color: var(--text-secondary);
-    font-size: 16px;
-    padding: 2px 6px;
-    border-radius: 4px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: var(--shape-xs);
     font-family: inherit;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .dim-delete-btn :global(svg) {
+    width: 16px;
+    height: 16px;
   }
 
   .dim-delete-btn:hover {
     color: var(--destructive);
-  }
-
-  .dim-delete-btn.confirming {
-    font-size: 11px;
-    color: var(--destructive);
-    border: 1px solid var(--destructive);
   }
 
   .add-form {

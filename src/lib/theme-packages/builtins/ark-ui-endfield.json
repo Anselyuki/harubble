@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "id": "ark-ui-endfield",
+    "name": "Field Signal",
+    "version": "1.0.0",
+    "description": "Signal-yellow tactical field system with ink-black canvas, charcoal geometry, and offset shadows. Dark-first, sharp corners, wide-condensed display type.",
+    "author": "Harubble Contributors",
+    "license": "MIT",
+    "minAppVersion": "2.2.0"
+  },
+  "visualContract": {
+    "family": "endfield",
+    "depth": "complex"
+  },
+  "slots": {
+    "accent": "#FFFA00",
+    "surface": "#FAFAFA",
+    "textPrimary": "#191919",
+    "textSecondary": "#5B5B58",
+    "tint": "#35373C",
+    "danger": "#BE1414"
+  },
+  "variants": {
+    "light": {
+      "accent": "#918D00",
+      "surface": "#FAFAFA",
+      "textPrimary": "#191919",
+      "textSecondary": "#5B5B58",
+      "tint": "#35373C",
+      "danger": "#BE1414"
+    },
+    "dark": {
+      "accent": "#FFFA00",
+      "surface": "#191919",
+      "textPrimary": "#FAFAFA",
+      "textSecondary": "#B2B2B2",
+      "tint": "#5B5B58",
+      "danger": "#FF5C58"
+    }
+  },
+  "motion": {
+    "micro": 90,
+    "fast": 200,
+    "base": 280,
+    "slow": 400,
+    "page": 600,
+    "baseOut": 220,
+    "slowOut": 320,
+    "pageOut": 460,
+    "overlayIn": 240
+  },
+  "shape": {
+    "xs": 0,
+    "sm": 2,
+    "md": 2,
+    "lg": 4,
+    "xl": 4,
+    "2xl": 6,
+    "pill": 4
+  },
+  "density": {
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24
+  },
+  "elevation": {
+    "none": "none",
+    "xs": "0 1px 0 rgba(25, 25, 25, 0.14)",
+    "sm": "2px 2px 0 rgba(25, 25, 25, 0.16)",
+    "md": "4px 4px 0 rgba(25, 25, 25, 0.2)",
+    "lg": "6px 6px 0 rgba(25, 25, 25, 0.24)",
+    "xl": "10px 10px 0 rgba(25, 25, 25, 0.28)"
+  },
+  "blur": {
+    "sm": 0,
+    "md": 0,
+    "lg": 2,
+    "xl": 4
+  },
+  "fontFamily": {
+    "body": "Space Grotesk, HarmonyOS Sans SC, Arial, sans-serif",
+    "display": "Novecentosanswide, Bahnschrift, Roboto Condensed, Arial Narrow, sans-serif",
+    "mono": "IBM Plex Mono, SFMono-Regular, Cascadia Code, monospace"
+  },
+  "cssVariables": {
+    "--theme-custom-ink": "#191919",
+    "--theme-custom-paper": "#FAFAFA",
+    "--theme-custom-signal": "#FFFA00",
+    "--theme-custom-signal-alt": "#00FFA2",
+    "--theme-custom-stage-opacity": "0.26",
+    "--theme-custom-sector-width": "clamp(56px, 8vw, 132px)",
+    "--theme-custom-attention-duration": "1800ms"
+  },
+  "cssVariableVariants": {
+    "light": {
+      "--theme-custom-panel": "rgba(250, 250, 250, 0.94)",
+      "--theme-custom-rule": "rgba(25, 25, 25, 0.22)"
+    },
+    "dark": {
+      "--theme-custom-panel": "rgba(25, 25, 25, 0.94)",
+      "--theme-custom-rule": "rgba(250, 250, 250, 0.2)"
+    }
+  }
+}

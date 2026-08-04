@@ -4,9 +4,10 @@ import type { AlbumDetail, SongDetail, ThemePalette } from './types';
 const HOUR_MS = 60 * 60 * 1000;
 const PERSISTENCE_KEY_PREFIX = 'phase9-cache:';
 const PERSISTENCE_LATEST_ALBUMS_KEY = `${PERSISTENCE_KEY_PREFIX}warm:albums`;
+const LEGACY_COVER_CACHE_PREFIX = `${PERSISTENCE_KEY_PREFIX}covers:`;
 const WARM_ALBUM_LIMIT = 10;
 
-type CacheType = 'albums' | 'songs' | 'lyrics' | 'themes' | 'covers';
+type CacheType = 'albums' | 'songs' | 'lyrics' | 'themes';
 
 type CacheStatsSnapshot = Record<
   CacheType,
@@ -72,12 +73,6 @@ const CACHE_OPTIONS: Record<CacheType, TieredCacheOptions> = {
     maxEntries: 200,
     persistent: false,
   },
-  covers: {
-    ttlMs: 24 * HOUR_MS,
-    maxEntries: 100,
-    persistent: true,
-    persistTouchOnHit: false,
-  },
 };
 
 function persistenceKey(type: CacheType, key: string): string {
@@ -93,8 +88,7 @@ function isCacheType(value: string): value is CacheType {
     value === 'albums' ||
     value === 'songs' ||
     value === 'lyrics' ||
-    value === 'themes' ||
-    value === 'covers'
+    value === 'themes'
   );
 }
 
@@ -420,7 +414,6 @@ class CacheManager {
     songs: 0,
     lyrics: 0,
     themes: 0,
-    covers: 0,
   };
 
   readonly misses: Record<CacheType, number> = {
@@ -428,7 +421,6 @@ class CacheManager {
     songs: 0,
     lyrics: 0,
     themes: 0,
-    covers: 0,
   };
 
   readonly evictions: Record<CacheType, number> = {
@@ -436,7 +428,6 @@ class CacheManager {
     songs: 0,
     lyrics: 0,
     themes: 0,
-    covers: 0,
   };
 
   private readonly tagIndex = new Map<string, Set<string>>();
@@ -478,16 +469,6 @@ class CacheManager {
     this.tagIndex,
     this.keyTags
   );
-  readonly covers = new TieredCache<string>(
-    'covers',
-    CACHE_OPTIONS.covers,
-    this.hits,
-    this.misses,
-    this.evictions,
-    this.tagIndex,
-    this.keyTags
-  );
-
   async invalidateKey(key: string): Promise<void> {
     const [type, ...rest] = key.split(':');
     const unscopedKey = rest.join(':');
@@ -507,9 +488,6 @@ class CacheManager {
         break;
       case 'themes':
         await this.themes.delete(unscopedKey);
-        break;
-      case 'covers':
-        await this.covers.delete(unscopedKey);
         break;
       default:
         break;
@@ -546,7 +524,6 @@ class CacheManager {
       this.songs.clear(),
       this.lyrics.clear(),
       this.themes.clear(),
-      this.covers.clear(),
     ]);
     this.tagIndex.clear();
     this.keyTags.clear();
@@ -577,12 +554,6 @@ class CacheManager {
         hits: this.hits.themes,
         misses: this.misses.themes,
         evictions: this.evictions.themes,
-      },
-      covers: {
-        size: this.covers.size,
-        hits: this.hits.covers,
-        misses: this.misses.covers,
-        evictions: this.evictions.covers,
       },
     };
   }
@@ -632,6 +603,14 @@ class CacheManager {
 
 export const cacheManager = new CacheManager();
 
+async function clearLegacyCoverCache(): Promise<void> {
+  const legacyKeys = (await keys()).filter(
+    (key) =>
+      typeof key === 'string' && key.startsWith(LEGACY_COVER_CACHE_PREFIX)
+  );
+  await Promise.all(legacyKeys.map((key) => del(key)));
+}
+
 export function createAlbumCacheTag(albumCid: string): string {
   return `tag:album:${albumCid}`;
 }
@@ -659,5 +638,5 @@ export async function invalidateByTag(tag: string): Promise<void> {
 }
 
 export async function warmCacheManager(): Promise<void> {
-  await cacheManager.warmStart();
+  await Promise.all([cacheManager.warmStart(), clearLegacyCoverCache()]);
 }

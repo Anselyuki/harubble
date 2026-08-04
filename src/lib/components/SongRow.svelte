@@ -115,7 +115,19 @@
         return labels.downloadIdleTitle;
     }
   });
-  function handleRowActivate() {
+  function isNestedInteractiveTarget(target: EventTarget | null): boolean {
+    return (
+      target instanceof Element &&
+      Boolean(
+        target.closest(
+          'button, a, input, select, textarea, [contenteditable="true"], [role="menuitem"]'
+        )
+      )
+    );
+  }
+
+  function handleRowActivate(event: MouseEvent) {
+    if (isNestedInteractiveTarget(event.target)) return;
     if (selectionMode) {
       if (!selectionDisabled) {
         onToggleSelection?.();
@@ -125,7 +137,27 @@
 
   function handleRowPlay() {
     if (selectionMode) return;
-    onclick?.();
+    if (isPlaying) {
+      onTogglePlay?.();
+    } else {
+      onclick?.();
+    }
+  }
+
+  function handleRowDoubleClick(event: MouseEvent) {
+    if (isNestedInteractiveTarget(event.target)) return;
+    handleRowPlay();
+  }
+
+  function rowPointerInteractions(node: HTMLElement) {
+    node.addEventListener('click', handleRowActivate);
+    node.addEventListener('dblclick', handleRowDoubleClick);
+    return {
+      destroy() {
+        node.removeEventListener('click', handleRowActivate);
+        node.removeEventListener('dblclick', handleRowDoubleClick);
+      },
+    };
   }
 
   function computeExtraTags(
@@ -157,6 +189,8 @@
   const extraTags = $derived.by(() => computeExtraTags(song.tags, albumTags));
 </script>
 
+<!-- Row-level pointer activation is a convenience; explicit child buttons own keyboard actions. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="song-row"
   class:is-selection-mode={selectionMode}
@@ -165,17 +199,8 @@
   class:is-hovered={isHovered || isFocused}
   class:is-reduced-motion={reducedMotion}
   data-song-cid={song.cid}
-  role="button"
-  tabindex="0"
-  aria-label={song.name}
-  onclick={handleRowActivate}
-  ondblclick={handleRowPlay}
-  onkeydown={(e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      handleRowPlay();
-    }
-  }}
+  class:has-row-action={selectionMode}
+  use:rowPointerInteractions
   onmouseenter={() => {
     isHovered = true;
   }}
@@ -309,10 +334,13 @@
     gap: 14px;
     padding: 10px 16px;
     border-radius: 14px;
-    cursor: pointer;
+    cursor: default;
     outline: none;
     background: rgba(15, 23, 42, 0);
     box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0);
+  }
+  .song-row.has-row-action {
+    cursor: pointer;
   }
   .song-row:not(.is-reduced-motion):active {
     transform: scale(0.996);
@@ -343,7 +371,7 @@
   .song-cover-thumb {
     width: 36px;
     height: 36px;
-    border-radius: 6px;
+    border-radius: var(--shape-sm);
     object-fit: cover;
     flex-shrink: 0;
   }
@@ -380,7 +408,7 @@
     font-size: 11px;
     font-weight: 500;
     padding: 1px 6px;
-    border-radius: 4px;
+    border-radius: var(--shape-xs);
     background: rgba(var(--accent-rgb), 0.08);
     color: var(--text-secondary);
     white-space: nowrap;
@@ -390,27 +418,30 @@
     border: none;
     padding: 0;
     cursor: pointer;
-    width: 32px;
-    height: 32px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     opacity: 0;
+    pointer-events: none;
     background: rgba(15, 23, 42, 0.05);
     color: var(--text-secondary);
     box-shadow: 0 0 0 rgba(var(--accent-rgb), 0);
   }
   .song-play-indicator.is-visible:not(.is-playing) {
     opacity: 1;
+    pointer-events: auto;
     background: rgba(var(--accent-rgb), 0.1);
     color: var(--accent);
   }
   .song-play-indicator.is-playing {
     opacity: 1;
+    pointer-events: auto;
     background: var(--accent);
-    color: #ffffff;
+    color: var(--accent-readable-foreground);
     box-shadow: 0 10px 20px rgba(var(--accent-rgb), 0.18);
   }
   .song-play-indicator:not(.is-visible):not(.is-playing) {
@@ -431,19 +462,32 @@
   .song-meta-wrapper {
     display: inline-flex;
     opacity: 0;
+    pointer-events: none;
   }
   .song-row:hover .song-meta-wrapper,
   .song-row:focus-within .song-meta-wrapper {
     opacity: 1;
+    pointer-events: auto;
   }
   .song-row.is-reduced-motion .song-meta-wrapper {
     opacity: 1;
+    pointer-events: auto;
+  }
+  @media (hover: none), (pointer: coarse) {
+    .song-play-indicator,
+    .song-meta-wrapper {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .song-play-indicator:not(.is-visible):not(.is-playing) {
+      transform: none;
+    }
   }
   .song-download-badge {
     display: inline-flex;
     align-items: center;
     padding: 3px 8px;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     font-size: 11px;
     line-height: 1;
     color: var(--accent);
@@ -452,8 +496,8 @@
   }
   .song-download-button {
     appearance: none;
-    width: 32px;
-    height: 32px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     border: none;
     background: transparent;
@@ -521,6 +565,6 @@
     background: transparent;
   }
   .song-selection-toggle.is-selected .song-selection-dot {
-    background: white;
+    background: var(--accent-readable-foreground);
   }
 </style>

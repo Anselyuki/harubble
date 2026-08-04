@@ -6,6 +6,20 @@
 
 - Rust
 - Bun 1.3+（唯一 JS 包管理器）
+- macOS：Xcode Command Line Tools
+- Windows：Visual Studio C++ Build Tools 与 WebView2 Runtime
+- Ubuntu / Debian：WebKitGTK、GTK、AppIndicator、librsvg、ALSA 与 `patchelf`。与 CI 一致的安装命令：
+
+  ```bash
+  sudo apt-get update
+  sudo apt-get install -y \
+    libwebkit2gtk-4.1-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    libasound2-dev \
+    patchelf
+  ```
 
 ### 常用命令
 
@@ -20,7 +34,11 @@ bun run tauri:dev
 bun run format:check
 bun run lint
 bun run check
+bun run test
 cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+bunx playwright test --project=smoke
+bun run test:e2e:visual
 ```
 
 ```bash
@@ -28,6 +46,23 @@ cargo test --workspace
 bun run build
 bun run tauri:build
 ```
+
+### 提交前检查
+
+仓库使用 `.pre-commit-config.yaml` 统一执行行尾检查、Prettier 和 `cargo fmt`。首次开发时安装 hook：
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+需要手动检查全部文件时运行：
+
+```bash
+pre-commit run --all-files
+```
+
+如果 hook 自动修改了文件，检查 diff、重新暂存后再提交。
 
 ### 生成 Rust 文档（rustdoc）
 
@@ -46,7 +81,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 - `--no-deps` 只生成当前工作区包的文档，避免展开依赖库。
 - `--document-private-items` 适合本地排查模块职责与内部状态。
-- 生成后打开 `target/doc/index.html` 查看文档首页。
+- 核心库入口为 `target/doc/harubble_core/index.html`，桌面应用入口为 `target/doc/harubble/index.html`。也可在对应命令后追加 `--open`；同名的 `harubble` lib/bin 文档使用同一输出路径，最后一次生成会覆盖该入口。
 
 ---
 
@@ -56,11 +91,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 #### [frontend-guide.md](./reference/frontend-guide.md)
 
-前端架构、组件约定、域边界、运行时架构、UI 系统（设计 token、字体方案、动效规则）、国际化、交互模式与内容规范。
-
-#### [token-inventory.md](./reference/token-inventory.md)
-
-CSS token 盘点清单。列出 `:root` / `:root.light` / `:root.dark` 中所有 CSS 变量的迁移归属、运行时写入分析与 shadcn token 引用方向，作为主题系统迁移的可执行依据。
+前端架构、组件约定、域边界、运行时架构、UI 系统（设计 token、字体方案、动效规则）、Visual Contract（family × depth 视觉族 · §9）、`theme_packages_v1` 折叠状态与运维清单（§9.4）、Phase 4 JSON 最小安全子集与完整 CSS 覆盖层边界（§9.5）、国际化、交互模式与内容规范。
 
 #### [resource-update.md](./reference/resource-update.md)
 
@@ -76,32 +107,10 @@ CSS token 盘点清单。列出 `:root` / `:root.light` / `:root.dark` 中所有
 
 #### [playback-command-scheduling.md](./reference/playback-command-scheduling.md)
 
-播放资源隔离与 command 调度当前实现。包含 command domain/priority 划分、PlaybackActor、资源域、PlaybackLoadGate、降级策略、外部音乐播放器架构参考和验证指标。
+播放资源隔离与 command 调度当前实现。包含 command domain/priority 划分、PlaybackActor、资源域、PlaybackLoadGate、降级策略和验证指标。
 
 ### process/ — 项目规定
 
 #### [release-process.md](./process/release-process.md)
 
 CI/CD 流程、发布触发条件、版本号策略与产物构建。
-
-#### [review-rules.md](./process/review-rules.md)
-
-低风险变更（测试整理、结构性重构、文档补充）的评审与审批规则。
-
-#### [agent-hooks.md](./process/agent-hooks.md)
-
-代码格式化与 hooks 配置。使用 pre-commit 框架统一管理提交前格式化，对所有开发者和 AI Agent 生效。开发者可以直接将此文档提供给 Agent，由 Agent 自行完成安装。
-
-#### [windows-build-constraint.md](./process/windows-build-constraint.md)
-
-Windows 构建约束：禁止 release 构建弹出黑色终端窗口。包含根因分析、修复方式、Agent 约束规则与验证方法。任何涉及二进制入口点或构建配置的修改都应参考本文档。
-
-### history/ — 历史记录
-
-#### [decisions.md](./history/decisions.md)
-
-关键技术选型的背景、考量与结论。
-
-#### [roadmap.md](./history/roadmap.md)
-
-后端路线图，包含已完成阶段总览与待办阶段方向。

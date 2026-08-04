@@ -5,6 +5,7 @@ use crate::local_inventory_provenance::{
 use crate::local_inventory_scan::{
     collect_local_audio_evidence, ScanCollectionOutcome, ScanCollectionResult,
 };
+use crate::search::emit_library_search_index_state_changed;
 use harubble_core::{
     aggregate_album_download_badge, album_badge_from_evidence, matched_track_evidence,
     track_badge_from_matches, Album, AlbumDetail, LocalAudioFileEvidence,
@@ -216,68 +217,85 @@ pub fn spawn_inventory_scan(
     root_output_dir: String,
     verification_mode: Option<VerificationMode>,
 ) {
+    let directory = state.task_directory().clone();
     tauri::async_runtime::spawn(async move {
-        state
-            .wait_for_background_io_gate("local_inventory_scan", Duration::from_millis(250))
-            .await;
+        let task_id = directory.next_task_id("local_inventory", "scan").await;
+        crate::background_tasks::spawn_tracked(
+            directory,
+            task_id,
+            move |cancel_token| async move {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => { return; }
+                    _ = state.wait_for_background_io_gate("local_inventory_scan", Duration::from_millis(250)) => {}
+                }
+                if cancel_token.is_cancelled() {
+                    return;
+                }
 
-        let mode = match verification_mode {
-            Some(mode) => mode,
-            None => state.local_inventory_service.verification_mode().await,
-        };
-        let provenance_records = state.local_inventory_service.provenance_records().await;
-        let started = state
-            .local_inventory_service
-            .begin_scan(root_output_dir.clone(), mode)
-            .await;
-        state
-            .library_search_service
-            .prepare_for_inventory_scan(root_output_dir.clone())
-            .await;
-        emit_local_inventory_state_changed(&app, &started);
+                let mode = match verification_mode {
+                    Some(mode) => mode,
+                    None => state.local_inventory().verification_mode().await,
+                };
+                let provenance_records = state.local_inventory().provenance_records().await;
+                let started = state
+                    .local_inventory()
+                    .begin_scan(root_output_dir.clone(), mode)
+                    .await;
+                let search_index_state = state
+                    .library_search()
+                    .prepare_for_inventory_scan(root_output_dir.clone())
+                    .await;
+                emit_library_search_index_state_changed(&app, search_index_state);
+                emit_local_inventory_state_changed(&app, &started);
 
-        let inventory_version = started.inventory_version.clone();
-        let locale = state.preferences().locale;
-        let app_for_scan = app.clone();
-        let cancel_flag = state.local_inventory_service.cancel_flag.clone();
-        let root_output_dir_for_scan = root_output_dir.clone();
-        let inventory_version_for_scan = inventory_version.clone();
-        let scan_result = tokio::task::spawn_blocking(move || {
-            collect_local_audio_evidence(
-                Path::new(&root_output_dir_for_scan),
-                &root_output_dir_for_scan,
-                &inventory_version_for_scan,
-                &provenance_records,
-                &cancel_flag,
-                locale,
-                |event| emit_local_inventory_scan_progress(&app_for_scan, &event),
-            )
-        })
-        .await
-        .map_err(|error| format!("inventory scan worker failed: {error}"))
-        .and_then(|result| result);
+                let inventory_version = started.inventory_version.clone();
+                let locale = state.preferences().locale;
+                let app_for_scan = app.clone();
+                let cancel_flag = state.local_inventory().cancel_flag.clone();
+                let root_output_dir_for_scan = root_output_dir.clone();
+                let inventory_version_for_scan = inventory_version.clone();
+                let scan_result = tokio::task::spawn_blocking(move || {
+                    collect_local_audio_evidence(
+                        Path::new(&root_output_dir_for_scan),
+                        &root_output_dir_for_scan,
+                        &inventory_version_for_scan,
+                        &provenance_records,
+                        &cancel_flag,
+                        locale,
+                        |event| emit_local_inventory_scan_progress(&app_for_scan, &event),
+                    )
+                })
+                .await
+                .map_err(|error| format!("inventory scan worker failed: {error}"))
+                .and_then(|result| result);
 
-        let finished = match scan_result {
-            Ok(ScanCollectionOutcome::Completed(result)) => {
-                state
-                    .local_inventory_service
-                    .complete_scan(&inventory_version, result)
-                    .await
-            }
-            Ok(ScanCollectionOutcome::Cancelled) => state.local_inventory_service.snapshot().await,
-            Err(error) => {
-                state
-                    .local_inventory_service
-                    .fail_scan(&inventory_version, error)
-                    .await
-            }
-        };
-        if finished.status == LocalInventoryStatus::Completed {
-            state
-                .library_search_service
-                .schedule_rebuild(state.clone(), finished.clone());
-        }
-        emit_local_inventory_state_changed(&app, &finished);
+                let finished = match scan_result {
+                    Ok(ScanCollectionOutcome::Completed(result)) => {
+                        state
+                            .local_inventory()
+                            .complete_scan(&inventory_version, result)
+                            .await
+                    }
+                    Ok(ScanCollectionOutcome::Cancelled) => {
+                        state.local_inventory().snapshot().await
+                    }
+                    Err(error) => {
+                        state
+                            .local_inventory()
+                            .fail_scan(&inventory_version, error)
+                            .await
+                    }
+                };
+                if finished.status == LocalInventoryStatus::Completed {
+                    state.library_search().schedule_rebuild(
+                        app.clone(),
+                        state.clone(),
+                        finished.clone(),
+                    );
+                }
+                emit_local_inventory_state_changed(&app, &finished);
+            },
+        );
     });
 }
 

@@ -179,13 +179,6 @@ impl AudioPlayer {
         })
     }
 
-    /// 返回底层 Tauri 应用句柄。
-    ///
-    /// 适用于需要向外部组件转交 `AppHandle`、发出事件或访问应用级状态的场景。
-    pub fn app_handle(&self) -> AppHandle {
-        self.app.clone()
-    }
-
     /// 绑定系统媒体控制事件处理器。
     pub fn bind_media_controls<F>(&self, handler: F) -> Result<()>
     where
@@ -230,9 +223,9 @@ impl AudioPlayer {
 
     /// 初始化新的加载会话并替换当前播放状态。
     ///
-    /// 该方法会先停止已有音频输出，但不会广播一个短暂的空播放器状态；随后写入
-    /// 歌曲元数据、初始进度、初始时长与当前音量，并返回新的会话 ID 供后续流式
-    /// 播放阶段校验。
+    /// 该方法会先停止旧会话，并让已有设备流在切换期持续输出数字静音，但不会广播
+    /// 一个短暂的空播放器状态；随后写入歌曲元数据、初始进度、初始时长与当前音量，
+    /// 并返回新的会话 ID 供后续流式播放阶段校验。
     pub fn begin_loading_session(
         &self,
         song_cid: String,
@@ -242,7 +235,7 @@ impl AudioPlayer {
         initial_progress: f64,
         initial_duration: Option<f64>,
     ) -> Result<u64> {
-        self.stop_active_backend()?;
+        self.quiesce_active_backend_for_transition()?;
 
         let session_id = self.active_session_id.fetch_add(1, Ordering::SeqCst) + 1;
         self.install_session_flags();
@@ -377,10 +370,9 @@ impl AudioPlayer {
             )
             .context("Failed to start audio backend")?;
 
-        if !self.is_session_active(session_id) {
-            let _ = self.backend.lock().unwrap().stop();
-            anyhow::bail!("Playback session expired");
-        }
+        // 使该会话失效的 transition 已负责 quiesce 或 stop。这里不能再无条件 stop：
+        // 新请求可能已经接管刚启动的静音流，用它覆盖后续加载空档。
+        ensure_started_session_current(self.is_session_active(session_id))?;
 
         {
             let mut state = self.state.lock().unwrap();
@@ -443,7 +435,7 @@ impl AudioPlayer {
 
         if let Err(error) = spawn_result {
             if let Some(state) = self.app.try_state::<crate::app_state::AppState>() {
-                state.log_center.record(
+                state.log_center().record(
                     crate::logging::LogPayload::new(
                         crate::logging::LogLevel::Warn,
                         "player",
@@ -461,7 +453,7 @@ impl AudioPlayer {
 
         Arc::new(move || {
             if let Some(state) = app_for_finish.try_state::<crate::app_state::AppState>() {
-                state.player.finish_session(session_id);
+                state.player().finish_session(session_id);
             }
         })
     }
@@ -475,7 +467,14 @@ impl AudioPlayer {
                 return;
             }
             if let Some(state) = app_for_metrics.try_state::<crate::app_state::AppState>() {
-                state.log_center.record(
+                // P1-6 基准：把回调耗时统计一并写入日志上下文。
+                // avg_us = total_ns / count / 1000；桶数组直接序列化为 JSON 数组，供
+                // 后续基准报告脚本按需绘制直方图或近似百分位。
+                let avg_ns = metrics
+                    .callback_elapsed_ns_total
+                    .checked_div(metrics.callback_count)
+                    .unwrap_or(0);
+                state.log_center().record(
                     crate::logging::LogPayload::new(
                         crate::logging::LogLevel::Debug,
                         "player",
@@ -488,6 +487,11 @@ impl AudioPlayer {
                         "playback.session_id": session_id,
                         "audio.callback_silence_due_to_lock": metrics.silence_due_to_lock,
                         "audio.callback_underrun_frames": metrics.underrun_frames,
+                        "audio.callback_count": metrics.callback_count,
+                        "audio.callback_elapsed_ns_total": metrics.callback_elapsed_ns_total,
+                        "audio.callback_elapsed_ns_avg": avg_ns,
+                        "audio.callback_elapsed_ns_max": metrics.callback_elapsed_ns_max,
+                        "audio.callback_duration_buckets": metrics.callback_duration_buckets,
                     })),
                 );
             }
@@ -509,7 +513,7 @@ impl AudioPlayer {
             }
             if let Some(state) = app_for_underrun.try_state::<crate::app_state::AppState>() {
                 state
-                    .player
+                    .player()
                     .start_rebuffering(session_id, sample_buffer.clone(), audio_format);
             }
         })
@@ -564,7 +568,7 @@ impl AudioPlayer {
                 }
             }
             self.rebuffering.store(false, Ordering::SeqCst);
-            app_state.log_center.record(
+            app_state.log_center().record(
                 crate::logging::LogPayload::new(
                     crate::logging::LogLevel::Warn,
                     "player",
@@ -578,9 +582,9 @@ impl AudioPlayer {
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
 
-        let player = Arc::clone(&app_state.player);
-        let playback_runtime = Arc::clone(&app_state.playback_runtime);
-        let log_center = Arc::clone(&app_state.log_center);
+        let player = Arc::clone(app_state.player());
+        let playback_runtime = Arc::clone(app_state.playback_runtime());
+        let log_center = Arc::clone(app_state.log_center());
         let stop_flag = self.stop_signal();
         let target_samples = rebuffer_target_samples(audio_format);
 
@@ -673,9 +677,9 @@ impl AudioPlayer {
                 return;
             }
             if let Some(state) = app_for_error.try_state::<crate::app_state::AppState>() {
-                let log_center = Arc::clone(&state.log_center);
-                let player = Arc::clone(&state.player);
-                let playback_runtime = Arc::clone(&state.playback_runtime);
+                let log_center = Arc::clone(state.log_center());
+                let player = Arc::clone(state.player());
+                let playback_runtime = Arc::clone(state.playback_runtime());
                 let message_for_log = message.clone();
                 let active_session_for_error = Arc::clone(&active_session);
                 let stop_flag_for_error = Arc::clone(&stop_flag);
@@ -916,10 +920,7 @@ impl AudioPlayer {
             return;
         }
 
-        self.stop_signal().store(true, Ordering::SeqCst);
-        self.pause_signal().store(false, Ordering::SeqCst);
-        self.active_session_id.fetch_add(1, Ordering::SeqCst);
-        let _ = self.backend.lock().unwrap().stop();
+        let _ = self.quiesce_active_backend_for_transition();
     }
 
     /// 停止当前播放并将播放器状态重置为默认值。
@@ -944,6 +945,32 @@ impl AudioPlayer {
         self.rebuffering.store(false, Ordering::SeqCst);
         self.active_session_id.fetch_add(1, Ordering::SeqCst);
         self.backend.lock().unwrap().stop()
+    }
+
+    fn quiesce_active_backend_for_transition(&self) -> Result<()> {
+        self.stop_signal().store(true, Ordering::SeqCst);
+        self.pause_signal().store(false, Ordering::SeqCst);
+        self.rebuffering.store(false, Ordering::SeqCst);
+        self.active_session_id.fetch_add(1, Ordering::SeqCst);
+        let quiesce_error = {
+            let mut backend = self.backend.lock().unwrap();
+            quiesce_or_stop_backend(backend.as_mut())?
+        };
+
+        if let Some(details) = quiesce_error {
+            if let Some(state) = self.app.try_state::<crate::app_state::AppState>() {
+                state.log_center().record(
+                    crate::logging::LogPayload::new(
+                        crate::logging::LogLevel::Warn,
+                        "player",
+                        "player.transition_quiesce_failed",
+                        "Failed to keep output stream active during playback transition",
+                    )
+                    .details(details),
+                );
+            }
+        }
+        Ok(())
     }
 
     fn install_session_flags(&self) {
@@ -1004,6 +1031,22 @@ impl AudioPlayer {
         }
         self.sync_media_controls(false);
     }
+}
+
+fn quiesce_or_stop_backend(backend: &mut dyn PlaybackBackend) -> Result<Option<String>> {
+    let Err(error) = backend.quiesce_for_transition() else {
+        return Ok(None);
+    };
+    let details = format!("{error:#}");
+    backend.stop().with_context(|| {
+        format!("Failed to stop audio backend after transition quiesce failed: {details}")
+    })?;
+    Ok(Some(details))
+}
+
+fn ensure_started_session_current(is_current: bool) -> Result<()> {
+    anyhow::ensure!(is_current, "Playback session expired");
+    Ok(())
 }
 
 fn emit_state_and_sync(
@@ -1118,12 +1161,65 @@ fn claim_finished_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_progress_callback, claim_finished_session, normalize_volume, rebuffer_target_samples,
-        PlaybackQueueEntry, PlaybackQueueState,
+        build_progress_callback, claim_finished_session, ensure_started_session_current,
+        normalize_volume, quiesce_or_stop_backend, rebuffer_target_samples, PlaybackQueueEntry,
+        PlaybackQueueState,
     };
-    use crate::player::stream::{AudioFormat, SampleBuffer};
+    use crate::player::backend::{
+        AudioMetricsHandler, AudioUnderrunHandler, OutputFormat, PlaybackBackend,
+    };
+    use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
+    use anyhow::Result;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct TransitionBackend {
+        events: Vec<&'static str>,
+        fail_quiesce: bool,
+        fail_stop: bool,
+    }
+
+    impl PlaybackBackend for TransitionBackend {
+        fn negotiate_output_format(&self, _source_format: AudioFormat) -> Result<OutputFormat> {
+            unreachable!("format negotiation is not used by transition tests")
+        }
+
+        fn play_stream(
+            &mut self,
+            _format: OutputFormat,
+            _samples: SampleBuffer,
+            _stop_flag: Arc<AtomicBool>,
+            _volume: Arc<AtomicU64>,
+            _progress_callback: Arc<dyn Fn(f64, f64) + Send + Sync>,
+            _finish_callback: Arc<dyn Fn() + Send + Sync>,
+            _error_handler: PlaybackErrorHandler,
+            _metrics_handler: AudioMetricsHandler,
+            _underrun_handler: AudioUnderrunHandler,
+        ) -> Result<()> {
+            unreachable!("stream playback is not used by transition tests")
+        }
+
+        fn quiesce_for_transition(&mut self) -> Result<()> {
+            self.events.push("quiesce");
+            anyhow::ensure!(!self.fail_quiesce, "quiesce failed");
+            Ok(())
+        }
+
+        fn pause(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn resume(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&mut self) -> Result<()> {
+            self.events.push("stop");
+            anyhow::ensure!(!self.fail_stop, "stop failed");
+            Ok(())
+        }
+    }
 
     fn entry(cid: &str) -> PlaybackQueueEntry {
         PlaybackQueueEntry {
@@ -1169,6 +1265,54 @@ mod tests {
         assert_eq!(normalize_volume(2.0), 1.0);
         assert_eq!(normalize_volume(f64::NAN), 0.0);
         assert_eq!(normalize_volume(f64::INFINITY), 0.0);
+    }
+
+    #[test]
+    fn transition_keeps_backend_alive_when_quiesce_succeeds() {
+        let mut backend = TransitionBackend::default();
+
+        let warning = quiesce_or_stop_backend(&mut backend).expect("quiesce");
+
+        assert_eq!(backend.events, ["quiesce"]);
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn superseded_stream_start_preserves_transition_keepalive() {
+        let mut backend = TransitionBackend::default();
+        quiesce_or_stop_backend(&mut backend).expect("quiesce");
+
+        let error = ensure_started_session_current(false).expect_err("session must expire");
+
+        assert_eq!(format!("{error:#}"), "Playback session expired");
+        assert_eq!(backend.events, ["quiesce"]);
+    }
+
+    #[test]
+    fn transition_falls_back_to_stop_when_quiesce_fails() {
+        let mut backend = TransitionBackend {
+            fail_quiesce: true,
+            ..Default::default()
+        };
+
+        let warning = quiesce_or_stop_backend(&mut backend).expect("fallback stop");
+
+        assert_eq!(backend.events, ["quiesce", "stop"]);
+        assert_eq!(warning.as_deref(), Some("quiesce failed"));
+    }
+
+    #[test]
+    fn transition_reports_stop_failure_after_quiesce_failure() {
+        let mut backend = TransitionBackend {
+            fail_quiesce: true,
+            fail_stop: true,
+            ..Default::default()
+        };
+
+        let error = quiesce_or_stop_backend(&mut backend).expect_err("stop must fail");
+
+        assert_eq!(backend.events, ["quiesce", "stop"]);
+        assert!(format!("{error:#}").contains("stop failed"), "{error:#}");
     }
 
     #[test]

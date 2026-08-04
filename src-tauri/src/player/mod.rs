@@ -10,6 +10,7 @@ pub mod events;
 pub mod media;
 pub mod state;
 pub mod stream;
+pub(crate) mod stream_helpers;
 
 /// 播放命令返回给前端的稳定结果与错误类型。
 pub use api::{PlaybackError, PlaybackErrorCode, PlaybackStartResult};

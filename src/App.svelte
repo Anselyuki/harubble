@@ -10,6 +10,8 @@
   import FullscreenPlayer from '$lib/components/app/player/FullscreenPlayer.svelte';
   import AppSideSheets from '$lib/components/app/shell/AppSideSheets.svelte';
   import CollectionFormDialog from '$lib/components/app/collection/CollectionFormDialog.svelte';
+  import ClearListeningHistoryDialog from '$lib/components/app/home/ClearListeningHistoryDialog.svelte';
+  import ClearDownloadHistoryDialog from '$lib/components/app/download/ClearDownloadHistoryDialog.svelte';
   import ViewRouter from '$lib/components/app/shell/ViewRouter.svelte';
   import {
     createSidebarAnimator,
@@ -21,6 +23,8 @@
     type SidebarResizeHandle,
   } from '$lib/design/sidebar-resize';
   import { MOTION } from '$lib/design/gsap';
+  import { syncBrandHeight } from '$lib/design/actions';
+  import * as m from '$lib/paraglide/messages.js';
 
   const runtime = createAppRuntime();
 
@@ -36,11 +40,14 @@
   let bottomLabelEl: HTMLSpanElement | null = $state(null);
   let logoContainerEl: HTMLDivElement | null = $state(null);
   let logoSlabEl: HTMLElement | null = $state(null);
-  let brandRegionEl: HTMLElement | null = $state(null);
+
   let contentCollapsed = $state(runtime.sidebarCollapsed);
   let contentInteractive = $state(!runtime.sidebarCollapsed);
   let layoutCollapsed = $state(runtime.sidebarCollapsed);
   let isDragging = $state(false);
+  let currentSidebarWidth = $state(
+    runtime.sidebarCollapsed ? 56 : runtime.shellStore.sidebarWidth
+  );
 
   const COLLAPSED_WIDTH = 56;
   const MAX_SIDEBAR_WIDTH = 248;
@@ -79,6 +86,7 @@
         ? COLLAPSED_WIDTH
         : runtime.shellStore.sidebarWidth;
       shellEl.style.setProperty('--sidebar-width', `${initWidth}px`);
+      currentSidebarWidth = initWidth;
 
       animator = createSidebarAnimator({
         shellEl,
@@ -123,6 +131,7 @@
       targetWidth,
       compact ? MOTION.PAGE : undefined
     );
+    currentSidebarWidth = targetWidth;
 
     if (curr) {
       animator.collapse();
@@ -153,6 +162,7 @@
         getCollapsed: () => runtime.sidebarCollapsed,
         onWidthChange: (width) => {
           isDragging = true;
+          currentSidebarWidth = width;
           // 拖曳期间实时更新 sidebar 宽度（brand-region 独立不受影响）
           shellEl!.style.setProperty('--sidebar-width', `${width}px`);
           // 展开稳定态下让 slab 右边界跟随侧栏宽度（logo 保持不动）；
@@ -186,11 +196,13 @@
             } else {
               // 展开 → 折叠：内容在拖曳期间保持展开，交由共享 $effect 跑完整 collapse()
               runtime.shellStore.sidebarCollapsed = true;
+              currentSidebarWidth = COLLAPSED_WIDTH;
             }
           } else if (wasCollapsed) {
             // 折叠态未跨阈值——内容回到折叠布局并弹回折叠宽度
             animator?.previewContentCollapsed(true);
             animateSnapToWidth(shellEl!, COLLAPSED_WIDTH);
+            currentSidebarWidth = COLLAPSED_WIDTH;
           } else {
             // 展开态未跨阈值——保留当前宽度并持久化
             runtime.shellStore.sidebarWidth = finalWidth;
@@ -200,59 +212,7 @@
     }
   });
   /* eslint-enable @typescript-eslint/no-unnecessary-condition */
-
-  /**
-   * 同步品牌浮层（logo + slab）的实际高度到 --brand-region-height。
-   *
-   * .brand-region 是 position:absolute 浮层，不参与侧栏 flex 流，
-   * 由 .sidebar-brand-spacer 用该变量预留等高安全区把导航推到浮层下方。
-   * 折叠态下字母竖排会显著增高，必须实时跟随，否则 spacer 停在 80px
-   * 兜底值，logo/slab 会直接覆盖在导航之上。
-   */
-  /* eslint-disable @typescript-eslint/no-unnecessary-condition -- $state(null) refs are populated by bind:this at runtime */
-  $effect(() => {
-    if (!shellEl || !brandRegionEl) return;
-    const shell = shellEl;
-    const region = brandRegionEl;
-
-    const syncHeight = () => {
-      shell.style.setProperty(
-        '--brand-region-height',
-        `${region.offsetHeight}px`
-      );
-    };
-
-    syncHeight();
-
-    if (typeof ResizeObserver === 'undefined') return;
-
-    let rafId = 0;
-    const observer = new ResizeObserver(() => {
-      // 延迟到下一帧再写回，避免回调内同步改动布局触发
-      // "ResizeObserver loop completed with undelivered notifications" 警告
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        rafId = 0;
-        syncHeight();
-      });
-    });
-    observer.observe(region);
-
-    return () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      observer.disconnect();
-    };
-  });
-  /* eslint-enable @typescript-eslint/no-unnecessary-condition */
 </script>
-
-{#if runtime.isMacOS}
-  <div
-    class="macos-window-drag-region"
-    data-tauri-drag-region
-    aria-hidden="true"
-  ></div>
-{/if}
 
 <StatusToastHost />
 
@@ -262,7 +222,7 @@
     class:macos-overlay={runtime.isMacOS}
     bind:this={shellEl}
   >
-    <div class="brand-region" aria-hidden="true" bind:this={brandRegionEl}>
+    <div class="brand-region" aria-hidden="true" use:syncBrandHeight>
       <BrandSlab bind:slabEl={logoSlabEl} />
       <BrandLogo
         isMacOS={runtime.isMacOS}
@@ -292,14 +252,21 @@
       bind:bottomLabelEl
     />
 
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (ARIA separator is keyboard-resizable) -->
     <div
       class="sidebar-resize-handle"
       class:dragging={isDragging}
       bind:this={resizeHandleEl}
-      aria-hidden="true"
+      role="separator"
+      aria-label={m.sidebar_resize_label()}
+      aria-orientation="vertical"
+      aria-valuemin={COLLAPSED_WIDTH}
+      aria-valuemax={MAX_SIDEBAR_WIDTH}
+      aria-valuenow={Math.round(currentSidebarWidth)}
+      tabindex="0"
     ></div>
 
-    <section class="main-region">
+    <main class="main-region">
       {#if runtime.isMacOS}
         <div
           class="main-drag-region"
@@ -347,11 +314,13 @@
         bind:colorScheme={runtime.settingsState.colorScheme}
         bind:dynamicAlbumAccent={runtime.settingsState.dynamicAlbumAccent}
         settingsLogRefreshToken={runtime.settingsState.settingsLogRefreshToken}
+        settingsInitialSection={runtime.shellStore.settingsInitialSection}
         notifyInfo={runtime.notifyInfo}
         notifyError={runtime.notifyError}
         onOutputDirChange={runtime.handleOutputDirChange}
+        onRequestClearDownloadHistory={runtime.requestClearDownloadHistory}
       />
-    </section>
+    </main>
   </div>
 
   <CollectionFormDialog
@@ -370,5 +339,15 @@
       }
     }}
     onClose={runtime.collectionController.closeFormDialog}
+  />
+  <ClearListeningHistoryDialog
+    open={runtime.clearListeningHistoryDialogOpen}
+    onOpenChange={(open) => (runtime.clearListeningHistoryDialogOpen = open)}
+    onConfirm={runtime.confirmClearListeningHistory}
+  />
+  <ClearDownloadHistoryDialog
+    open={runtime.clearDownloadHistoryDialogOpen}
+    onOpenChange={(open) => (runtime.clearDownloadHistoryDialogOpen = open)}
+    onConfirm={runtime.confirmClearDownloadHistory}
   />
 </AppProviders>

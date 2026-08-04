@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Album } from '$lib/types';
   import { lazyLoad } from '$lib/lazyLoad';
+  import MotionSpinner from '$lib/components/MotionSpinner.svelte';
   import {
     getDownloadBadgeLabel,
     shouldShowAlbumListDownloadBadge,
@@ -18,6 +19,9 @@
     selected?: boolean;
     loading?: boolean;
     reducedMotion?: boolean;
+    coverPreloadRoot?: Element | null;
+    coverPreloadMargin?: string;
+    testId?: string;
     onclick?: () => void;
   }
 
@@ -27,6 +31,9 @@
     selected = false,
     loading = false,
     reducedMotion = false,
+    coverPreloadRoot = null,
+    coverPreloadMargin = '150px',
+    testId = 'album-card',
     onclick,
   }: Props = $props();
 
@@ -125,19 +132,24 @@
 <button
   type="button"
   class={`album-card album-card--${layout}${selected ? ' selected' : ''}${reducedMotion ? ' is-reduced-motion' : ''}`}
+  data-testid={testId}
   use:gsapCardHover
   onclick={handleActivate}
 >
   <div
     class="album-cover-wrapper"
-    use:lazyLoad={{ rootMargin: '150px', reducedMotion }}
+    use:lazyLoad={{
+      root: coverPreloadRoot,
+      rootMargin: coverPreloadMargin,
+      reducedMotion,
+    }}
     data-src={album.coverUrl}
   >
     <div class="album-cover-placeholder">♪</div>
     <img class="album-cover-img" alt={album.name} />
     {#if loading}
       <div class="album-cover-loading" aria-hidden="true">
-        <span class="album-cover-spinner"></span>
+        <MotionSpinner className="album-cover-spinner" {reducedMotion} />
       </div>
     {/if}
   </div>
@@ -155,7 +167,7 @@
     appearance: none;
     background: transparent;
     border: none;
-    border-radius: 12px;
+    border-radius: var(--shape-lg);
     padding: 12px;
     margin-bottom: 4px;
     cursor: pointer;
@@ -202,7 +214,7 @@
   .album-cover-wrapper {
     width: 48px;
     height: 48px;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: linear-gradient(
       135deg,
       var(--bg-tertiary) 0%,
@@ -240,7 +252,7 @@
     height: 100%;
     object-fit: cover;
     object-position: center;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     opacity: 0;
     transform: scale(1.04);
   }
@@ -251,18 +263,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
+    border-radius: var(--shape-md);
     background: rgba(0, 0, 0, 0.35);
     backdrop-filter: blur(2px);
   }
 
-  .album-cover-spinner {
+  .album-cover-loading :global(.album-cover-spinner) {
     width: 20px;
     height: 20px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: motion-spin 0.9s linear infinite;
+    color: white;
   }
 
   .album-info {
@@ -293,7 +302,7 @@
     align-items: center;
     margin-top: 6px;
     padding: 4px 8px;
-    border-radius: 999px;
+    border-radius: var(--shape-pill);
     font-size: 11px;
     line-height: 1;
     color: var(--accent);
@@ -315,7 +324,7 @@
     width: 100%;
     height: 0;
     padding-bottom: 100%;
-    border-radius: 12px;
+    border-radius: var(--shape-lg);
   }
 
   :global(.album-card.album-card--grid) .album-cover-placeholder {

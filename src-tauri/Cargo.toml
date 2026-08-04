@@ -14,8 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
 dirs = "5"
+filetime = "0.2"
 cpal = "0.17"
 crossbeam-queue = "0.3"
 hound = "3"
@@ -27,11 +27,16 @@ serde_json = "1"
 harubble_core = { path = "../crates/harubble-core" }
 souvlaki = "0.8"
 symphonia = { version = "0.5.5", features = ["flac", "mp3", "wav"] }
-tauri = { version = "2", features = ["custom-protocol", "tray-icon"] }
+tauri = { version = "2", features = ["custom-protocol", "tray-icon", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 toml = "0.8"
+sha2 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+url = "2"
+ipnet = "2"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 time = { version = "0.3", features = ["formatting"] }
 walkdir = "2"
 tempfile = "3"

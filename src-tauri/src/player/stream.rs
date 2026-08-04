@@ -3,11 +3,15 @@
 //! 该模块负责描述播放器输入来源、探测音频格式、启动后台解码线程，并通过样本缓冲
 //! 在解码侧与播放后端之间传递 PCM 数据。
 
+use crate::player::stream_helpers::*;
+// 将从 stream_helpers 移出的纯函数与常量重新导出，确保同模块测试的 `super::` 引用保持不变。
+pub(crate) use crate::player::stream_helpers::{
+    ensure_decoded_format_matches_source, sanitize_pcm_sample, timestamp_delta_to_frames,
+    SINC_RESAMPLE_CHUNK_FRAMES,
+};
 use anyhow::{Context, Result};
 use crossbeam_queue::ArrayQueue;
-use rubato::{
-    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-};
+use rubato::{Resampler, SincFixedIn};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -18,16 +22,14 @@ use std::time::Duration;
 
 /// 播放解码线程上报致命错误时使用的回调类型。
 pub type PlaybackErrorHandler = Arc<dyn Fn(String) + Send + Sync>;
-use symphonia::core::audio::{SampleBuffer as SymphoniaSampleBuffer, SignalSpec};
-use symphonia::core::codecs::{
-    CodecParameters, Decoder as SymphoniaDecoder, DecoderOptions, CODEC_TYPE_NULL,
-};
+use symphonia::core::audio::SampleBuffer as SymphoniaSampleBuffer;
+use symphonia::core::codecs::{Decoder as SymphoniaDecoder, DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use symphonia::core::units::{Time, TimeBase};
+use symphonia::core::units::Time;
 
 /// 描述解码后或输出端期望的音频格式。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -807,26 +809,6 @@ fn spawn_decode_worker(
         .expect("Failed to spawn audio decode worker")
 }
 
-fn ensure_decoded_format_matches_source(
-    spec: &SignalSpec,
-    source_format: AudioFormat,
-) -> Result<()> {
-    let source_format = source_format.normalized();
-    let decoded_channels = spec.channels.count() as u16;
-    anyhow::ensure!(
-        decoded_channels == source_format.channels,
-        "Decoded audio channel count changed from {} to {decoded_channels}",
-        source_format.channels
-    );
-    anyhow::ensure!(
-        spec.rate == source_format.sample_rate,
-        "Decoded audio sample rate changed from {} to {}",
-        source_format.sample_rate,
-        spec.rate
-    );
-    Ok(())
-}
-
 fn seek_to_time(
     format: &mut dyn FormatReader,
     track_id: u32,
@@ -860,13 +842,6 @@ fn seek_to_time(
         time_base,
         sample_rate,
     ))
-}
-
-fn timestamp_delta_to_frames(timestamp_delta: u64, time_base: TimeBase, sample_rate: u32) -> u64 {
-    let delta = time_base.calc_time(timestamp_delta);
-    let seconds = delta.seconds as f64 + delta.frac;
-
-    (seconds * f64::from(sample_rate.max(1))).round() as u64
 }
 
 fn open_audio_reader_with_retry<F>(
@@ -946,35 +921,6 @@ fn select_track(format: &dyn FormatReader) -> Result<&Track> {
         .context("No supported audio track found")
 }
 
-fn audio_format_from_codec_params(codec_params: &CodecParameters) -> Result<AudioFormat> {
-    let channels = codec_params
-        .channels
-        .context("Missing audio channel layout")?
-        .count() as u16;
-    let sample_rate = codec_params
-        .sample_rate
-        .context("Missing audio sample rate")?;
-
-    Ok(AudioFormat::with_bits_per_sample(
-        channels,
-        sample_rate,
-        codec_duration_secs(codec_params),
-        codec_params
-            .bits_per_sample
-            .and_then(|value| u16::try_from(value).ok()),
-    ))
-}
-
-fn codec_duration_secs(codec_params: &CodecParameters) -> f64 {
-    match (codec_params.n_frames, codec_params.time_base) {
-        (Some(n_frames), Some(time_base)) => {
-            let duration = time_base.calc_time(n_frames);
-            duration.seconds as f64 + duration.frac
-        }
-        _ => 0.0,
-    }
-}
-
 struct SampleConverter {
     source_channels: usize,
     target_channels: usize,
@@ -985,8 +931,6 @@ struct SampleConverter {
     next_source_frame: f64,
     sinc_resampler: Option<SincFixedIn<f32>>,
 }
-
-const SINC_RESAMPLE_CHUNK_FRAMES: usize = 1024;
 
 impl SampleConverter {
     fn new(source_format: AudioFormat, target_format: AudioFormat) -> Self {
@@ -1276,51 +1220,6 @@ impl SampleConverter {
         let current = self.pending[source_frame * self.source_channels + channel];
         let next = self.pending[next_source_frame * self.source_channels + channel];
         sanitize_pcm_sample(current + (next - current) * fraction)
-    }
-}
-
-fn create_sinc_resampler(
-    source_rate: u32,
-    target_rate: u32,
-    channels: usize,
-) -> Option<SincFixedIn<f32>> {
-    let params = SincInterpolationParameters {
-        sinc_len: 256,
-        f_cutoff: 0.95,
-        interpolation: SincInterpolationType::Cubic,
-        oversampling_factor: 256,
-        window: WindowFunction::BlackmanHarris2,
-    };
-    SincFixedIn::<f32>::new(
-        target_rate as f64 / source_rate as f64,
-        2.0,
-        params,
-        SINC_RESAMPLE_CHUNK_FRAMES,
-        channels,
-    )
-    .ok()
-}
-
-fn interleave_planar(planar: &[Vec<f32>]) -> Vec<f32> {
-    let channels = planar.len();
-    if channels == 0 {
-        return Vec::new();
-    }
-    let frames = planar.iter().map(Vec::len).min().unwrap_or(0);
-    let mut output = Vec::with_capacity(frames * channels);
-    for frame in 0..frames {
-        for channel in planar {
-            output.push(sanitize_pcm_sample(channel[frame]));
-        }
-    }
-    output
-}
-
-fn sanitize_pcm_sample(sample: f32) -> f32 {
-    if sample.is_finite() {
-        sample.clamp(-1.0, 1.0)
-    } else {
-        0.0
     }
 }
 

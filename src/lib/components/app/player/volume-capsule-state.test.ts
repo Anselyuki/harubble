@@ -26,6 +26,18 @@ describe('CapsuleState transition', () => {
     );
   });
 
+  test('expanding → collapsing when the target closes before expansion finishes', () => {
+    expect(transition(CapsuleState.Expanding, 'CLOSE')).toBe(
+      CapsuleState.Collapsing
+    );
+  });
+
+  test('collapsing → expanding when the target reopens before collapse finishes', () => {
+    expect(transition(CapsuleState.Collapsing, 'OPEN')).toBe(
+      CapsuleState.Expanding
+    );
+  });
+
   test('ignores OPEN when already expanding', () => {
     expect(transition(CapsuleState.Expanding, 'OPEN')).toBe(
       CapsuleState.Expanding

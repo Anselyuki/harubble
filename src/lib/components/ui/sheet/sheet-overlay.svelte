@@ -18,7 +18,7 @@
   const openCtx = getContext<{ value: boolean } | undefined>('sheet-open');
   const open = $derived(openCtx?.value ?? true);
 
-  let mounted = $state(true);
+  let mounted = $state(openCtx?.value ?? true);
 
   $effect(() => {
     if (open) mounted = true;
@@ -54,8 +54,9 @@
     forceMount
     data-slot="sheet-overlay"
     class={cn(
-      'bg-black/20 supports-[backdrop-filter]:backdrop-blur-sm fixed inset-0 z-[180]',
-      className
+      'bg-black/20 supports-[backdrop-filter]:backdrop-blur-sm fixed inset-0 z-[var(--z-sheet-overlay)]',
+      className,
+      !open && '!pointer-events-none'
     )}
     {...restProps}
   />

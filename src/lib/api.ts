@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   cacheManager,
@@ -8,6 +8,7 @@ import {
 } from './cache';
 import type {
   Album,
+  AlbumCatalogSnapshot,
   AlbumDetail,
   SongDetail,
   ThemePalette,
@@ -36,17 +37,19 @@ import type {
   TagEditorMergeResult,
   ConflictResolution,
   AudioFileMetadata,
+  RepeatMode,
+  ThemePackageDocument,
+  ThemePackageSummary,
 } from './types';
 
 const CACHE_KEY_ALBUM_DETAIL = 'album_detail:';
 const CACHE_KEY_SONG_DETAIL = 'song_detail:';
 const CACHE_KEY_SONG_LYRICS = 'song_lyrics:';
 const CACHE_KEY_IMAGE_THEME = 'image_theme:';
-const CACHE_KEY_IMAGE_DATA_URL = 'image_data_url:';
 const IMAGE_RESOURCE_CONCURRENCY_LIMIT = 1;
 
 const inflightImageThemeRequests = new Map<string, Promise<ThemePalette>>();
-const inflightImageDataUrlRequests = new Map<string, Promise<string>>();
+const inflightImageSrcRequests = new Map<string, Promise<string>>();
 const queuedImageResourceRequests: (() => void)[] = [];
 let activeImageResourceRequestCount = 0;
 
@@ -116,6 +119,14 @@ export async function getAlbums(): Promise<Album[]> {
   return invoke('get_albums');
 }
 
+export async function getAlbumCatalog(): Promise<AlbumCatalogSnapshot> {
+  return invoke<AlbumCatalogSnapshot>('get_album_catalog');
+}
+
+export async function refreshAlbumCatalog(): Promise<AlbumCatalogSnapshot> {
+  return invoke<AlbumCatalogSnapshot>('refresh_album_catalog');
+}
+
 export async function getAlbumDetail(
   albumCid: string,
   inventoryVersion?: string | null
@@ -128,6 +139,21 @@ export async function getAlbumDetail(
   }
 
   const data = await invoke<AlbumDetail>('get_album_detail', { albumCid });
+  await cacheManager.albums.set(cacheKey, data, [
+    createAlbumCacheTag(albumCid),
+    createInventoryCacheTag(inventoryVersion),
+  ]);
+  return data;
+}
+
+export async function refreshAlbumDetail(
+  albumCid: string,
+  inventoryVersion?: string | null
+): Promise<AlbumDetail> {
+  await cacheManager.invalidateByTag(createAlbumCacheTag(albumCid));
+  const data = await invoke<AlbumDetail>('refresh_album_detail', { albumCid });
+  const cacheScope = inventoryVersion ?? 'unversioned';
+  const cacheKey = `${CACHE_KEY_ALBUM_DETAIL}${cacheScope}:${albumCid}`;
   await cacheManager.albums.set(cacheKey, data, [
     createAlbumCacheTag(albumCid),
     createInventoryCacheTag(inventoryVersion),
@@ -190,11 +216,11 @@ export async function playSong(
 }
 
 export async function pausePlayback(): Promise<void> {
-  return invoke('pause_playback');
+  return invokePlayback<void>('pause_playback');
 }
 
 export async function resumePlayback(): Promise<void> {
-  return invoke('resume_playback');
+  return invokePlayback<void>('resume_playback');
 }
 
 export async function seekCurrentPlayback(
@@ -287,37 +313,25 @@ export async function extractImageTheme(
   }
 }
 
-export async function getImageDataUrl(imageUrl: string): Promise<string> {
-  const cacheKey = `${CACHE_KEY_IMAGE_DATA_URL}${imageUrl}`;
-  const inflight = inflightImageDataUrlRequests.get(cacheKey);
+export async function getImageSrc(imageUrl: string): Promise<string> {
+  const inflight = inflightImageSrcRequests.get(imageUrl);
   if (inflight) {
     return inflight;
   }
 
   const request = (async () => {
-    const cached = await cacheManager.covers.get(cacheKey);
-    if (cached.found) {
-      return cached.data;
-    }
-
-    return scheduleImageResourceRequest(async () => {
-      const queuedCached = await cacheManager.covers.get(cacheKey);
-      if (queuedCached.found) {
-        return queuedCached.data;
-      }
-
-      const data = await invoke<string>('get_image_data_url', { imageUrl });
-      await cacheManager.covers.set(cacheKey, data);
-      return data;
+    const cachedPath = await invoke<string>('get_cached_image_path', {
+      imageUrl,
     });
+    return convertFileSrc(cachedPath);
   })();
-  inflightImageDataUrlRequests.set(cacheKey, request);
+  inflightImageSrcRequests.set(imageUrl, request);
 
   try {
     return await request;
   } finally {
-    if (inflightImageDataUrlRequests.get(cacheKey) === request) {
-      inflightImageDataUrlRequests.delete(cacheKey);
+    if (inflightImageSrcRequests.get(imageUrl) === request) {
+      inflightImageSrcRequests.delete(imageUrl);
     }
   }
 }
@@ -366,6 +380,20 @@ export async function sendTestNotification(): Promise<void> {
   return invoke('send_test_notification');
 }
 
+export type NotificationPermissionState =
+  | 'granted'
+  | 'denied'
+  | 'prompt'
+  | 'prompt-with-rationale';
+
+export async function getNotificationPermissionState(): Promise<NotificationPermissionState> {
+  return invoke('get_notification_permission_state');
+}
+
+export async function requestNotificationPermission(): Promise<NotificationPermissionState> {
+  return invoke('request_notification_permission');
+}
+
 export async function getLocalInventorySnapshot(): Promise<LocalInventorySnapshot> {
   return invoke<LocalInventorySnapshot>('get_local_inventory_snapshot');
 }
@@ -385,9 +413,13 @@ export async function getPreferences(): Promise<AppPreferences> {
 }
 
 export async function setPreferences(
-  preferences: AppPreferences
+  preferences: AppPreferences,
+  expectedRevision: number
 ): Promise<AppPreferences> {
-  return invoke<AppPreferences>('set_preferences', { preferences });
+  return invoke<AppPreferences>('set_preferences', {
+    preferences,
+    expectedRevision,
+  });
 }
 
 export async function listLogRecords(
@@ -515,4 +547,191 @@ export async function importTagEditorRegistry(
   path: string
 ): Promise<TagEditorMergeResult> {
   return invoke<TagEditorMergeResult>('import_tag_editor_registry', { path });
+}
+
+/**
+ * 同步循环 / 随机播放的勾选态到系统菜单。
+ *
+ * 前端在 `playerController.repeatMode` 或 `playerController.shuffleEnabled`
+ * 变化时调用；后端负责在已挂载的菜单里调用对应 `CheckMenuItem::set_checked`。
+ * 菜单尚未构建（例如启动早期）时是成功的空操作；mutex poisoned 或
+ * `set_checked` 失败时 promise reject，调用方把它作为可忽略的软失败处理。
+ */
+export async function syncPlaybackMenuState(
+  repeatMode: RepeatMode,
+  shuffleEnabled: boolean
+): Promise<void> {
+  return invoke('sync_playback_menu_state', {
+    repeatMode,
+    shuffleEnabled,
+  });
+}
+
+/**
+ * 本地库存扫描的校验强度。
+ *
+ * 与后端 `harubble_core::local_inventory::VerificationMode` 保持一致；
+ * 前端调用方通常传 `undefined`，让后端沿用当前偏好中的默认值。
+ */
+export type LocalInventoryVerificationMode =
+  | 'none'
+  | 'whenAvailable'
+  | 'strict';
+
+/**
+ * 触发一次本地库存重扫。
+ *
+ * 命令是异步启动扫描，立即返回**当前**快照；真正的扫描结果通过
+ * `local-inventory-state-changed` 事件推送到前端订阅方。菜单入口通常
+ * 忽略返回值，仅利用副作用触发扫描。
+ */
+export async function rescanLocalInventory(
+  verificationMode?: LocalInventoryVerificationMode
+): Promise<LocalInventorySnapshot> {
+  return invoke<LocalInventorySnapshot>('rescan_local_inventory', {
+    verificationMode: verificationMode ?? null,
+  });
+}
+
+/**
+ * 导出当前偏好到指定文件路径。
+ *
+ * 调用方需先弹出保存对话框拿到路径；后端会以 TOML 写盘。
+ */
+export async function exportPreferences(
+  outputPath: string
+): Promise<AppPreferences> {
+  return invoke<AppPreferences>('export_preferences', { outputPath });
+}
+
+/**
+ * 从指定文件导入偏好。
+ *
+ * 后端校验文件后覆盖当前偏好并同步落盘；若下载目录变化会自动触发一次库存重扫。
+ */
+export async function importPreferences(
+  inputPath: string
+): Promise<AppPreferences> {
+  return invoke<AppPreferences>('import_preferences', { inputPath });
+}
+
+// ---------------------------------------------------------------------------
+// Theme package commands (v1)
+// ---------------------------------------------------------------------------
+
+/**
+ * 列出所有可用内置包与已安装用户包的摘要。
+ *
+ * 后端按 id 字典序返回；摘要包含 manifest 精简字段、状态、builtin、sha256
+ * 与 sanitizer warnings；无法加载或校验的用户包会被跳过。
+ * 完整 slots/variants 需通过 `inspectThemePackage(id)` 按需读取。
+ */
+export async function listThemePackages(): Promise<ThemePackageSummary[]> {
+  return invoke<ThemePackageSummary[]>('list_theme_packages');
+}
+
+/**
+ * 读取指定主题包的完整文档（含 slots/variants/warnings）。
+ *
+ * 返回 `null` 表示 id 既不对应已安装用户包，也不对应内置包。
+ */
+export async function inspectThemePackage(
+  id: string
+): Promise<ThemePackageDocument | null> {
+  return invoke<ThemePackageDocument | null>('inspect_theme_package', { id });
+}
+
+/**
+ * 从本地文件路径安装主题包。
+ *
+ * 入参 `path` 必须是绝对路径，指向可读的 `.json` 文件（≤ 512 KiB）。
+ * 后端会走 sanitize + hash 流程，并分别原子写入 JSON 与 sidecar。
+ * 若同 id 用户包已存在则覆盖；新的导入不能覆盖内置包。升级前已经存在并遮蔽
+ * 同 id 内置包的用户包仍可替换。返回值为新安装的摘要。
+ */
+export async function installThemePackageFromFile(
+  path: string
+): Promise<ThemePackageSummary> {
+  return invoke<ThemePackageSummary>('install_theme_package_from_file', {
+    path,
+  });
+}
+
+/**
+ * 从远程 https URL 下载并安装主题包。
+ *
+ * 后端做全套 SSRF 防护：仅接受 https（端口 443）、拒绝私有 / loopback / CGNAT / multicast /
+ * 保留段 IP、禁用重定向、总耗时 ≤ 15s、大小 ≤ 512 KiB、Content-Type 必须为 JSON。
+ * 下载成功后走与 `installThemePackageFromFile` 相同的 sanitize 流水线。
+ */
+export async function installThemePackageFromUrl(
+  url: string
+): Promise<ThemePackageSummary> {
+  return invoke<ThemePackageSummary>('install_theme_package_from_url', {
+    url,
+  });
+}
+
+/**
+ * 卸载指定用户包（JSON 原子搬到 pending-delete，sidecar 尽力删除）。
+ *
+ * 对不存在的 id 幂等成功；未被同 ID 用户包遮蔽的内置包不能卸载。
+ * 若被卸载的 id 恰好是当前 active_package_id，
+ * 后端会同步清空激活状态并广播 `preferences_snapshot` 事件。
+ */
+export async function uninstallThemePackage(id: string): Promise<void> {
+  return invoke<void>('uninstall_theme_package', { id });
+}
+
+/**
+ * 通过 CAS 激活指定主题包（或传 null 清空激活状态）。
+ *
+ * `expectedRevision` 为客户端上次读取到的 `theme.revision`，后端在写锁内比对：
+ * 匹配 → 更新 activePackageId 并 revision+1，返回新快照；
+ * 不匹配 → 抛出 `RevisionMismatch`，前端应重新 getPreferences 后再决定。
+ *
+ * 成功路径会通过 `preferences_snapshot` 事件广播到所有窗口（含 Mini Player）。
+ */
+export async function setActiveThemePackage(
+  id: string | null,
+  expectedRevision: number
+): Promise<AppPreferences> {
+  return invoke<AppPreferences>('set_active_theme_package', {
+    id,
+    expectedRevision,
+  });
+}
+
+/**
+ * 进入指定主题包的预览态（内存中，不持久化）。
+ *
+ * 返回主题包完整文档；前端应基于其派生 token 应用到 DOM，
+ * 但不写 preferences。调用 `dismissThemePreview` 恢复到 committed 态。
+ */
+export async function previewThemePackage(
+  id: string
+): Promise<ThemePackageDocument> {
+  return invoke<ThemePackageDocument>('preview_theme_package', { id });
+}
+
+/**
+ * 关闭主题包预览态，恢复到 committed / preferences 派生。
+ *
+ * 对未处于预览态的调用幂等成功。
+ */
+export async function dismissThemePreview(): Promise<void> {
+  return invoke<void>('dismiss_theme_preview');
+}
+
+/**
+ * 将指定主题包导出到本地路径。
+ *
+ * 内置包导出编译期源文件，用户包导出 committed 中经 sanitizer 规范化的 JSON。
+ * `outputPath` 必须为绝对路径；父目录必须存在。目标已存在时被覆盖。
+ */
+export async function exportThemePackage(
+  id: string,
+  outputPath: string
+): Promise<void> {
+  return invoke<void>('export_theme_package', { id, outputPath });
 }
