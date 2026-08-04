@@ -37,7 +37,13 @@ CI 会先用 `dorny/paths-filter` 判断本次 PR 是否命中 workflow 中配�
 - `bun run check:build`
 - `bun run check:cargo`（等价于 `cargo check --workspace`）
 
-`cargo test --workspace` 单独作为 `test` job 执行。
+`test` job 单独执行三组门禁：
+
+- `cargo test --workspace`
+- `bun run test`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+
+macOS / Windows 的 `build-check` 只运行 `cargo check --workspace`，用于验证跨平台编译兼容性，不打包或上传制品。实际安装包与便携程序只由发布矩阵构建。
 
 代码路径清单以 `.github/workflows/ci.yml` 为准；它不等同于“除 Markdown 外的所有文件”。调整目录结构或新增构建输入时，应同步更新过滤规则。
 
@@ -136,7 +142,7 @@ PR 阶段不会执行以下行为：
 
 - `macos_intel` 对应 Intel Mac
 - `macos_apple_silicon` 对应 Apple Silicon Mac
-- macOS 当前发布的是未签名、未公证的 DMG；workflow 会在 DMG 内加入 `README-macOS.txt` 和 Applications 快捷方式，但不会执行 codesign 或 notarization
+- macOS 当前发布的是未签名、未公证的 DMG；workflow 会加入双语 `README-macOS.txt`、双语背景和 Applications 快捷方式，并设置 Finder 图标布局，但不会执行 codesign 或 notarization
 - Windows 当前发布的是依赖系统 `WebView2` 运行时的精简便携 `.exe`，不是 NSIS 安装包
 - Linux 当前发布的是 AppImage 格式；构建环境为 Ubuntu 22.04，要求 glibc 2.35+，但发布包尚未经过完整测试，用户反馈应优先收敛到 Issues
 
@@ -149,8 +155,9 @@ Windows release 必须保持 GUI 子系统，避免启动应用时出现额外�
 ```
 
 - 该属性必须位于 `src-tauri/src/main.rs` 顶部；重命名入口或新增 GUI 二进制入口时同步设置。
-- `@tauri-apps/api` 与 Rust `tauri` crate 的 minor 版本必须一致；依赖升级后用 Windows `tauri build` 验证。
-- Windows 构建完成后直接启动 release 产物，确认不出现控制台窗口且关闭 GUI 后进程正常退出。
+- `@tauri-apps/api` 与 Rust `tauri` crate 的 minor 版本必须一致。
+- Windows 本地安装包验证使用 `bun run tauri:build`；平台配置会生成 NSIS。发布 workflow 通过 `tauri-apps/tauri-action` 向 `bun tauri` 传入 `--target x86_64-pc-windows-msvc --no-bundle`；本地等价复现命令为 `bun run tauri:build -- --target x86_64-pc-windows-msvc --no-bundle`。
+- 构建完成后直接启动对应产物；发布等价路径是 `target/x86_64-pc-windows-msvc/release/harubble.exe`。确认不出现控制台窗口，且关闭 GUI 后进程正常退出。
 
 ## 注意事项
 

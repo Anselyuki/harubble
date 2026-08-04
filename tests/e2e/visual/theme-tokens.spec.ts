@@ -1,11 +1,9 @@
 /**
  * 主题 Token → CSS 渲染的像素级视觉回归基线。
  *
- * Phase 0 Step 0.a 交付物：为 `deriveGlobalTokensFromSlots` 建立回滚锚点。
+ * 为静态主题 token 注入后的 DOM 渲染建立回滚锚点。
  *
- * 覆盖组合：
- *   - 3 个内置 preset（harubble-classic / clear-aqua / night-console） × 2 scheme（light / dark） = 6 张
- *   - 派生路径（feature flag ON） × 旧路径（feature flag OFF） = 2 组
+ * 当前覆盖：Harubble Classic 的 light / dark 两张 CSS token 渲染基线。
  *
  * 前置：
  *   - `bun run dev:web` 启动测试服务（端口 1421，webServer 配置自动拉起）

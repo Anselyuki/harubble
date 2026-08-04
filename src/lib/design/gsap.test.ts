@@ -148,7 +148,7 @@ describe('gsap · getMotionDuration + shouldSkipMotion', () => {
     );
   });
 
-  it('applyFontFamilyOverride 覆盖 --font-body/display/mono（Phase 4）', async () => {
+  it('applyFontFamilyOverride 覆盖 --font-body/display/mono（Phase 4 JSON 最小安全子集）', async () => {
     const { applyFontFamilyOverride } = await import('./gsap');
     applyFontFamilyOverride({
       body: 'HarmonyOS Sans SC',
@@ -170,7 +170,7 @@ describe('gsap · getMotionDuration + shouldSkipMotion', () => {
     );
   });
 
-  it('applyCssVariablesOverride 只写入 --theme-custom-* 前缀 key（Phase 4）', async () => {
+  it('applyCssVariablesOverride 只写入 --theme-custom-* 前缀 key（Phase 4 JSON 最小安全子集）', async () => {
     const { applyCssVariablesOverride } = await import('./gsap');
     applyCssVariablesOverride({
       '--theme-custom-brand': '#ff0000',
@@ -189,7 +189,7 @@ describe('gsap · getMotionDuration + shouldSkipMotion', () => {
     ).toBe('');
   });
 
-  it('applyCssVariablesOverride 切换主题包时清理前一次注入的 key（Phase 4）', async () => {
+  it('applyCssVariablesOverride 切换主题包时清理前一次注入的 key（Phase 4 JSON 最小安全子集）', async () => {
     const { applyCssVariablesOverride } = await import('./gsap');
     applyCssVariablesOverride({
       '--theme-custom-a': '#001',

@@ -251,11 +251,11 @@ export function applyBlurOverride(overrides: BlurOverride | null): void {
 }
 
 /**
- * 主题包字体族覆盖（Phase 4）。
+ * 主题包字体族覆盖（Phase 4 JSON 最小安全子集）。
  *
  * 覆盖 `--font-body` / `--font-display` / `--font-mono` CSS 变量。
- * 值应已经 sanitizer 过滤，此处不做二次校验；不需要 `@font-face`
- * 声明（依赖用户系统字体或已通过 Tauri asset 加载的字体）。
+ * 值应已经 sanitizer 过滤，此处不做二次校验；本入口不创建 `@font-face`
+ * 或加载资产，只依赖用户系统字体或应用样式已经加载的随包字体。
  */
 export type FontFamilyOverride = Partial<
   Record<'body' | 'display' | 'mono', string>
@@ -285,7 +285,7 @@ export function applyFontFamilyOverride(
 }
 
 /**
- * 主题包自定义 CSS 变量覆盖（Phase 4）。
+ * 主题包自定义 CSS 变量覆盖（Phase 4 JSON 最小安全子集）。
  *
  * 把主题包声明的 `--theme-custom-*` key-value 直接写入 `documentElement`。
  * key 已由 sanitizer 强制以 `--theme-custom-` 前缀开头（命名空间隔离）；

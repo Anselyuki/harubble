@@ -276,6 +276,13 @@ mod tests {
     use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
 
+    type TestServiceFixture = (
+        AlbumCatalogService,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Arc<StdMutex<Vec<AlbumCatalogRefreshedEvent>>>,
+    );
+
     fn album(cid: &str, name: &str) -> Album {
         Album {
             cid: cid.to_string(),
@@ -335,14 +342,7 @@ mod tests {
         assert!(event_json.get("album_count").is_none());
     }
 
-    fn test_service(
-        delay: Duration,
-    ) -> (
-        AlbumCatalogService,
-        Arc<AtomicUsize>,
-        Arc<AtomicUsize>,
-        Arc<StdMutex<Vec<AlbumCatalogRefreshedEvent>>>,
-    ) {
+    fn test_service(delay: Duration) -> TestServiceFixture {
         let fetch_count = Arc::new(AtomicUsize::new(0));
         let fetch_count_for_call = Arc::clone(&fetch_count);
         let fetcher: AlbumFetcher = Arc::new(move || {

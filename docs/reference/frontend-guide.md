@@ -149,8 +149,8 @@ shell runtime composition
 ### IPC 规则
 
 - **UI 展示组件禁止直接调用 `invoke` / `listen`**
-- Rust command 注册统一维护在 `src-tauri/src/command_registry.rs`；新增或删除 command 时只修改这份注册表
-- `src-tauri/src/command_scheduling.rs` 的 `COMMAND_SPECS` 是 command 调度元数据来源，必须与注册表保持覆盖一致
+- Rust Tauri command 的 handler、名称、domain、priority 与 cancel policy 统一维护在 `src-tauri/src/command_registry.rs` 的同一条目；`command_scheduling.rs` 的 `TAURI_COMMAND_SPECS` 由该宏自动生成
+- 非 Tauri 的后台入口才单独维护在 `command_scheduling.rs` 的 `INTERNAL_COMMAND_SPECS`；新增或删除 Tauri command 时仍须同步前端 bridge/type 与契约测试
 - 前端 command bridge 以 `lib/api.ts` 为主入口，设置与合集域分别由 `lib/settingsApi.ts`、`lib/collectionApi.ts` 收窄；新增 bridge 必须保持域边界，并纳入 IPC 契约测试
 - `lib/appEvents.ts` 的 `AppEventMap` 统一维护事件名与载荷类型
 - 事件订阅集中在 `appRuntime.svelte.ts` / `appRuntimeBootstrap.svelte.ts`；`features/player/miniPlayerBridge.ts` 是迷你播放器独立窗口的受控例外
@@ -182,18 +182,19 @@ bunx vitest run src/lib/features/contract/ipc-contract.test.ts
 
 Token 归属：
 
-| 类型            | 内容                                          | 维护入口                                          |
-| --------------- | --------------------------------------------- | ------------------------------------------------- |
-| App theme       | 背景、文字、边框、surface                     | `applyAppThemeTokenSet`                           |
-| Context theme   | accent、album accent、wave                    | `applyContextThemePalette`                        |
-| Component alias | `toolbar-*`、`stage-*`、`player-*` 等组件语义 | `app.css`，不由 JS 运行时直接写入                 |
-| 静态 token      | motion、easing、font                          | `app.css` / `design/gsap.ts` / `styles/fonts.css` |
+| 类型             | 内容                                                                              | 维护入口                                                  |
+| ---------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| App theme        | 背景、文字、边框、surface                                                         | `applyAppThemeTokenSet`                                   |
+| Context theme    | accent、album accent、wave                                                        | `applyContextThemePalette`                                |
+| Component alias  | `toolbar-*`、`stage-*`、`player-*` 等组件语义                                     | `app.css`，不由 JS 运行时直接写入                         |
+| 主题包运行时覆盖 | motion / shape / density / elevation / blur、语义字体栈与 `--theme-custom-*` 变体 | `themePackageManager` / `design/gsap.ts`                  |
+| 静态设计输入     | iOS easing、打包字体与 `brand` / `wide` 字体角色                                  | `app.css` / `design/gsap.ts` / `src/lib/styles/fonts.css` |
 
 `@theme inline` 只把 Tailwind token 映射到现有语义变量，不另建颜色来源。新增颜色时先确定所属层级，组件内不要复制主题值或直接写入根变量。
 
 ### 字体方案
 
-全局字体使用 HarmonyOS Sans SC（本地 `@font-face`，不依赖 CDN）。西文展示场景额外提供 Geometos（品牌标识）和 NovecentoSansWide（宽体标签）。
+全局字体使用 HarmonyOS Sans SC（本地 `@font-face`，不依赖 CDN）。西文展示场景额外提供 Geometos（品牌标识）和 NovecentoSansWide（宽体标签）。主题包的 `fontFamily` 只覆盖 `body / display / mono` 三个语义字体栈，依赖系统已有字体或应用已经打包并加载的字体；JSON 主题包不会下载远程字体，也不能携带字体资产。
 
 CSS 变量：
 
@@ -203,14 +204,14 @@ CSS 变量：
 | `--font-display` | 标题与展示文案           |
 | `--font-body`    | 正文与 UI 文案           |
 | `--font-mono`    | 等宽场景                 |
-| `--font-brand`   | 品牌标识、Logo、大号英文 |
-| `--font-wide`    | 英文分类标签、导航标题   |
+| `--font-brand`   | 品牌标识、Logo、数字读数 |
+| `--font-wide`    | 分类标签、导航标题       |
 
 规则：
 
 - 组件不直接硬编码 `font-family`，统一通过 CSS 变量引用
-- `--font-brand` / `--font-wide` 仅用于纯西文/数字内容
-- 字体文件随应用打包，不引入外部 CDN
+- `--font-brand` / `--font-wide` 用于品牌和宽体标签角色；内置西文字体不含中文时，缺失字形按字体栈回退到 `--font-sans`
+- 应用内置字体文件随应用打包，不引入外部 CDN；主题包声明字体名不等于加载字体文件
 
 ### Apple 化边界
 
@@ -331,9 +332,9 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 
 ## 6. 国际化（i18n）
 
-国际化的语言来源、前后端资源结构和文案规则统一见 [internationalization.md](./internationalization.md)。前端只镜像 `AppPreferences.locale`，不另行持久化语言。
+国际化的语言来源、前后端资源结构和文案规则统一见 [internationalization.md](./internationalization.md)。主窗口前端只镜像 `AppPreferences.locale`，不另行持久化语言。Windows Mini Player 当前只同步偏好中的主题字段，尚未把 `locale` 应用到它自己的 Paraglide runtime 与 `document.lang`，因此仍使用启动基线 `zh-CN`；这是实现缺口，不是新的语言来源。
 
-响应式更新：组件文案必须显式依赖 `localeState.current` 建立响应式依赖。高频组件使用聚合 `$derived.by()` 模式，低频面板可用 `{#key localeState.current}`。
+响应式更新：主窗口组件文案必须显式依赖 `localeState.current` 建立响应式依赖。高频组件使用聚合 `$derived.by()` 模式，低频面板可用 `{#key localeState.current}`。Windows Mini Player 目前不适用此契约；它的 locale hydration / 订阅仍待实现。
 
 格式化辅助：`src/lib/i18n/formatters.ts` 提供 `formatByteSize` / `formatSpeed` / `formatDuration`。
 
@@ -396,14 +397,14 @@ Tailwind v4 的 `theme / base / components / utilities` 四个 layer 中，`util
 
 ### 9.1 支持集与 fallback
 
-`SUPPORTED_THEME_FAMILIES` 当前包含 `glass / material / terminal / ark / endfield / exa / popucom / corporate`；`SUPPORTED_THEME_DEPTHS` 同时兼容 legacy 的 `flat / balanced / deep` 与 Ark UI 的 `minimal / moderate / complex / maximal`。主题包声明超出支持集的值 fallback 到 `glass` / `balanced` 并生成 warning；不 reject 保证前向兼容。
+`SUPPORTED_THEME_FAMILIES` 当前包含 `glass / material / terminal / ark / endfield / exa / popucom / corporate`；`SUPPORTED_THEME_DEPTHS` 同时兼容 legacy 的 `flat / balanced / deep` 与 Ark UI 的 `minimal / moderate / complex / maximal`。Rust sanitizer 只校验 visual contract 的长度与字符集，保留格式合法的未知值；前端 `resolveVisualContract` 再 fallback 到 `glass` / `balanced` 并返回 warning。当前 `themePackageManager` 只应用解析结果，不持久化或展示这组 resolver warning。
 
 - **glass**：iOS 液态玻璃（默认族，视觉零变化）
 - **material**：Material 3 elevation + emphasized easing
 - **terminal**：monochrome + 直角 + 无光晕，Router 复用 Material view，通过 `:root[data-theme-family='terminal']` CSS baseline 把 shape/elevation/blur token 全部归零实现风格切换
-- **ark / endfield / exa / popucom / corporate**：Harubble 内置的 Ark UI inspired 原创家族。包负责 tokens，`src/app.css` 负责 moderate 深度的壳层签名；不包含官方 logo、游戏素材或远程字体。
+- **ark / endfield / exa / popucom / corporate**：Harubble 内置的 Ark UI inspired 原创家族。包负责 tokens，`src/app.css` 按包声明的 depth 提供壳层签名；其中 ark / exa / popucom / corporate 为 `moderate`，Field Signal（`endfield`）为 `complex`。内置包不包含官方 logo、游戏素材或远程字体。
 
-内置包源码位于 `src/lib/theme-packages/builtins/`，由 Rust `builtin.rs` 在编译期嵌入。内置包可预览、激活和导出，但不能卸载或被同 ID 导入包覆盖。
+内置包源码位于 `src/lib/theme-packages/builtins/`，由 Rust `builtin.rs` 在编译期嵌入。内置包可预览、激活和导出，不能直接卸载或由新的同 ID 导入包覆盖。兼容例外是：若升级前已经存在同 ID 用户包，它会继续遮蔽新加入的内置包，并允许被同 ID 用户包替换；卸载该用户包后才重新露出内置包。
 
 主题包与昼夜模式是独立轴，运行时遵循以下所有权：
 
@@ -454,24 +455,22 @@ Phase 3.2→3.3 opt-in→opt-out 切换的 legacy 用户可能在关闭 UI 期�
 
 `localStorage.getItem('theme_packages_v1')` 返回 `null` 或 `'1'` 时详情默认展开，返回 `'0'` 时详情收起。无论该值为何，标题与展开/收起按钮都必须存在；主题包激活状态以 preferences v2 为准。
 
-### 9.5 Phase 4 · CSS 覆盖层（未启动 · 触发式）
+### 9.5 Phase 4 · JSON 最小安全子集与完整 CSS 边界
 
-主方案 Phase 4 引入用户自定义 CSS 覆盖层（`.hbtheme` 打包含 CSS + assets）。**当前未启动**，因为它是**触发式**而非里程碑式，需要以下条件同时满足才应开工：
+Phase 4 JSON 最小安全子集已经落地，仍使用单个 JSON 文档，不执行作者提供的 stylesheet：
 
-**触发条件**
+- `fontFamily.body / display / mono` 覆盖三个语义字体栈。sanitizer 限制单项长度、字符集和 CSS 黑名单；运行时只通过 `style.setProperty` 写入变量，不创建 `@font-face`，也不加载主题包资产。
+- `cssVariables` 只接受 `--theme-custom-*` 命名空间；每个 map 清洗后最多保留 64 项，并拒绝声明/块结构字符、HTML 逃逸字符、CSS 转义字符和黑名单关键字。值在原始 UTF-8 长度超过 256 字节时触发按字符截断；因为截断单位不是字节，当前实现不保证非 ASCII 结果仍小于等于 256 字节。
+- `cssVariableVariants.light / dark` 使用同一清洗规则。运行时先合并基础 map 与当前 effective scheme 的稀疏覆盖；切换 scheme 或主题包时先清理上一组 inline key，避免残留。
+- 五套内置主题包均使用字体栈与昼夜变量覆盖，相关字段已经纳入 Rust sanitizer、前端类型和契约测试。
 
-- 用户社区提出"完全改 layout / 换字体 / 加自定义装饰"的呼声 ≥ 5 个 GitHub issue 或社区讨论线索
-- Phase 3.3 灰度稳定至少 2 个 minor 版本
+完整的用户自定义 CSS 路线仍未启动：当前不支持 `.hbtheme` ZIP、任意 selector / stylesheet、布局覆写或包内字体与图片 assets。该路线继续采用触发式决策，至少需要社区对完整布局/装饰定制的明确需求，并先完成以下安全前置：
 
-**必需前置（在动工前完成）**
+- 完整 CSP 与隔离策略，阻断 `expression()`、`@import url()` 等执行或外联面
+- ZIP 威胁模型，包括 zipbomb、路径穿越、符号链接、文件数量上限与 magic bytes 校验
+- Assets 白名单，只允许经校验的字体和图片，禁止 JS / HTML / iframe
 
-- 完整 CSP 策略：`sandbox` iframe 隔离 CSS 执行环境 + 禁用 `unsafe-eval` 阻止 `expression()` / `@import url()` 攻击面
-- ZIP 威胁模型：zipbomb 大小限制、路径穿越（`..` / 符号链接）、文件数量上限、magic bytes 校验
-- Assets 白名单：仅允许字体（woff2 / ttf）与图片（png / webp / svg 需 sanitize），禁 JS / HTML / iframe
-
-**默认立场**：不主动实现。触发条件与前置项其中一项未达标，就"沿用可选定位"（迁移方案原文）。当前 Phase 0-3 的 6 slot + 5 组 token + family × depth 已覆盖 95% 场景，尚未收到社区呼声。
-
-**首次评估节点**：Phase 3.3 opt-out flag 稳定 3 个 minor 版本后。
+在需求阈值和安全前置未满足前，保持现有 JSON 最小安全子集，不扩展为任意 CSS 执行环境。
 
 ## 10. 相关文档
 

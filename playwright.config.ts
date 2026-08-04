@@ -5,7 +5,7 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * 两种测试目录：
  *   - `tests/e2e/smoke.test.ts`：使用 Tauri Web mock 的浏览器交互冒烟测试
- *   - `tests/e2e/visual/`：视觉回归测试（Phase 0 主题迁移基线保护）
+ *   - `tests/e2e/visual/`：主题 token、内置 family、设置页与播放器交互的视觉回归测试
  *
  * 视觉回归运行前提：
  *   1. 安装浏览器：bunx playwright install --with-deps chromium

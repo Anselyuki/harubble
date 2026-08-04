@@ -166,7 +166,7 @@ function toBlurOverride(
 }
 
 /**
- * 将主题包稀疏 fontFamily 转换为 gsap.ts 的 FontFamilyOverride（Phase 4）。
+ * 将主题包稀疏 fontFamily 转换为 gsap.ts 的 FontFamilyOverride（Phase 4 JSON 最小安全子集）。
  */
 function toFontFamilyOverride(
   ff: ThemePackageFontFamily | undefined
@@ -210,7 +210,7 @@ function currentDocumentScheme(): EffectiveThemeScheme {
  * 同步应用一个主题包的所有令牌覆盖到 GSAP 与 CSS 变量。
  *
  * 覆盖域：motion / shape / density / elevation / blur / visualContract /
- * fontFamily / cssVariables（Phase 4 追加）。
+ * fontFamily / cssVariables（Phase 4 JSON 最小安全子集）。
  * 传入 `null` 或缺失字段等价于卸载对应覆盖（恢复默认）。
  * setActive / preview / dismissPreview 通过它保持所有域的一致性，
  * 避免遗漏某个域导致视觉状态错乱。
@@ -227,7 +227,7 @@ export function applyThemePackageDocument(
   applyBlurOverride(toBlurOverride(doc?.blur));
   // Phase 3 Step 3.1：同步 visual contract（family + depth）到 $state 与 data-theme-* 属性
   applyVisualContract(doc?.visualContract);
-  // Phase 4：字体族 + 自定义 CSS 变量
+  // Phase 4 JSON 最小安全子集：字体族 + 自定义 CSS 变量
   applyFontFamilyOverride(toFontFamilyOverride(doc?.fontFamily));
   applyThemePackageCssVariables(doc, scheme);
   if (typeof document !== 'undefined') {
@@ -478,9 +478,9 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
     }
     hasSnapshot = true;
     renderSeq += 1;
-    // 若 activePackageId 变化（含启动首次赋值），异步同步 DOM 侧的 5 组 token +
-    // visualContract 到当前包。command 路径会在 backend preview cleanup 完成后
-    // 显式同步，避免同一次用户操作启动两段重叠动画。
+    // 若 activePackageId 变化（含启动首次赋值），异步同步 DOM 侧的 5 组 token、
+    // visualContract、fontFamily 与 scheme-aware 自定义变量。command 路径会在
+    // backend preview cleanup 完成后显式同步，避免同一次用户操作启动两段重叠动画。
     if (
       source !== 'command' &&
       prevActive !== activePackageId &&
@@ -495,7 +495,8 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
   }
 
   /**
-   * 根据 activePackageId 拉取文档并应用 5 组 token + visualContract。
+   * 根据 activePackageId 拉取文档并应用 5 组 token、visualContract、fontFamily
+   * 与 scheme-aware 自定义变量。
    *
    * - `id === null`：清空所有覆盖（恢复 app 默认）
    * - `id === some`：inspect 该包，失败或不存在则视为清空（避免应用陈旧文档）
@@ -771,8 +772,8 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
       return doc;
     }
     previewingId = id;
-    // 预览态同步全部 5 组 override（motion/shape/density/elevation/blur）+ visualContract，
-    // 让 GSAP + CSS + Router 立即反映主题包节奏与家族切换
+    // 预览态同步全部 5 组 override、visualContract、fontFamily 与 scheme-aware
+    // 自定义变量，让 GSAP + CSS + Router 立即反映主题包节奏与家族切换
     if (myRenderEpoch === renderEpoch) {
       await renderDocument(doc, { animate: true, reason: 'preview' });
     }
@@ -996,7 +997,8 @@ export function createThemePackageManager(deps: ThemePackageManagerDeps) {
   }
 
   /**
-   * 导出指定主题包原始 JSON 到本地路径。
+   * 导出指定主题包到本地路径。内置包导出编译期源文件，用户包导出后端
+   * committed 中经 sanitizer 规范化的 JSON。
    */
   async function exportPackage(id: string, outputPath: string): Promise<void> {
     const exportTheme = deps.exportPackage ?? exportThemePackage;

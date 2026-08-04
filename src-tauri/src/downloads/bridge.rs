@@ -39,10 +39,11 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 节流；状态切换与传输完成帧始终放行，保证阶段变化与最终进度能及时反映到前端。
 const DOWNLOAD_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(150);
 const PLAYBACK_LOADING_DOWNLOAD_YIELD_INTERVAL: Duration = Duration::from_millis(250);
-/// 下载执行循环等待播放启动窗口最长可以让出的时间上限。
+/// 下载执行循环对残留 `PlayerState.is_loading` 的总退让阈值。
 ///
-/// 该上限用于兜底：即便 `is_loading` 由于播放器状态卡死没能翻转回 false，也不会永远
-/// 阻塞下载执行队列。触顶后会记录 warn 日志并继续推进下载流水线。
+/// `PlaybackLoadGate` 本身仍会无超时等待 inactive；该阈值从 helper 进入时计时，
+/// 只在 gate 返回后检查。若此时 `is_loading` 仍未翻转且已触顶，会记录 warn 日志并
+/// 继续推进下载流水线。
 const PLAYBACK_LOADING_YIELD_MAX: Duration = Duration::from_secs(30);
 
 /// 包装下载进度回调，按 [`DOWNLOAD_PROGRESS_EMIT_INTERVAL`] 节流转发。

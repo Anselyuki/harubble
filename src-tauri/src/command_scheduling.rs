@@ -1,7 +1,9 @@
 //! Command 与后台入口调度域声明。
 //!
-//! 该模块把 Tauri command 和内部后台入口的作用域、优先级和取消策略显式化，避免播放相关入口在后续维护中
-//! 被误接到普通 runtime / API client，或让普通后台任务反向占用播放资源域。
+//! Tauri command 的作用域、优先级和取消策略由 [`crate::command_registry`] 的同一
+//! 条目生成；本模块只额外维护非 Tauri 的内部后台入口，并提供统一查询与架构守卫，
+//! 避免播放相关入口被误接到普通 runtime / API client，或让普通后台任务反向占用
+//! 播放资源域。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CommandDomain {
@@ -80,12 +82,6 @@ const TAURI_COMMAND_SPECS: &[CommandSpec] = crate::for_each_tauri_command!(colle
 
 const INTERNAL_COMMAND_SPECS: &[CommandSpec] = &[
     spec(
-        "record_listening_history",
-        CommandDomain::PlaybackSideEffect,
-        CommandPriority::CriticalSideEffect,
-        CancelPolicy::Cooperative,
-    ),
-    spec(
         "download_execution_loop",
         CommandDomain::BackgroundIo,
         CommandPriority::Background,
@@ -161,8 +157,15 @@ mod tests {
     }
     const ALL_TAURI_COMMAND_NAMES: &[&str] = crate::for_each_tauri_command!(extract_names);
 
+    macro_rules! extract_paths_and_names {
+        ( $( ($path:path, $name:literal, $domain:ident, $priority:ident, $cancel:ident) ),* $(,)? ) => {
+            &[ $((stringify!($path), $name)),* ]
+        }
+    }
+    const ALL_TAURI_COMMAND_PATHS_AND_NAMES: &[(&str, &str)] =
+        crate::for_each_tauri_command!(extract_paths_and_names);
+
     const INTERNAL_SCHEDULED_ENTRIES: &[&str] = &[
-        "record_listening_history",
         "download_execution_loop",
         "local_inventory_scan",
         "library_search_rebuild",
@@ -194,6 +197,17 @@ mod tests {
                     || INTERNAL_SCHEDULED_ENTRIES.contains(&spec.name),
                 "scheduling spec {} is neither registered with Tauri nor declared as an internal entry",
                 spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn command_registry_paths_match_declared_names() {
+        for (path, name) in ALL_TAURI_COMMAND_PATHS_AND_NAMES {
+            assert_eq!(
+                path.split_whitespace().last(),
+                Some(*name),
+                "command handler path `{path}` does not match declared name `{name}`"
             );
         }
     }
@@ -244,11 +258,13 @@ mod tests {
     }
 
     #[test]
-    fn playback_side_effect_entries_use_side_effect_domain() {
-        let spec = command_spec("record_listening_history").expect("spec");
-        assert_eq!(spec.domain, CommandDomain::PlaybackSideEffect);
-        assert_eq!(spec.priority, CommandPriority::CriticalSideEffect);
-        assert_eq!(spec.cancel_policy, CancelPolicy::Cooperative);
+    fn playback_side_effect_commands_use_side_effect_domain() {
+        for name in ["record_song_heat", "clear_listening_history"] {
+            let spec = command_spec(name).expect("spec");
+            assert_eq!(spec.domain, CommandDomain::PlaybackSideEffect);
+            assert_eq!(spec.priority, CommandPriority::CriticalSideEffect);
+            assert_eq!(spec.cancel_policy, CancelPolicy::Cooperative);
+        }
     }
 
     #[test]

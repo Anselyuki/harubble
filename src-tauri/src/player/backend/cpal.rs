@@ -359,8 +359,8 @@ impl PlaybackBackend for CpalBackend {
 
         stream.play().context("Failed to start output stream")?;
 
-        // 旧流已被会话 stop flag 切到 equilibrium。等新流真正运行后再释放旧流，避免
-        // USB 音频设备在歌曲加载期间失去稳定的静音时钟。
+        // macOS 上旧流已被会话 stop flag 切到 equilibrium，等新流真正运行后再释放，
+        // 避免 USB 音频设备在歌曲加载期间失去稳定的静音时钟。其他平台已在开流前 stop。
         let previous_stream = self.stream.replace(stream);
         let previous_samples = self.samples.replace(samples);
         if let Some(previous_samples) = previous_samples {

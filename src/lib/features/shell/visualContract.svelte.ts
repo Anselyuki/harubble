@@ -15,8 +15,8 @@
  * # 版本化支持集
  *
  * `SUPPORTED_THEME_FAMILIES` / `SUPPORTED_THEME_DEPTHS` 声明当前 app 版本
- * 已实现的 family / depth 值。主题包声明超出支持集的 family 会 fallback 到
- * `glass` / `balanced`，同时通过 sanitize warnings 累积告警。
+ * 已实现的 family / depth 值。Rust sanitizer 会保留格式合法的未知值；本模块再
+ * fallback 到 `glass` / `balanced`，并把 resolver warnings 返回给调用方。
  */
 
 /**
@@ -184,7 +184,8 @@ export function getVisualContract(): {
  * 该函数是主题包激活 / 预览 / 卸载三处的唯一入口，保证 JS 侧 $state
  * 与 CSS 侧 `data-theme-family` 属性同步更新。
  *
- * 返回 resolve 时产生的 warnings（fallback 事件），供 UI 层展示给用户。
+ * 返回 resolve 时产生的 warnings（fallback 事件），供调用方按需处理。当前
+ * `themePackageManager` 只应用解析结果，不展示这组 warnings。
  */
 export function applyVisualContract(
   raw: { family?: string; depth?: string } | null | undefined

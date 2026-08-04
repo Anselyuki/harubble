@@ -24,18 +24,21 @@
 
 ```text
 后端偏好文件 / 默认值
-  → get_preferences / set_preferences
+  → preferences_snapshot 订阅 + get_preferences / set_preferences
   → AppPreferences.locale
-  → 前端 Svelte locale mirror
-  → Paraglide runtime + document.documentElement.lang
+  → 主窗口 Svelte locale mirror
+  → 主窗口 Paraglide runtime + document.documentElement.lang
 ```
 
 约束：
 
 1. `AppPreferences.locale` 是唯一语言来源。
 2. 前端不读取 `navigator.language`、不使用 localStorage/IndexedDB 保存语言。
-3. 语言切换通过 `set_preferences` 提交，以后端返回的 `AppPreferences.locale` 为准。
-4. 保存失败时保持当前语言不变，不回退到浏览器系统语言。
+3. 主窗口在 hydration 前先订阅 `preferences_snapshot`；偏好快照按 `theme.revision` 单调合并，旧 hydration 或乱序事件不能回滚更新的语言。
+4. 设置控制器保留本地 dirty 字段。新快照只覆盖未编辑字段；`revisionMismatch` 时先读取权威快照、合并本地意图，再按新 revision 有界重试一次。
+5. 语言切换通过 `set_preferences` 提交，只在后端确认的响应或权威快照被接受后，把 `AppPreferences.locale` 应用到主窗口的 Paraglide runtime 与 `document.lang`。
+6. 保存失败时保持当前已生效语言不变；未确认的本地选择不会提前改变应用语言，也不会回退到浏览器系统语言。
+7. Windows Mini Player 是当前例外：独立 WebView 会订阅同一偏好快照来同步主题，但尚未调用 `localeState.applyBackendLocale` / Paraglide `setLocale`，因此仍使用启动基线 `zh-CN`。在补齐该链路前，不能把主题快照的多窗口收敛等同于语言同步。
 
 ## 目录结构
 
@@ -102,8 +105,8 @@ Fluent 约定：
 ## 验证
 
 ```bash
-bun run check        # Paraglide 生成 + 类型检查 + 前端构建
+bun run check        # Paraglide 生成、格式/ESLint/rustfmt、TS/Svelte、Vite 构建与 Cargo check
 cargo test --workspace
 ```
 
-手动验收：切换语言后 UI 即时更新，重启后保持选择，保存失败不丢失当前语言。
+手动验收：主窗口切换语言并保存成功后 UI 更新，重启后保持选择；保存失败不改变当前已生效语言；乱序快照不覆盖本地编辑或更新 revision。Windows Mini Player 的语言同步仍是已知缺口，需要单独补实现和回归。

@@ -2,17 +2,18 @@
 //!
 //! # 模块职责
 //!
-//! 该模块承载主题包系统的核心后端能力：主题包文档模型、磁盘状态机存储、schema 校验、
-//! CAS 版本比对与内容检查器（Inspector）的 LRU 缓存。前端通过 Tauri command 层
-//! 访问这些能力，具体 command 定义在 [`crate::commands`] 与
-//! [`crate::command_registry`] 中。
+//! 该模块承载主题包系统的核心后端能力：编译期内置包注册、主题包文档模型、磁盘状态机、
+//! 字段级校验与清洗、受限 URL 下载，以及组合这些能力的服务入口。激活主题包时的
+//! preferences CAS 与跨窗口事件广播由 Tauri command 层协调；具体 command 定义在
+//! [`crate::commands`] 与 [`crate::command_registry`] 中。
 //!
 //! # 子模块导航
 //!
 //! - [`builtin`]：编译期内置主题包注册表。
 //! - [`types`]：主题包核心数据结构（`ThemePackageDocument` / `ThemePackageManifest` / `ThemePackageStatus`）。
-//! - [`store`]：`PackageStore` 磁盘状态机（staging/committed/pending-delete + `.sha256.sidecar`）。
-//! - [`sanitizer`]：`PackageSanitizer` schema 校验、字段级 clamp、CSS 值 sanitize。
+//! - [`store`]：`PackageStore` 磁盘状态机（staging/committed/pending-delete + `<id>.sha256` sidecar）。
+//! - [`sanitizer`]：导入与存量文档的 schema 校验、字段级 clamp、CSS 值 sanitize。
+//! - [`downloader`]：HTTPS 下载、SSRF 防护、响应类型与大小限制。
 //! - [`service`]：`ThemePackageService` 组合根，注入 `AppState`。
 //!
 //! # 稳定性

@@ -11,11 +11,12 @@ Harubble 是面向 [塞壬唱片](https://monster-siren.hypergryph.com/) 的桌�
 ## 特性
 
 - **专辑目录 · 全库检索 · 桌面播放**：完整的塞壬唱片曲库浏览、下载与本地库管理。
-- **Mini Player**：独立小窗口跨屏播放，快捷键控制，主主题实时同步。
+- **Windows Mini Player**：Windows 上提供独立置顶小窗口，支持快捷控制并实时同步主窗口主题。
 - **主题包系统**：内置五套 Ark UI inspired 原创主题包（Industrial Cyan / Field
   Signal / Astral Archive / Co-op Pop / Studio Lime），也可导入 `.json` 覆盖配色 /
-  动效 / 圆角 / 密度 / 阴影 / 模糊 / 视觉族。设置页 → 主题包库支持本地文件或 URL
-  安装（自动做 SSRF 校验与 CSS sanitize）。
+  动效 / 圆角 / 密度 / 阴影 / 模糊 / 视觉族 / 字体栈，以及命名空间隔离的自定义 CSS
+  变量（含明暗变体）。设置页 → 主题包库支持本地文件或 URL 安装（自动做 SSRF 校验与
+  CSS sanitize）；任意 CSS stylesheet、ZIP 和包内 assets 暂不支持。
 - **国际化**：内建简中 / 英文 UI 语言切换。
 
 > 名字来自《明日方舟》角色 **遥**（Haruka）和她漂浮在空中的透明泡泡（Bubble）。Haru 是 Haruka 的简写。
@@ -26,13 +27,13 @@ Harubble 是面向 [塞壬唱片](https://monster-siren.hypergryph.com/) 的桌�
 
 ## 下载与安装
 
-从 [GitHub Releases](https://github.com/Anselyuki/harubble/releases) 下载对应平台的发布文件。首次启动时，应用需要联网拉取专辑、歌词和音频资源。
+从 [GitHub Releases](https://github.com/Anselyuki/harubble/releases) 下载对应平台的发布文件。应用启动时会联网获取专辑目录；封面、歌词和音频在浏览或播放时按需获取。
 
 ### macOS
 
 1. 根据设备芯片下载 `harubble_<version>_macos_intel.dmg` 或 `harubble_<version>_macos_apple_silicon.dmg`。
-2. 打开 DMG，把 `Harubble.app` 拖到 `Applications` 文件夹。
-3. 执行一次：
+2. 打开 DMG，先阅读其中的双语 `README-macOS.txt`，再把 `Harubble.app` 拖到 `Applications` 文件夹。
+3. 按说明执行一次：
 
    ```bash
    xattr -dr com.apple.quarantine /Applications/Harubble.app

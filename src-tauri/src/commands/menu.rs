@@ -10,8 +10,8 @@
 /// - `repeat_mode`：形如 `"off"` / `"all"` / `"one"` 的字符串（前端 `RepeatMode` union）。
 /// - `shuffle_enabled`：随机播放是否启用。
 ///
-/// 该命令**不返回业务错误**：菜单同步失败会向调用方返回一个说明字符串，
-/// 但前端 UI 侧应把它视作可忽略的软失败（例如启动初期菜单尚未构建）。
+/// 菜单尚未挂载时返回 `Ok(())`；mutex poisoned 或 `set_checked` 失败时返回说明
+/// 字符串。前端 UI 侧把后者视作可忽略的软失败。
 #[tauri::command]
 pub async fn sync_playback_menu_state(
     repeat_mode: String,

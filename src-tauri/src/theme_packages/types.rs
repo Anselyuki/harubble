@@ -28,6 +28,12 @@ use std::collections::BTreeMap;
 /// - `variants`：可选的 scheme 变体（light/dark 独立 slot），缺失时走全局派生
 /// - `motion`：可选的 motion 档位覆盖（Phase 2 Step 2.c），主题包激活时前端应用到
 ///   GSAP `MOTION` 与 CSS `--motion-*` 变量；缺失时走内置默认档位
+/// - `shape / density / elevation / blur`：可选的四组视觉 token 稀疏覆盖
+/// - `visual_contract`：可选的 family × depth 视觉契约；Rust 保留格式合法的未知值，
+///   前端 resolver 再按当前支持集 fallback
+/// - `font_family`：Phase 4 JSON 最小安全子集中的语义字体栈声明；只引用系统或应用已加载字体
+/// - `css_variables`：命名空间隔离的 `--theme-custom-*` 基础变量
+/// - `css_variable_variants`：可选的 light/dark 自定义变量稀疏覆盖
 /// - `warnings`：sanitize 阶段收集的字段级降级说明；导入 UI 会展示给用户
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -50,16 +56,18 @@ pub struct ThemePackageDocument {
     pub blur: Option<ThemePackageBlur>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visual_contract: Option<ThemePackageVisualContract>,
-    /// Phase 4：字体族声明（可选）。
+    /// Phase 4 JSON 最小安全子集：字体族声明（可选）。
     ///
-    /// 允许主题包声明要使用的字体名，前端通过 `@font-face` + Tauri asset 协议加载。
-    /// sanitizer 只校验字符串长度与允许字符集，不验证字体文件是否存在（运行时降级）。
+    /// 允许主题包声明要使用的字体栈，前端只覆写语义 CSS 变量，不创建 `@font-face`
+    /// 或加载主题包资产。sanitizer 校验字符串长度与允许字符集，但不验证字体是否已由
+    /// 系统或应用提供；不存在时由浏览器按字体栈自然降级。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_family: Option<ThemePackageFontFamily>,
-    /// Phase 4：自定义 CSS 变量声明（可选）。
+    /// Phase 4 JSON 最小安全子集：自定义 CSS 变量声明（可选）。
     ///
     /// 允许主题包声明超出预定义 5 组 token 的 CSS 变量。key 必须以 `--theme-custom-`
-    /// 开头（命名空间隔离，防止覆盖 app 内部变量），value 经过白名单 sanitize。
+    /// 开头（命名空间隔离，防止覆盖 app 内部变量）；value 会经过长度处理、结构字符
+    /// 拦截和 CSS 关键字黑名单过滤。
     /// 前端注入到 `:root` 下，所有组件均可通过 `var(--theme-custom-xxx)` 消费。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub css_variables: BTreeMap<String, String>,
@@ -83,17 +91,17 @@ pub struct ThemePackageCssVariableVariants {
     pub dark: Option<BTreeMap<String, String>>,
 }
 
-/// 主题包字体族声明（Phase 4）。
+/// 主题包字体族声明（Phase 4 JSON 最小安全子集）。
 ///
 /// 通过声明 `body` / `display` / `mono` 三个语义角色的字体名，前端覆盖
 /// `--font-body` / `--font-display` / `--font-mono` CSS 变量。
 ///
 /// # 安全约束
 ///
-/// - 字体名只允许 `[a-zA-Z0-9 \-_,]` 字符集（32-127 ASCII 可打印，排除引号与括号）
+/// - 当前 sanitizer 只接受 ASCII 字母数字、空格、逗号、反斜杠、连字符、下划线和点
 /// - 最长 256 字节
 /// - 不包含 `url()` / `@import` / `expression()` 等危险关键字
-/// - 应用于 CSS 时值会被单引号包裹，防止 CSS 注入
+/// - 前端通过 `style.setProperty` 写入完整字体栈，不额外添加引号；需要引号的字体名不在当前支持字符集中
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemePackageFontFamily {
@@ -112,14 +120,14 @@ pub struct ThemePackageFontFamily {
 ///
 /// 用于选择整体视觉族与深度层级：
 ///
-/// - `family`：视觉语言族。schema 层只要求是字符串，运行时通过
-///   `resolve_visual_contract` 校验是否在当前 app 版本的支持集内；不在则
-///   fallback 到 `glass` 并累积 warning。
-/// - `depth`：视觉深度。同上，fallback 到 `balanced`。
+/// - `family`：视觉语言族。Rust sanitizer 只校验长度与字符集，并保留格式合法的
+///   未知值；前端 `resolveVisualContract` 再按当前支持集 fallback 到 `glass`。
+/// - `depth`：视觉深度。同上，由前端 resolver fallback 到 `balanced`。
 ///
 /// **注意**：schema 校验和"当前 app 版本已实现的支持集"是两回事。
 /// 当前前端支持 legacy family 以及 Ark UI inspired 的五个内置 family；未知值会
-/// fallback 并 warn，而不是拒绝安装（保持前向兼容）。
+/// fallback 而不是拒绝安装（保持前向兼容）。resolver 会返回 warning，但当前
+/// `themePackageManager` 只应用解析结果，不持久化或展示这组 warning。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemePackageVisualContract {
@@ -245,8 +253,9 @@ pub struct ThemePackageMotion {
 
 /// 主题包清单元数据。
 ///
-/// 承载主题包身份识别与展示所需的最小字段集。`id` 是 committed 目录中的文件名主体，
-/// 亦是 `ThemePreferences.active_package_id` 的引用值。
+/// 承载主题包身份识别与展示所需的最小字段集。`id` 是稳定包标识，也是
+/// `ThemePreferences.active_package_id` 的引用值；用户安装包以它作为 committed
+/// 文件名主体，编译期内置包没有对应 committed 文件。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemePackageManifest {
@@ -279,7 +288,8 @@ pub struct ThemePackageVariants {
 
 /// 主题包磁盘状态。
 ///
-/// 反映 `PackageStore` 三态状态机中某个具体主题包所处的目录：
+/// 用户安装包使用它反映 `PackageStore` 三态状态机中的目录；编译期内置包没有磁盘
+/// 三态，列表摘要以虚拟 `Committed` 表示其当前可激活：
 /// - `Staging`：临时目录，正在写入或校验中
 /// - `Committed`：稳定的、可被激活的主题包
 /// - `PendingDelete`：已卸载，等待启动扫描时清理

@@ -140,7 +140,8 @@ pub fn install(app: &AppHandle<Wry>, locale: Locale) -> tauri::Result<()> {
 /// 按当前播放器状态刷新循环 / 随机的勾选态。
 ///
 /// 前端在 `player.repeatMode` / `player.shuffleEnabled` 变化时调用；
-/// 若菜单尚未安装或 UI 线程调用 `set_checked` 失败，仅返回 `Ok(())`，不阻断上层。
+/// 菜单尚未安装时是成功的空操作；mutex poisoned 或任一 `set_checked` 失败时
+/// 返回错误，由 command 层转成字符串交给前端按软失败处理。
 pub fn sync_playback_state(repeat_mode: &str, shuffle_enabled: bool) -> tauri::Result<()> {
     let slot = PLAYBACK_HANDLES.lock().map_err(|e| {
         tauri::Error::Anyhow(anyhow::anyhow!("menu playback handles mutex poisoned: {e}"))

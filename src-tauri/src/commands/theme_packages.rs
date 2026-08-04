@@ -6,7 +6,7 @@
 //!
 //! # 命令清单
 //!
-//! - [`list_theme_packages`]：列出所有已安装主题包摘要
+//! - [`list_theme_packages`]：列出所有可用内置包与已安装用户包摘要
 //! - [`inspect_theme_package`]：读取指定主题包完整文档
 //! - [`install_theme_package_from_file`]：从本地文件路径安装主题包
 //! - [`install_theme_package_from_url`]：从经过 SSRF 校验的 URL 安装主题包
@@ -14,7 +14,7 @@
 //! - [`set_active_theme_package`]：使用 preferences revision 执行 CAS 激活
 //! - [`preview_theme_package`]：预览主题包但不持久化激活状态
 //! - [`dismiss_theme_preview`]：结束预览并恢复已持久化主题
-//! - [`export_theme_package`]：导出已安装主题包
+//! - [`export_theme_package`]：导出可用主题包
 
 use crate::app_state::AppState;
 use crate::preferences::AppPreferences;
@@ -36,7 +36,7 @@ pub enum ThemePackageError {
     InvalidPackage(String),
     /// 文件系统或 IO 错误（读取失败、写入失败等）。
     Io(String),
-    /// 主题包未找到（id 不存在于 committed 目录）。
+    /// 主题包未找到（id 既不对应已安装用户包，也不对应内置包）。
     NotFound(String),
     /// CAS 冲突：客户端携带的 expected_revision 与后端当前不一致；
     /// `detail` 附带最新的 revision 供前端 rebase 后重试。
@@ -71,10 +71,12 @@ impl std::fmt::Display for ThemePackageError {
 
 impl std::error::Error for ThemePackageError {}
 
-/// 列出所有已安装（committed 状态）的主题包摘要。
+/// 列出所有可用内置包与已安装用户包的摘要。
 ///
-/// 返回值按 id 字典序，仅包含 manifest 精简字段（id/name/version/sha256）。
-/// slots 与 variants 需通过 [`inspect_theme_package`] 按需读取。
+/// 返回值按 id 字典序，包含 id/name/version、虚拟或磁盘状态、builtin 标记、
+/// sha256 与 sanitizer warnings；slots 与 variants 需通过
+/// [`inspect_theme_package`] 按需读取。内置包没有 committed 文件，但摘要中以
+/// `Committed` 表示当前可激活状态。无法加载或校验的用户包会被跳过。
 ///
 /// # 稳定性
 ///
@@ -112,12 +114,13 @@ pub fn inspect_theme_package(
 /// 2. 读取文件字节
 /// 3. 通过 `ThemePackageService::install_from_bytes` 走 sanitize + hash + commit
 ///
-/// 返回值：安装后的主题包摘要（含 sha256）。若 id 冲突则覆盖已有版本。
+/// 返回值：安装后的主题包摘要（含 sha256）。若同 id 用户包已存在则覆盖；新的导入
+/// 不能覆盖内置包。升级前已经存在并遮蔽同 id 内置包的用户包仍可替换。
 ///
 /// # 安全
 ///
-/// 只读取本地文件系统，不发起网络请求；URL 场景由未来的
-/// `install_theme_package_from_url` 单独承担并做 SSRF 白名单。
+/// 只读取本地文件系统，不发起网络请求；URL 场景由
+/// `install_theme_package_from_url` 单独承担并执行 SSRF 白名单校验。
 #[tauri::command]
 pub fn install_theme_package_from_file(
     state: State<'_, AppState>,
@@ -175,7 +178,7 @@ pub fn install_theme_package_from_file(
         .map_err(ThemePackageError::InvalidPackage)
 }
 
-/// 从远程 https URL 安装主题包（SSRF 防护 + sanitize + 原子提交）。
+/// 从远程 https URL 安装主题包（SSRF 防护 + sanitize + 分文件原子落盘）。
 ///
 /// # 安全边界
 ///
@@ -209,10 +212,12 @@ pub async fn install_theme_package_from_url(
         })
 }
 
-/// 卸载主题包（原子搬到 pending-delete，启动扫描时清理）。
+/// 卸载主题包（JSON 原子搬到 pending-delete，sidecar 尽力删除）。
 ///
-/// 对不存在的 id 幂等成功。若被卸载的 id 是当前 active_package_id，会同步清空
-/// 偏好中的激活状态（回退到 preset + customColors 路径），避免遗留悬挂引用。
+/// 对不存在的 id 幂等成功；没有同 id 用户包时，内置包拒绝卸载。历史用户包正在
+/// 遮蔽同 id 内置包时，卸载会移除用户包并露出内置包。若该 id 是当前
+/// active_package_id，会同步清空偏好中的激活状态（回退到 preset + customColors
+/// 路径），避免遗留悬挂引用。
 #[tauri::command]
 pub async fn uninstall_theme_package(
     app: tauri::AppHandle,
@@ -339,8 +344,9 @@ pub fn dismiss_theme_preview(state: State<'_, AppState>) -> Result<(), ThemePack
         .map_err(ThemePackageError::Internal)
 }
 
-/// 将指定主题包的原始 JSON 导出到本地路径。
+/// 将指定主题包导出到本地路径。
 ///
+/// 内置包导出编译期源文件，用户包导出 committed 中经 sanitizer 规范化的 JSON。
 /// 入参 `output_path` 必须为绝对路径；父目录必须存在。目标已存在时被覆盖。
 #[tauri::command]
 pub fn export_theme_package(

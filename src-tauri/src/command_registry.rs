@@ -1,6 +1,6 @@
 //! # 命令注册表（Command Registry）
 //!
-//! 本模块是所有 Tauri command 注册的**唯一真相来源**。
+//! 本模块是所有 Tauri command handler 注册与调度元数据的**唯一真相来源**。
 //!
 //! ## 设计目标
 //!
@@ -36,15 +36,17 @@
 //! ```
 //!
 //! - `handler_path`：Rust 函数路径，用于 `generate_handler!`
-//! - `"name"`：Tauri command 名称字符串（与前端 `invoke` 调用保持一致）
+//! - `"name"`：调度查询与指标使用的名称，必须与 handler path 的末段函数名以及前端
+//!   `invoke` 名称保持一致；覆盖测试会检查 path/name 对应关系
 //! - `Domain`：命令所属调度域（见 `command_scheduling` 模块）
 //! - `Priority`：调度优先级
 //! - `CancelPolicy`：取消策略
 //!
 //! ## 注意事项
 //!
-//! - 新增或删除 command 时，**只需修改本文件**，`main.rs` 与测试侧均会自动同步。
-//! - `record_song_heat` 此前曾在 `COMMAND_SPECS` 中遗漏，已在此处补全。
+//! - 新增或删除 command 时，Rust 侧只需修改本文件，`main.rs` handler 与
+//!   `command_scheduling.rs` 的 `TAURI_COMMAND_SPECS` 会自动同步。
+//! - 前端 bridge/type 与 IPC 契约测试仍属于跨语言契约，必须随 command 变更同步维护。
 
 /// 回调宏：将完整的 Tauri command 列表传递给调用方宏 `$mac`。
 ///
@@ -136,7 +138,6 @@ macro_rules! for_each_tauri_command {
             (commands::downloads::clear_download_history, "clear_download_history", BackgroundIo, Background, Cooperative),
 
             // ── Homepage (6) ─────────────────────────────────────────────────
-            // 注意：record_song_heat 此前在 COMMAND_SPECS 中遗漏，此处已补全。
             (commands::homepage::get_latest_albums, "get_latest_albums", InteractiveUi, Interactive, Cooperative),
             (commands::homepage::get_albums_by_series, "get_albums_by_series", InteractiveUi, Interactive, Cooperative),
             (commands::homepage::get_recent_history, "get_recent_history", InteractiveUi, Interactive, Cooperative),

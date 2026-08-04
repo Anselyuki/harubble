@@ -117,7 +117,8 @@ impl ThemePackageService {
 
     /// 将主题包 JSON 导出到指定路径。
     ///
-    /// 内置包导出编译期嵌入的规范源文件，用户包导出 committed 目录中的原始 JSON。
+    /// 内置包导出编译期嵌入的规范源文件，用户包导出 committed 目录中经 sanitizer
+    /// 规范化后的 JSON。
     /// 该操作不改变主题包状态。目标路径需要是绝对路径；上层命令层负责路径校验。
     pub(crate) fn export_to(&self, id: &str, dst: &std::path::Path) -> Result<(), String> {
         validate_stored_package_id(id)?;
@@ -138,8 +139,9 @@ impl ThemePackageService {
 
     /// 列出所有可用的内置包与已安装包摘要。
     ///
-    /// 顺序按 id 字典序；返回值仅包含 manifest 精简字段，slots 需通过
-    /// `inspect` 按需读取。sidecar 读取失败时对应条目的 sha256 字段返回 None。
+    /// 顺序按 id 字典序；返回值包含 manifest 精简字段、status、builtin、sha256
+    /// 与 warnings，slots 仍需通过 `inspect` 按需读取。无法加载或校验的用户包会被
+    /// 跳过；完整文档加载成功后，摘要阶段再次读取 sidecar 失败时 sha256 返回 None。
     pub(crate) fn list(&self) -> Result<Vec<ThemePackageSummary>, String> {
         let ids = self.store.list_committed_ids()?;
         let mut summaries = Vec::with_capacity(self.builtins.len() + ids.len());
@@ -218,13 +220,15 @@ impl ThemePackageService {
     ///
     /// 步骤：
     /// 1. 读取原始字节，校验大小 <= `MAX_PACKAGE_JSON_BYTES`
-    /// 2. serde 反序列化，丢弃外部自带 warnings，再由 `sanitize_document`
+    /// 2. serde 反序列化，丢弃外部自带 warnings，再由 `sanitize_import_document`
     ///    做字段级清洗（warn-而非-reject）
     /// 3. 将清洗后的文档重新序列化为规范 JSON（去除未知字段 + 补齐 warnings）
     /// 4. 计算真实 SHA-256（用于 sidecar 完整性校验）
-    /// 5. 通过 `PackageStore::commit` 原子写入 committed + sidecar
+    /// 5. 通过 `PackageStore::commit` 分别以 tempfile + atomic rename 写入 committed
+    ///    JSON 与 sidecar；两次落盘不是一笔跨文件原子事务
     ///
-    /// 返回值：安装后的主题包摘要。若同 id 已存在则覆盖；内置 id 始终保留并拒绝覆盖。
+    /// 返回值：安装后的主题包摘要。若同 id 用户包已存在则覆盖。内置 id 通常拒绝覆盖；
+    /// 但升级前已存在并正在遮蔽同 id 内置包的用户包仍可替换，卸载后才恢复内置包。
     /// **落盘的是清洗后的字节**（含 warnings），而不是用户提供的原始 raw；
     /// 因此下次 inspect 读到的哈希是清洗后 JSON 的哈希，与 sidecar 一致。
     pub(crate) fn install_from_bytes(&self, raw: Vec<u8>) -> Result<ThemePackageSummary, String> {
@@ -269,10 +273,12 @@ impl ThemePackageService {
         })
     }
 
-    /// 卸载指定主题包（原子搬到 pending-delete）。
+    /// 卸载指定主题包（JSON 原子搬到 pending-delete，sidecar 尽力删除）。
     ///
-    /// 对不存在的用户包 id 幂等成功，内置包 id 拒绝卸载。调用方需在卸载前确认
-    /// 用户包不是当前 active_package_id，或已在 preferences 层完成 rollback。
+    /// 对不存在的用户包 id 幂等成功；没有同 id committed 用户包时，内置包拒绝
+    /// 卸载。若历史用户包正在遮蔽同 id 内置包，则允许卸载该用户包并露出内置包。
+    /// 调用方需在卸载前确认用户包不是当前 active_package_id，或已在 preferences
+    /// 层完成 rollback。
     pub(crate) fn validate_uninstall_target(&self, id: &str) -> Result<(), String> {
         validate_stored_package_id(id)?;
         if self.builtins.contains_key(id) && self.store.read_committed_raw(id)?.is_none() {
@@ -756,14 +762,13 @@ mod tests {
     }
 
     #[test]
-    fn export_to_writes_committed_raw_bytes() {
+    fn export_to_writes_committed_normalized_bytes() {
         let (dir, svc) = tempservice();
         svc.install_from_bytes(sample_package_json()).unwrap();
         let dst = dir.path().join("exported.json");
         svc.export_to("acme-glass", &dst).unwrap();
         let content = std::fs::read(&dst).unwrap();
-        // 导出内容与原始安装字节一致（除格式化外可能有差异，
-        // 但由于我们保存原始 raw，导出后应完全相同）
+        // 用户包导出 committed 中经过 sanitizer 规范化的字节。
         assert!(!content.is_empty());
         let doc: ThemePackageDocument = serde_json::from_slice(&content).unwrap();
         assert_eq!(doc.manifest.id, "acme-glass");

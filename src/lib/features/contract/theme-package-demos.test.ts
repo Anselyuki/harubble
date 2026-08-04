@@ -190,7 +190,7 @@ describe('主题包 demo · 契约测试', () => {
     // Phase 3.3 起 SUPPORTED_THEME_FAMILIES 已包含 terminal，运行时直通不 fallback
   });
 
-  it('midnight-glass 声明 Phase 4 fontFamily + cssVariables', () => {
+  it('midnight-glass 声明 Phase 4 JSON 最小安全子集的 fontFamily + cssVariables', () => {
     const pkg = midnightGlassPkg as unknown as ThemePackageDocument;
     expect(pkg.fontFamily?.display).toBe('Geometos, Inter, sans-serif');
     expect(pkg.fontFamily?.body).toBe('Inter, HarmonyOS Sans SC, sans-serif');

@@ -7,7 +7,9 @@
 //! # 主要能力
 //!
 //! - 启动时从本地缓存文件加载注册表；缓存缺失或 schema 不兼容时降级为空注册表。
-//! - 内存中以 `Arc<RwLock<TagRegistry>>` 存储，读操作无锁竞争，写操作（`update`）原子替换并持久化。
+//! - registry 与派生索引分别存放在 `Arc<RwLock<_>>` 中；并发读取使用共享锁，
+//!   `replace_in_memory` 依次换入 registry、album index 与 song index。磁盘持久化由
+//!   调用方单独执行，远端同步路径会先原子写缓存，再替换这些内存结构。
 //! - 支持 zh-CN / en-US 双语解析，缺失时按 locale → zh-CN → en-US → 第一个可用项的顺序回退。
 //! - 单曲标签支持继承专辑标签（同维度 values 去重合并）。
 //! - `get_all_locale_tag_values_*` 方法为搜索索引提供所有语种的标签值拼接串。

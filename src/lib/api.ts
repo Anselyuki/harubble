@@ -554,7 +554,8 @@ export async function importTagEditorRegistry(
  *
  * 前端在 `playerController.repeatMode` 或 `playerController.shuffleEnabled`
  * 变化时调用；后端负责在已挂载的菜单里调用对应 `CheckMenuItem::set_checked`。
- * 菜单尚未构建（例如启动早期）时返回错误字符串，前端可忽略。
+ * 菜单尚未构建（例如启动早期）时是成功的空操作；mutex poisoned 或
+ * `set_checked` 失败时 promise reject，调用方把它作为可忽略的软失败处理。
  */
 export async function syncPlaybackMenuState(
   repeatMode: RepeatMode,
@@ -619,9 +620,10 @@ export async function importPreferences(
 // ---------------------------------------------------------------------------
 
 /**
- * 列出所有已安装的主题包摘要。
+ * 列出所有可用内置包与已安装用户包的摘要。
  *
- * 后端按 id 字典序返回；返回值仅包含 manifest 精简字段。
+ * 后端按 id 字典序返回；摘要包含 manifest 精简字段、状态、builtin、sha256
+ * 与 sanitizer warnings；无法加载或校验的用户包会被跳过。
  * 完整 slots/variants 需通过 `inspectThemePackage(id)` 按需读取。
  */
 export async function listThemePackages(): Promise<ThemePackageSummary[]> {
@@ -631,7 +633,7 @@ export async function listThemePackages(): Promise<ThemePackageSummary[]> {
 /**
  * 读取指定主题包的完整文档（含 slots/variants/warnings）。
  *
- * 返回 `null` 表示 id 不存在于 committed 目录。
+ * 返回 `null` 表示 id 既不对应已安装用户包，也不对应内置包。
  */
 export async function inspectThemePackage(
   id: string
@@ -643,8 +645,9 @@ export async function inspectThemePackage(
  * 从本地文件路径安装主题包。
  *
  * 入参 `path` 必须是绝对路径，指向可读的 `.json` 文件（≤ 512 KiB）。
- * 后端会走 sanitize + hash + atomic commit 流程。
- * 若同 id 已存在则覆盖，返回值为新安装的摘要。
+ * 后端会走 sanitize + hash 流程，并分别原子写入 JSON 与 sidecar。
+ * 若同 id 用户包已存在则覆盖；新的导入不能覆盖内置包。升级前已经存在并遮蔽
+ * 同 id 内置包的用户包仍可替换。返回值为新安装的摘要。
  */
 export async function installThemePackageFromFile(
   path: string
@@ -670,9 +673,10 @@ export async function installThemePackageFromUrl(
 }
 
 /**
- * 卸载指定主题包（原子搬到 pending-delete，启动扫描时清理）。
+ * 卸载指定用户包（JSON 原子搬到 pending-delete，sidecar 尽力删除）。
  *
- * 对不存在的 id 幂等成功。若被卸载的 id 恰好是当前 active_package_id，
+ * 对不存在的 id 幂等成功；未被同 ID 用户包遮蔽的内置包不能卸载。
+ * 若被卸载的 id 恰好是当前 active_package_id，
  * 后端会同步清空激活状态并广播 `preferences_snapshot` 事件。
  */
 export async function uninstallThemePackage(id: string): Promise<void> {
@@ -720,8 +724,9 @@ export async function dismissThemePreview(): Promise<void> {
 }
 
 /**
- * 将指定主题包的原始 JSON 导出到本地路径。
+ * 将指定主题包导出到本地路径。
  *
+ * 内置包导出编译期源文件，用户包导出 committed 中经 sanitizer 规范化的 JSON。
  * `outputPath` 必须为绝对路径；父目录必须存在。目标已存在时被覆盖。
  */
 export async function exportThemePackage(

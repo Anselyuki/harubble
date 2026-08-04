@@ -326,7 +326,7 @@ export interface ThemePackageBlur {
 }
 
 /**
- * 主题包字体族声明（Phase 4）。
+ * 主题包字体族声明（Phase 4 JSON 最小安全子集）。
  *
  * 声明 body / display / mono 三个语义角色的字体名，前端覆盖
  * `--font-body` / `--font-display` / `--font-mono` CSS 变量。
@@ -373,9 +373,9 @@ export interface ThemePackageDocument {
   elevation?: ThemePackageElevation;
   blur?: ThemePackageBlur;
   visualContract?: ThemePackageVisualContract;
-  /** Phase 4：字体族声明，覆盖 --font-body / --font-display / --font-mono。 */
+  /** Phase 4 JSON 最小安全子集：字体族声明，覆盖 --font-body / --font-display / --font-mono。 */
   fontFamily?: ThemePackageFontFamily;
-  /** Phase 4：自定义 CSS 变量，key 必须以 `--theme-custom-` 开头。 */
+  /** Phase 4 JSON 最小安全子集：自定义 CSS 变量，key 必须以 `--theme-custom-` 开头。 */
   cssVariables?: Record<string, string>;
   /** 自定义 CSS 变量的稀疏昼夜覆盖。 */
   cssVariableVariants?: ThemePackageCssVariableVariants;

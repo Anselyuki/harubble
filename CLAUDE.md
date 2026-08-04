@@ -44,7 +44,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - `src/lib/settingsApi.ts`：设置面板专用 IPC bridge
 - `src/lib/collectionApi.ts`：合集专用 IPC bridge
 - `src/lib/types.ts`：前后端共享数据结构
-- `src/lib/features/`：按 `env / library / player / download / home / search / shell / collection / tagEditor` 划分的领域目录
+- `src/lib/features/`：按 `env / library / player / download / home / search / shell / collection / tagEditor` 划分的领域目录；`contract/` 保存跨前后端 IPC 与主题包契约测试
 - `src/lib/components/app/`：前端壳层组件目录，按业务域划分子目录：
   - `sidebar/`：侧栏框架（AppSidebar、SidebarNav、BrandLogo 等）
   - `player/`：播放控制（PlayerFlyoutStack、FullscreenPlayer、VolumeCapsule、LyricsBubble 等）
@@ -56,13 +56,13 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
   - `download/`：下载域对话框（ClearDownloadHistoryDialog 等）
   - `tag-editor/`：标签编辑器（TagEditorView、TagEditorPanel、TagEditorConflict\* 等）
   - `shell/`：应用壳层（TopToolbar、AppSideSheets、SettingsSheet、DownloadTasksSheet）
-- **主题包系统**（Phase 0-3 已落地）：
-  - `src-tauri/src/theme_packages/`：builtin / service / store / sanitizer / downloader / types，五套编译期内置主题包 + 三态磁盘管理（committed / stage / pending-delete）+ SSRF 白名单 + CSS 黑名单 + 真实 SHA-256 sidecar
+- **主题包系统**（Phase 0-3 与 Phase 4 JSON 最小安全子集已落地；任意 CSS stylesheet、`.hbtheme` ZIP 与包内 assets 尚未实现）：
+  - `src-tauri/src/theme_packages/`：builtin / service / store / sanitizer / downloader / types，五套编译期内置主题包 + 三态磁盘管理（staging / committed / pending-delete）+ SSRF 白名单 + 字体栈和 `--theme-custom-*` 变量清洗 + 真实 SHA-256 sidecar
   - `src-tauri/src/commands/theme_packages.rs`：9 条 IPC command（list / inspect / install-file / install-url / uninstall / set-active / preview / dismiss / export）
   - `src-tauri/src/preferences.rs`：v1 → v2 schema migration（追加 `active_package_id` + `revision` CAS 字段）
   - `src/lib/themeTokens.ts` / `src/lib/themePresets.ts`：`deriveGlobalTokensFromSlots` 派生函数 + SYSTEM_LIGHT/DARK_SLOTS
-  - `src/lib/design/gsap.ts`：`applyMotionOverride` / `applyShapeOverride` / `applyDensityOverride` / `applyElevationOverride` / `applyBlurOverride` 五组运行时 token 覆盖入口
-  - `src/lib/features/shell/themePackageManager.svelte.ts` / `themePackageRuntime.svelte.ts`：共享主题包状态机 + App Theme slots/variant 响应态 + preferences_snapshot 订阅 + CAS 循环 + 悬挂 activePackageId 自愈
+  - `src/lib/design/gsap.ts`：五组运行时 token 覆盖入口，以及 `applyFontFamilyOverride` / `applyCssVariablesOverride` 安全子集入口
+  - `src/lib/features/shell/themePackageManager.svelte.ts` / `themePackageRuntime.svelte.ts`：共享主题包状态机 + App Theme slots/variant 响应态 + 字体栈和昼夜 CSS 变量覆盖 + preferences_snapshot 订阅 + CAS 循环 + 悬挂 activePackageId 自愈
   - `src/lib/features/shell/visualContract.svelte.ts`：family × depth 状态 + resolve + `data-theme-*` / `data-ark-*` HTML 属性写入
   - `src/lib/features/player/controllers/`：`playToggleController` / `volumeCapsuleController` 承担业务逻辑，view 只消费共享交互契约
   - `src/lib/components/app/player/glass/` / `material/` / `family/`：legacy primitive 视觉族拆分与五个 Ark UI family 的共享语义 view；WaveGlassPanel 仅 glass 使用
@@ -80,7 +80,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 
 - 前端相关实现一律以 Svelte 5 为最高优先级；除非用户明确要求，否则不要为了延续旧习惯而主动回退到旧版写法或保守兼容模式
 - UI 展示组件不要直接调用 `invoke` / `listen`；统一走 bridge、controller 或具备明确边界的 shell 层
-- 组件的 `font-family` 统一通过 `--font-body` / `--font-display` / `--font-mono` CSS 变量引用，不直接硬编码字体名；字体方案详见 `docs/reference/frontend-guide.md` 的「字体方案」小节
+- 组件的 `font-family` 统一通过 `--font-sans` / `--font-body` / `--font-display` / `--font-mono` / `--font-brand` / `--font-wide` CSS 变量引用，不直接硬编码字体名；`brand` / `wide` 用于品牌和宽体标签角色，中文等缺失字形由其字体栈回退到 `--font-sans`，字体方案详见 `docs/reference/frontend-guide.md` 的「字体方案」小节
 - 如果改了歌词、下载设置或播放器交互，同时检查 `src/App.svelte`、`src/lib/components/AudioPlayer.svelte`、`src/lib/components/app/player/PlayerTimeline.svelte` 与对应 controller/bridge 的状态同步
 - **动画编排**：所有前端动画统一使用 GSAP 控制，适配层位于 `src/lib/design/gsap.ts`；不要新增或使用 CSS transitions / animations、Svelte transition / animate、Web Animations API 或其他动画方案。仅有两个受控例外：① 无限循环 loading / 装饰动画可用 CSS keyframes，须复用 Motion\* 原语或 `app.css` 全局 keyframes（`motion-spin` / `motion-progress-slide`）并做 reduced-motion 降级；② hover / active 纯状态颜色反馈统一使用 `transition: var(--motion-hover)`。详见 `docs/reference/frontend-guide.md` 的「动效规则」小节
 - **动画曲线**：所有 GSAP 动画统一使用 iOS 风格的缓动曲线（已在 `src/lib/design/gsap.ts` 中注册为 CustomEase）：
@@ -112,7 +112,7 @@ cargo doc -p harubble --bin harubble --no-deps --document-private-items
 - 后端”端点”指的是 Tauri command，不是 HTTP server route
 - 共享数据结构优先在 Rust 侧定义，再让前端 `types.ts` 保持形状一致
 - 涉及并发、异步或后台任务时，不跨 `await` 持有锁，不改变 cancel / stop / worker 生命周期，也不改变资源清理顺序
-- 新增或删除 Tauri command 时只修改 `src-tauri/src/command_registry.rs`，并同步维护 `COMMAND_SPECS`、前端 bridge/type 与契约测试
+- 新增或删除 Tauri command 时，在 `src-tauri/src/command_registry.rs` 的同一条目维护 handler、名称、domain、priority 与 cancel policy；`command_scheduling.rs` 的 `TAURI_COMMAND_SPECS` 会由宏自动生成，只有非 Tauri 后台入口单独维护在 `INTERNAL_COMMAND_SPECS`。同时同步前端 bridge/type 与契约测试
 - `src-tauri/src/main.rs` 顶部必须保留 `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`；新增 GUI 二进制入口时同步设置，`@tauri-apps/api` 与 Rust `tauri` crate 保持 minor 版本一致
 - 所有对外暴露的 API 都必须编写函数文档，且文档内容统一使用中文：
   - 至少说明用途、入参语义、出参/返回值语义以及关键副作用或错误场景

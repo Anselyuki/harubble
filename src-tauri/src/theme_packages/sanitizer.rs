@@ -114,7 +114,7 @@ const MAX_ELEVATION_LEN: usize = 512;
 const MAX_FONT_NAME_LEN: usize = 256;
 /// cssVariables 允许的最大条目数（防止注入超量 CSS 变量拖慢浏览器）。
 const MAX_CSS_VARIABLES: usize = 64;
-/// cssVariables 单个值允许的最大字节数。
+/// cssVariables 输入值触发按 Unicode 标量值截断的 UTF-8 字节阈值。
 const MAX_CSS_VAR_VALUE_LEN: usize = 256;
 /// cssVariables key 的必须前缀（命名空间隔离，防止覆盖 app 内部变量）。
 const CSS_VAR_KEY_PREFIX: &str = "--theme-custom-";
@@ -455,7 +455,7 @@ fn sanitize_document_with_policy(
         clamp_visual_contract_field("depth", &mut vc.depth, &mut warnings);
     }
 
-    // elevation 字符串校验：长度截断 + 黑名单短路
+    // elevation 字符串校验：超长或命中结构字符/黑名单时丢弃
     if let Some(ref mut elevation) = document.elevation {
         sanitize_elevation_field("none", &mut elevation.none, &mut warnings);
         sanitize_elevation_field("xs", &mut elevation.xs, &mut warnings);
@@ -498,7 +498,10 @@ fn sanitize_document_with_policy(
     Ok(())
 }
 
-/// Sanitize a newly imported or built-in package using the canonical id policy.
+/// Sanitize a trusted canonical-id document while retaining existing warnings.
+///
+/// Built-in packages use this entry point. Untrusted file/URL imports must use
+/// [`sanitize_import_document`] so package-authored warnings are discarded.
 pub(crate) fn sanitize_document(document: &mut ThemePackageDocument) -> Result<(), String> {
     sanitize_document_with_policy(document, PackageIdPolicy::Canonical, true)
 }
@@ -525,15 +528,11 @@ pub(crate) fn sanitize_import_document(document: &mut ThemePackageDocument) -> R
     sanitize_document_with_policy(document, PackageIdPolicy::Canonical, false)
 }
 
-/// 校验单个 elevation box-shadow 字符串。
-///
-/// - 长度超上限 → 截断
-/// - 命中 CSS 黑名单（url/expression/javascript/等）→ 直接置 None 并 warn
-/// - 允许多层逗号分隔的 shadow；不做 CSS AST 层校验（保持 warn-而非-reject 语义）
-///   清洗 visualContract 单字段：长度 ≤ 32 + 允许字符集 [a-z0-9\-_]，非法则清空并 warn。
+/// 清洗 visualContract 单字段：长度不超过 32 字节且只允许 `[a-z0-9\-_]`，
+/// 非法时丢弃并生成 warning。
 ///
 /// 支持集校验（是否在当前 app 版本已实现的 family/depth 内）不在此层执行，
-/// 由前端 `resolveVisualContract` 在应用主题包时做 fallback + warning。
+/// 由前端 `resolveVisualContract` 在应用主题包时做 fallback 并返回 warning。
 fn clamp_visual_contract_field(
     field: &str,
     value: &mut Option<String>,
@@ -545,7 +544,7 @@ fn clamp_visual_contract_field(
         return;
     }
     if raw.len() > 32 {
-        warnings.push(format!("visualContract.{field} exceeds 32 chars, dropped"));
+        warnings.push(format!("visualContract.{field} exceeds 32 bytes, dropped"));
         *value = None;
         return;
     }
@@ -560,11 +559,15 @@ fn clamp_visual_contract_field(
     }
 }
 
+/// 校验单个 elevation box-shadow 字符串。
+///
+/// - 长度超上限、含结构字符或命中 CSS 黑名单时直接置 `None` 并生成 warning
+/// - 允许多层逗号分隔的 shadow；不做 CSS AST 层校验
 fn sanitize_elevation_field(field: &str, value: &mut Option<String>, warnings: &mut Vec<String>) {
     let Some(raw) = value else { return };
     if raw.len() > MAX_ELEVATION_LEN {
         warnings.push(format!(
-            "elevation.{field} exceeds {MAX_ELEVATION_LEN} chars, dropped"
+            "elevation.{field} exceeds {MAX_ELEVATION_LEN} bytes, dropped"
         ));
         *value = None;
         return;
@@ -596,7 +599,7 @@ fn sanitize_elevation_field(field: &str, value: &mut Option<String>, warnings: &
     }
 }
 
-/// 校验单个字体名字段（Phase 4）。
+/// 校验单个字体名字段（Phase 4 JSON 最小安全子集）。
 ///
 /// 允许字符集：`[a-zA-Z0-9 ,\-_\.]`（字体名常见字符）。
 /// 命中 CSS 黑名单或超长则清空并 warn。
@@ -608,7 +611,7 @@ fn sanitize_font_name_field(field: &str, value: &mut Option<String>, warnings: &
     }
     if raw.len() > MAX_FONT_NAME_LEN {
         warnings.push(format!(
-            "{field} exceeds {MAX_FONT_NAME_LEN} chars, dropped"
+            "{field} exceeds {MAX_FONT_NAME_LEN} bytes, dropped"
         ));
         *value = None;
         return;
@@ -634,7 +637,7 @@ fn sanitize_font_name_field(field: &str, value: &mut Option<String>, warnings: &
     }
 }
 
-/// 校验一个自定义 CSS 变量 map（Phase 4）。
+/// 校验一个自定义 CSS 变量 map（Phase 4 JSON 最小安全子集）。
 ///
 /// - key 必须以 `--theme-custom-` 开头（命名空间隔离）
 /// - key 除前缀外只允许 `[a-z0-9\-]`（合法 CSS 自定义属性名）
@@ -679,7 +682,7 @@ fn sanitize_css_variables(
         // value 校验
         if value.len() > MAX_CSS_VAR_VALUE_LEN {
             warnings.push(format!(
-                "{scope}['{key}'] value truncated to {MAX_CSS_VAR_VALUE_LEN} chars"
+                "{scope}['{key}'] exceeded {MAX_CSS_VAR_VALUE_LEN} UTF-8 bytes; retained at most {MAX_CSS_VAR_VALUE_LEN} Unicode scalar values"
             ));
             *value = value.chars().take(MAX_CSS_VAR_VALUE_LEN).collect();
         }

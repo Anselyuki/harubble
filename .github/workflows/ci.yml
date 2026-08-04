@@ -104,6 +104,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

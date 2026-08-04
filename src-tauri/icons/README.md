@@ -49,7 +49,7 @@ src-tauri/icons/
 | `icon.ico`       | Windows 多尺寸图标包       |
 | `icon.png`       | 512 x 512 通用预览与生成源 |
 
-PNG 使用 8-bit RGBA 和无损压缩；ICO 至少覆盖 16、32、48、64、128、256 像素。修改源稿后必须同步重新生成相关制品，避免各平台图标不一致。
+PNG 使用 8-bit RGBA 和无损压缩；当前 ICO 覆盖 16、24、32、48、64、256 像素。修改源稿后必须同步重新生成相关制品，避免各平台图标不一致。
 
 ## 验证
 
@@ -74,4 +74,4 @@ sips -g pixelWidth -g pixelHeight -g hasAlpha \
   src-tauri/icons/32x32.png
 ```
 
-最终运行 `bun run tauri:build` 验证当前平台；跨平台制品继续由 CI 的 macOS/Windows build-check 与发布矩阵验证。
+最终运行 `bun run tauri:build` 验证当前平台；CI 的 macOS/Windows `build-check` 只验证编译兼容性，实际跨平台制品由发布矩阵构建和校验。

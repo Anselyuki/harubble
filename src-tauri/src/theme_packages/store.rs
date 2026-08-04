@@ -4,14 +4,14 @@
 //!
 //! `PackageStore` 管理主题包在磁盘上的三态状态机：
 //!
-//! - `staging/<id>.json.tmp` → 通过 `tempfile::persist` 原子 rename 到
-//! - `committed/<id>.json` + `committed/<id>.sha256`（sidecar hash）
-//! - 卸载先 rename 到 `pending-delete/<id>.json`，启动扫描时清理
+//! - `staging/` 中两个随机命名的 tempfile 分别通过 `persist` 原子 rename 到
+//! - `committed/<id>.json` 与 `committed/<id>.sha256`（不是跨文件原子事务）
+//! - 卸载先 rename 到 `pending-delete/<id>.json`，下次启动时尝试清理
 //!
 //! # 回收策略
 //!
-//! - 应用启动时 `pending-delete` 目录一次性清空
-//! - `staging` 中超过 24 小时的临时文件自动清理（防止导入中途崩溃残留）
+//! - 应用启动时尝试逐项清理 `pending-delete`；失败项会静默保留
+//! - 当前没有按文件年龄回收 `staging` 的扫描器；进程崩溃遗留的临时文件可能保留
 //!
 //! # 与主方案 §5.2.0a 的关系
 //!
@@ -33,8 +33,8 @@ pub(crate) const DIR_PENDING_DELETE: &str = "pending-delete";
 /// 主题包存储管理器。
 ///
 /// 每个 `PackageStore` 绑定到应用数据目录下的 `theme-packages/` 根，
-/// 内部三态子目录由 `ensure_layout()` 惰性创建。所有文件写入均通过 `tempfile`
-/// 中转，保证 crash 安全。
+/// 内部三态子目录由 `new()` 初始化时创建。JSON 与 sidecar 分别通过
+/// `tempfile` 中转并原子 rename，但两者不是一笔跨文件原子事务。
 pub(crate) struct PackageStore {
     root: PathBuf,
 }
@@ -43,7 +43,7 @@ impl PackageStore {
     /// 使用应用数据目录初始化存储。
     ///
     /// 会在 `<app_data>/theme-packages/` 下创建 `staging/committed/pending-delete`
-    /// 三个子目录（若不存在），并对 pending-delete 目录做一次性清扫。
+    /// 三个子目录（若不存在），并尝试逐项清扫 pending-delete 目录。
     pub(crate) fn new(app_data_dir: PathBuf) -> Result<Self, String> {
         let root = app_data_dir.join("theme-packages");
         let store = Self { root };
@@ -52,7 +52,7 @@ impl PackageStore {
         Ok(store)
     }
 
-    /// 惰性创建三态子目录。
+    /// 创建缺失的三态子目录。
     fn ensure_layout(&self) -> Result<(), String> {
         for dir in [DIR_STAGING, DIR_COMMITTED, DIR_PENDING_DELETE] {
             let path = self.root.join(dir);
@@ -69,7 +69,7 @@ impl PackageStore {
 
     /// 应用启动时清理 pending-delete 目录。
     ///
-    /// 该操作幂等；失败仅打印警告，不阻断启动。
+    /// 该操作幂等；目录读取或单文件删除失败会被静默忽略，不阻断启动。
     fn reap_pending_delete(&self) {
         let dir = self.root.join(DIR_PENDING_DELETE);
         if let Ok(entries) = fs::read_dir(&dir) {
@@ -101,10 +101,11 @@ impl PackageStore {
             .join(format!("{id}.sha256"))
     }
 
-    /// 写入 raw JSON 到 committed 目录并同时写入 sidecar。
+    /// 写入 raw JSON 到 committed 目录，并另行写入 sidecar。
     ///
-    /// 通过 `staging/<id>.json.tmp` 中转，`tempfile::persist` 原子 rename 到目标位置，
-    /// 保证部分写入不会污染 committed 目录。
+    /// 两个文件都通过 staging 中的 `tempfile::persist` 原子 rename 到各自目标，
+    /// 但提交不是跨文件原子事务；sidecar 写入失败时 JSON 可能已经存在。读取缺失
+    /// sidecar 的包时，service 层会重新执行完整校验后再补写。
     ///
     /// 调用方必须在写入前完成 sanitize + hash 计算；本方法不做任何校验。
     pub(crate) fn commit(&self, id: &str, raw: &[u8], sha256_hex: &str) -> Result<(), String> {
@@ -133,8 +134,8 @@ impl PackageStore {
 
     /// 卸载：把 committed 中的主题包 rename 到 pending-delete。
     ///
-    /// 该操作原子；若 committed 中不存在指定 id 直接返回成功（幂等）。
-    /// sidecar 一并搬迁；下次启动 reap 时统一清理。
+    /// JSON 通过单次 rename 原子搬到 pending-delete；若 committed 中不存在指定 id
+    /// 直接返回成功（幂等）。sidecar 不搬迁，而是在 rename 后尽力删除。
     pub(crate) fn uninstall(&self, id: &str) -> Result<(), String> {
         let src = self.path_for(id, ThemePackageStatus::Committed);
         if !src.exists() {
@@ -156,7 +157,7 @@ impl PackageStore {
         list_ids_in(&self.dir_for(ThemePackageStatus::Committed))
     }
 
-    /// 读取 committed 主题包的原始 JSON 字节。
+    /// 读取 committed 主题包当前存储的 JSON 字节。
     ///
     /// 返回 `None` 表示 id 不存在；`Err` 表示读取失败（权限、损坏等）。
     pub(crate) fn read_committed_raw(&self, id: &str) -> Result<Option<Vec<u8>>, String> {
@@ -220,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_writes_json_and_sidecar_atomically() {
+    fn commit_persists_json_and_sidecar_via_separate_atomic_renames() {
         let (_dir, store) = tempdir_store();
         let raw = br#"{"schemaVersion":1}"#;
         let hash = "abc123";
