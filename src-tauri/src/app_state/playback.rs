@@ -63,60 +63,101 @@ impl AppState {
             },
         );
 
-        let loading_started_at = Instant::now();
-        let session_id = self
-            .player
-            .begin_loading_session(
-                song_cid.clone(),
-                song_detail.name.clone(),
-                song_detail.artists.clone(),
-                cover_url.clone(),
-                0.0,
-                None,
-            )
-            .map_err(|error| classify_playback_error(error, None))?;
+        let mut cache_recovery_attempted = false;
 
-        let result: Result<f64, PlaybackStartFailure> = async {
-            self.ensure_playback_request_active(request_id, Some(session_id))?;
-            self.start_playback_session(
-                request_id,
-                session_id,
-                &song_cid,
-                &song_detail.source_url,
-                0.0,
-                start_intent,
-            )
-            .await
-        }
-        .await;
+        loop {
+            let loading_started_at = Instant::now();
+            let previous_session_id = self.player.get_state().session_id;
+            let session_id = self
+                .player
+                .begin_loading_session(
+                    song_cid.clone(),
+                    song_detail.name.clone(),
+                    song_detail.artists.clone(),
+                    cover_url.clone(),
+                    0.0,
+                    None,
+                )
+                .map_err(|error| classify_playback_error(error, Some(previous_session_id)))?;
 
-        match result {
-            Ok(duration) => {
-                self.spawn_playback_startup_metric(
+            let result: Result<f64, PlaybackStartFailure> = async {
+                self.ensure_playback_request_active(request_id, Some(session_id))?;
+                self.start_playback_session(
                     request_id,
                     session_id,
-                    loading_started_at,
-                    "playing",
-                    false,
-                );
-                Ok(PlaybackStartResult::new(duration, session_id))
+                    &song_cid,
+                    &song_detail.source_url,
+                    0.0,
+                    start_intent,
+                )
+                .await
             }
-            Err(error) => {
-                let playback_error = classify_playback_error(error.error, Some(session_id));
-                let ticket_superseded = playback_error.code == PlaybackErrorCode::Superseded;
-                self.player.fail_session(session_id);
-                self.spawn_playback_startup_metric(
-                    request_id,
-                    session_id,
-                    loading_started_at,
-                    if ticket_superseded {
-                        "superseded"
-                    } else {
-                        "failed"
-                    },
-                    ticket_superseded,
-                );
-                Err(playback_error)
+            .await;
+
+            match result {
+                Ok(duration) => {
+                    self.spawn_playback_startup_metric(
+                        request_id,
+                        session_id,
+                        loading_started_at,
+                        if cache_recovery_attempted {
+                            "cache-retry"
+                        } else {
+                            "playing"
+                        },
+                        false,
+                    );
+                    return Ok(PlaybackStartResult::new(duration, session_id));
+                }
+                Err(error) if should_recover_cache(cache_recovery_attempted, &error) => {
+                    cache_recovery_attempted = true;
+                    let cache_lease = error.cache_lease.clone().expect("checked by policy");
+                    let original_error = error.error;
+                    if let Err(clear_error) = clear_cache_for_recovery(cache_lease).await {
+                        if self
+                            .ensure_playback_request_active(request_id, None)
+                            .is_err()
+                        {
+                            return Err(PlaybackError::superseded(session_id));
+                        }
+                        self.player.fail_session(session_id);
+                        self.log_cache_recovery_failure(
+                            request_id,
+                            session_id,
+                            "play",
+                            &clear_error,
+                        );
+                        let playback_error =
+                            classify_playback_error(original_error, Some(session_id));
+                        self.spawn_playback_startup_metric(
+                            request_id,
+                            session_id,
+                            loading_started_at,
+                            "failed",
+                            playback_error.code == PlaybackErrorCode::Superseded,
+                        );
+                        return Err(playback_error);
+                    }
+                    self.log_cache_recovery(request_id, session_id, "play");
+                    self.ensure_playback_request_active(request_id, None)?;
+                }
+                Err(error) => {
+                    let playback_error = classify_playback_error(error.error, Some(session_id));
+                    let ticket_superseded = playback_error.code == PlaybackErrorCode::Superseded;
+                    self.player.fail_session(session_id);
+                    self.spawn_playback_startup_metric(
+                        request_id,
+                        session_id,
+                        loading_started_at,
+                        if ticket_superseded {
+                            "superseded"
+                        } else {
+                            "failed"
+                        },
+                        ticket_superseded,
+                    );
+                    return Err(playback_error);
+                }
             }
         }
     }
@@ -211,12 +252,11 @@ impl AppState {
                     );
                     return Ok(PlaybackStartResult::new(duration, session_id));
                 }
-                Err(error) if should_recover_seek_cache(cache_recovery_attempted, &error) => {
+                Err(error) if should_recover_cache(cache_recovery_attempted, &error) => {
                     cache_recovery_attempted = true;
                     let cache_lease = error.cache_lease.clone().expect("checked by policy");
                     let original_error = error.error;
-                    if let Err(clear_error) = self.clear_cache_for_seek_recovery(cache_lease).await
-                    {
+                    if let Err(clear_error) = clear_cache_for_recovery(cache_lease).await {
                         if self
                             .ensure_playback_request_active(request_id, None)
                             .is_err()
@@ -224,10 +264,15 @@ impl AppState {
                             return Err(PlaybackError::superseded(session_id));
                         }
                         self.player.fail_session(session_id);
-                        self.log_seek_cache_recovery_failure(request_id, session_id, &clear_error);
+                        self.log_cache_recovery_failure(
+                            request_id,
+                            session_id,
+                            "seek",
+                            &clear_error,
+                        );
                         return Err(classify_playback_error(original_error, Some(session_id)));
                     }
-                    self.log_seek_cache_recovery(request_id, session_id);
+                    self.log_cache_recovery(request_id, session_id, "seek");
                     self.ensure_playback_request_active(request_id, None)?;
                     self.spawn_playback_startup_metric(
                         request_id,
@@ -959,49 +1004,43 @@ impl AppState {
         )
     }
 
-    async fn clear_cache_for_seek_recovery(&self, cache_lease: AudioCacheLease) -> Result<()> {
-        let _cache_io_guard = audio_cache::io_lock().lock().await;
-        if audio_cache::remove_song_cache_if_current(&cache_lease)? {
-            Ok(())
-        } else {
-            anyhow::bail!("Audio cache lease was superseded before seek recovery")
-        }
-    }
-
-    fn log_seek_cache_recovery(&self, request_id: u64, session_id: u64) {
+    fn log_cache_recovery(&self, request_id: u64, session_id: u64, operation: &'static str) {
         self.log_center.record(
             LogPayload::new(
                 LogLevel::Warn,
                 "player",
-                "player.seek_cache_recovery",
-                "Reloading seek after local audio cache failure",
+                "player.cache_recovery",
+                "Reloading playback after local audio cache failure",
             )
             .context(json!({
                 "playback.request_id": request_id,
                 "playback.session_id": session_id,
                 "playback.cache_recovery_attempt": 1,
+                "playback.cache_recovery_operation": operation,
             })),
         );
     }
 
-    fn log_seek_cache_recovery_failure(
+    fn log_cache_recovery_failure(
         &self,
         request_id: u64,
         session_id: u64,
+        operation: &'static str,
         error: &anyhow::Error,
     ) {
         self.log_center.record(
             LogPayload::new(
                 LogLevel::Warn,
                 "player",
-                "player.seek_cache_recovery_failed",
-                "Failed to clear audio cache before retrying seek",
+                "player.cache_recovery_failed",
+                "Failed to clear audio cache before retrying playback",
             )
             .details(format!("{error:#}"))
             .context(json!({
                 "playback.request_id": request_id,
                 "playback.session_id": session_id,
                 "playback.cache_recovery_attempt": 1,
+                "playback.cache_recovery_operation": operation,
             })),
         );
     }
@@ -1035,7 +1074,27 @@ impl From<anyhow::Error> for PlaybackStartFailure {
     }
 }
 
-fn should_recover_seek_cache(recovery_attempted: bool, failure: &PlaybackStartFailure) -> bool {
+async fn clear_cache_for_recovery(cache_lease: AudioCacheLease) -> Result<()> {
+    let _cache_io_guard = audio_cache::io_lock().lock().await;
+    if audio_cache::remove_song_cache_if_current(&cache_lease)? {
+        return Ok(());
+    }
+
+    // The failure path schedules the same cleanup asynchronously. If it wins the lock first,
+    // the lease is stale and the canonical file is already gone; that is a successful
+    // invalidation, not a recovery failure. A still-present file means another generation has
+    // taken ownership, so do not delete it from this request.
+    if !cache_lease.is_current()
+        && !cache_lease.cache_path().exists()
+        && !audio_cache::pending_marker_path(cache_lease.cache_path()).exists()
+    {
+        return Ok(());
+    }
+
+    anyhow::bail!("Audio cache lease was superseded before recovery")
+}
+
+fn should_recover_cache(recovery_attempted: bool, failure: &PlaybackStartFailure) -> bool {
     !recovery_attempted && failure.local_cache_failure && failure.cache_lease.is_some()
 }
 
@@ -1183,9 +1242,9 @@ fn classify_playback_error(error: anyhow::Error, session_id: Option<u64>) -> Pla
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_active_cache_lease, classify_playback_error, initial_buffer_samples,
-        prepare_playback_input_from_cache_path, should_recover_seek_cache, PlaybackStartFailure,
-        PlaybackStartIntent,
+        acquire_active_cache_lease, classify_playback_error, clear_cache_for_recovery,
+        initial_buffer_samples, prepare_playback_input_from_cache_path, should_recover_cache,
+        PlaybackStartFailure, PlaybackStartIntent,
     };
     use crate::audio_cache;
     use crate::player::stream::{AudioFormat, PlaybackInput, SampleBuffer};
@@ -1256,7 +1315,7 @@ mod tests {
     }
 
     #[test]
-    fn seek_cache_recovery_is_limited_to_one_local_io_retry() {
+    fn cache_recovery_is_limited_to_one_local_io_retry() {
         let temp_dir = tempdir().expect("tempdir");
         let cache_path = temp_dir.path().join("song.wav");
         let cache_lease = audio_cache::acquire_song_cache_lease(&cache_path);
@@ -1268,12 +1327,12 @@ mod tests {
             Some(cache_lease),
         );
 
-        assert!(should_recover_seek_cache(false, &failure));
-        assert!(!should_recover_seek_cache(true, &failure));
+        assert!(should_recover_cache(false, &failure));
+        assert!(!should_recover_cache(true, &failure));
     }
 
     #[test]
-    fn seek_cache_recovery_does_not_swallow_other_playback_failures() {
+    fn cache_recovery_does_not_swallow_other_playback_failures() {
         let temp_dir = tempdir().expect("tempdir");
         let cache_path = temp_dir.path().join("song.wav");
 
@@ -1288,10 +1347,37 @@ mod tests {
                 Some(audio_cache::acquire_song_cache_lease(&cache_path)),
             );
             assert!(
-                !should_recover_seek_cache(false, &failure),
+                !should_recover_cache(false, &failure),
                 "unexpected cache recovery for {message}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn cache_recovery_accepts_cleanup_that_already_invalidated_the_lease() {
+        let temp_dir = tempdir().expect("tempdir");
+        let cache_path = temp_dir.path().join("song.wav");
+        let stale_lease = audio_cache::acquire_song_cache_lease(&cache_path);
+        let replacement_lease = audio_cache::acquire_song_cache_lease(&cache_path);
+        drop(replacement_lease);
+
+        assert!(clear_cache_for_recovery(stale_lease).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cache_recovery_does_not_remove_a_new_generation_cache() {
+        let temp_dir = tempdir().expect("tempdir");
+        let cache_path = temp_dir.path().join("song.wav");
+        let stale_lease = audio_cache::acquire_song_cache_lease(&cache_path);
+        std::fs::write(&cache_path, b"new-generation").expect("cache file");
+        let replacement_lease = audio_cache::acquire_song_cache_lease(&cache_path);
+
+        let error = clear_cache_for_recovery(stale_lease)
+            .await
+            .expect_err("stale lease must not remove replacement cache");
+        assert!(format!("{error:#}").contains("superseded"));
+        assert!(cache_path.exists());
+        drop(replacement_lease);
     }
 
     #[test]
