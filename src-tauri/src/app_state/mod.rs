@@ -85,7 +85,7 @@ pub struct AppState {
 
 struct PreparedPlaybackInput {
     input: PlaybackInput,
-    cache_path: std::path::PathBuf,
+    cache_lease: crate::audio_cache::AudioCacheLease,
 }
 
 impl AppState {
