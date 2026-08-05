@@ -3,6 +3,7 @@
 //! 该模块实现播放器主控制器、前后端共享的播放队列上下文，以及播放、暂停、跳转、
 //! 上下曲切换与系统媒体控制绑定等核心编排能力。
 
+use crate::playback_load_gate::PlaybackLoadGate;
 use crate::player::backend::{
     create_backend, AudioCallbackMetrics, AudioMetricsHandler, OutputFormat, PlaybackBackend,
 };
@@ -29,6 +30,7 @@ use tauri::{AppHandle, Manager};
 /// 全量状态序列化灌满 WebView 事件通道导致界面逐渐卡死。
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
 const REBUFFER_TARGET_SECONDS: usize = 3;
+const FINISHED_STREAM_KEEPALIVE_GRACE: Duration = Duration::from_secs(10);
 
 /// 前后端共享的播放队列条目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -350,7 +352,7 @@ impl AudioPlayer {
         let progress_callback = self.build_progress_callback(session_id, initial_progress);
         let finish_callback = self.build_finish_callback(session_id);
         let error_handler = self.build_error_callback(session_id);
-        let metrics_handler = self.build_audio_metrics_callback(session_id);
+        let metrics_handler = self.build_audio_metrics_callback(session_id, &format);
         let underrun_handler =
             self.build_audio_underrun_callback(session_id, samples.clone(), audio_format);
 
@@ -458,42 +460,84 @@ impl AudioPlayer {
         })
     }
 
-    fn build_audio_metrics_callback(&self, session_id: u64) -> AudioMetricsHandler {
-        let active_session = Arc::clone(&self.active_session_id);
+    fn build_audio_metrics_callback(
+        &self,
+        session_id: u64,
+        output_format: &OutputFormat,
+    ) -> AudioMetricsHandler {
         let app_for_metrics = self.app.clone();
+        let output_device_identity = output_format.device_identity.clone();
+        let output_sample_rate = output_format.audio_format.sample_rate;
+        let output_channels = output_format.audio_format.channels;
+        let output_sample_format = output_format.sample_format.as_str();
 
         Arc::new(move |metrics: AudioCallbackMetrics| {
-            if active_session.load(Ordering::SeqCst) != session_id {
-                return;
-            }
             if let Some(state) = app_for_metrics.try_state::<crate::app_state::AppState>() {
-                // P1-6 基准：把回调耗时统计一并写入日志上下文。
-                // avg_us = total_ns / count / 1000；桶数组直接序列化为 JSON 数组，供
-                // 后续基准报告脚本按需绘制直方图或近似百分位。
-                let avg_ns = metrics
-                    .callback_elapsed_ns_total
-                    .checked_div(metrics.callback_count)
-                    .unwrap_or(0);
-                state.log_center().record(
-                    crate::logging::LogPayload::new(
-                        crate::logging::LogLevel::Debug,
-                        "player",
-                        "audio.callback_metrics",
-                        "Audio callback metrics",
-                    )
-                    .context(json!({
-                        "command.domain": "RealtimeAudio",
-                        "command.priority": "Realtime",
-                        "playback.session_id": session_id,
-                        "audio.callback_silence_due_to_lock": metrics.silence_due_to_lock,
-                        "audio.callback_underrun_frames": metrics.underrun_frames,
-                        "audio.callback_count": metrics.callback_count,
-                        "audio.callback_elapsed_ns_total": metrics.callback_elapsed_ns_total,
-                        "audio.callback_elapsed_ns_avg": avg_ns,
-                        "audio.callback_elapsed_ns_max": metrics.callback_elapsed_ns_max,
-                        "audio.callback_duration_buckets": metrics.callback_duration_buckets,
-                    })),
-                );
+                let log_center = Arc::clone(state.log_center());
+                let playback_runtime = Arc::clone(state.playback_runtime());
+                let output_device_identity = output_device_identity.clone();
+                playback_runtime.spawn(async move {
+                    let avg_ns = metrics
+                        .callback_elapsed_ns_total
+                        .checked_div(metrics.callback_count)
+                        .unwrap_or(0);
+                    let callback_period_ns_min = metrics
+                        .callback_frames_min
+                        .saturating_mul(1_000_000_000)
+                        .checked_div(u64::from(output_sample_rate.max(1)))
+                        .unwrap_or(0);
+                    let log_level = if metrics.callback_over_period_count > 0
+                        || metrics.callback_metrics_dropped_count > 0
+                        || metrics.stream_start_timeout_count > 0
+                        || metrics.stream_start_failure_count > 0
+                        || metrics.output_xrun_count > 0
+                        || metrics.output_clipped_samples > 0
+                        || metrics.output_nonfinite_samples > 0
+                    {
+                        crate::logging::LogLevel::Warn
+                    } else {
+                        crate::logging::LogLevel::Debug
+                    };
+                    log_center.record(
+                        crate::logging::LogPayload::new(
+                            log_level,
+                            "player",
+                            "audio.callback_metrics",
+                            "Audio callback metrics",
+                        )
+                        .context(json!({
+                            "command.domain": "RealtimeAudio",
+                            "command.priority": "Realtime",
+                            "playback.session_id": session_id,
+                            "audio.output_device_id": output_device_identity,
+                            "audio.output_sample_rate": output_sample_rate,
+                            "audio.output_channels": output_channels,
+                            "audio.output_sample_format": output_sample_format,
+                            "audio.callback_silence_due_to_lock": metrics.silence_due_to_lock,
+                            "audio.callback_underrun_frames": metrics.underrun_frames,
+                            "audio.callback_count": metrics.callback_count,
+                            "audio.callback_elapsed_ns_total": metrics.callback_elapsed_ns_total,
+                            "audio.callback_elapsed_ns_avg": avg_ns,
+                            "audio.callback_elapsed_ns_max": metrics.callback_elapsed_ns_max,
+                            "audio.callback_over_period_count": metrics.callback_over_period_count,
+                            "audio.callback_metrics_dropped_count": metrics.callback_metrics_dropped_count,
+                            "audio.callback_frames_total": metrics.callback_frames_total,
+                            "audio.callback_frames_min": metrics.callback_frames_min,
+                            "audio.callback_frames_max": metrics.callback_frames_max,
+                            "audio.callback_period_ns_min": callback_period_ns_min,
+                            "audio.callback_duration_buckets": metrics.callback_duration_buckets,
+                            "audio.stream_start_wait_ns": metrics.stream_start_wait_ns,
+                            "audio.stream_start_timeout_count": metrics.stream_start_timeout_count,
+                            "audio.stream_start_failure_count": metrics.stream_start_failure_count,
+                            "audio.output_xrun_count": metrics.output_xrun_count,
+                            "audio.output_sample_count": metrics.output_sample_count,
+                            "audio.output_peak_abs": metrics.output_peak_abs(),
+                            "audio.output_rms": metrics.output_rms(),
+                            "audio.output_clipped_samples": metrics.output_clipped_samples,
+                            "audio.output_nonfinite_samples": metrics.output_nonfinite_samples,
+                        })),
+                    );
+                });
             }
         })
     }
@@ -814,42 +858,53 @@ impl AudioPlayer {
     ///
     /// 仅当 `session_id` 仍为当前活跃会话时才会生效，通常用于流式解码或输出阶段发生不可恢复错误时。
     pub fn fail_session(&self, session_id: u64) {
-        if self.active_session_id.load(Ordering::SeqCst) != session_id {
+        let stop_flag = self.stop_signal();
+        let pause_flag = self.pause_signal();
+        let claimed_session_id = session_id.saturating_add(1);
+        if !claim_session_end(&self.active_session_id, session_id, claimed_session_id) {
             return;
         }
 
-        self.stop_signal().store(true, Ordering::SeqCst);
-        self.pause_signal().store(false, Ordering::SeqCst);
-        self.rebuffering.store(false, Ordering::SeqCst);
-        self.active_session_id.fetch_add(1, Ordering::SeqCst);
-        let _ = self.backend.lock().unwrap().stop();
-
+        stop_flag.store(true, Ordering::SeqCst);
+        pause_flag.store(false, Ordering::SeqCst);
         {
+            let mut backend = self.backend.lock().unwrap();
+            if self.active_session_id.load(Ordering::SeqCst) != claimed_session_id {
+                return;
+            }
+            self.rebuffering.store(false, Ordering::SeqCst);
+            let _ = backend.stop();
             let mut state = self.state.lock().unwrap();
             *state = PlayerState::default();
-            state.session_id = self.active_session_id.load(Ordering::SeqCst);
+            state.session_id = claimed_session_id;
             state.volume = atomic_volume_load(&self.volume);
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
     }
 
-    /// 将指定会话标记为自然结束并释放当前输出流。
+    /// 将指定会话标记为自然结束，并在短暂续播窗口内保留静音输出流。
     ///
     /// 对外快照保留刚结束的 `session_id`，便于前端用 `player-ended` 匹配自动续播；
     /// 内部活跃会话会立即推进，使进度线程、输出错误和迟到回调都被视为过期。
     pub fn finish_session(&self, session_id: u64) {
         let next_session_id = session_id.saturating_add(1);
-        if !claim_finished_session(&self.active_session_id, session_id, next_session_id) {
+        let stop_flag = self.stop_signal();
+        let pause_flag = self.pause_signal();
+        if !claim_session_end(&self.active_session_id, session_id, next_session_id) {
             return;
         }
 
-        self.stop_signal().store(true, Ordering::SeqCst);
-        self.pause_signal().store(false, Ordering::SeqCst);
-        self.rebuffering.store(false, Ordering::SeqCst);
+        stop_flag.store(true, Ordering::SeqCst);
+        pause_flag.store(false, Ordering::SeqCst);
 
-        let ended_event = {
+        let (ended_event, keepalive_active, quiesce_warning) = {
+            let mut backend = self.backend.lock().unwrap();
+            if self.active_session_id.load(Ordering::SeqCst) != next_session_id {
+                return;
+            }
+            self.rebuffering.store(false, Ordering::SeqCst);
             let mut state = self.state.lock().unwrap();
-            if state.session_id != session_id {
+            let ended_event = if state.session_id != session_id {
                 None
             } else {
                 state.is_playing = false;
@@ -865,15 +920,70 @@ impl AudioPlayer {
                     progress: state.progress,
                     duration: state.duration,
                 })
+            };
+            drop(state);
+
+            match quiesce_or_stop_backend(backend.as_mut()) {
+                Ok(None) => (ended_event, true, None),
+                Ok(Some(details)) => (ended_event, false, Some(details)),
+                Err(error) => (ended_event, false, Some(format!("{error:#}"))),
             }
         };
 
-        let _ = self.backend.lock().unwrap().stop();
+        if let Some(details) = quiesce_warning {
+            if let Some(state) = self.app.try_state::<crate::app_state::AppState>() {
+                state.log_center().record(
+                    crate::logging::LogPayload::new(
+                        crate::logging::LogLevel::Warn,
+                        "player",
+                        "player.finished_stream_quiesce_failed",
+                        "Failed to keep the finished output stream active for automatic playback",
+                    )
+                    .details(details),
+                );
+            }
+        }
 
         if let Some(event) = ended_event {
             emit_state_and_sync(&self.app, &self.state, &self.media_session);
             emit_ended(&self.app, event);
         }
+        if keepalive_active {
+            self.schedule_finished_stream_cleanup(next_session_id);
+        }
+    }
+
+    fn schedule_finished_stream_cleanup(&self, expected_session_id: u64) {
+        let Some(state) = self.app.try_state::<crate::app_state::AppState>() else {
+            return;
+        };
+        let player = Arc::clone(state.player());
+        let playback_load_gate = state.playback_load_gate().clone();
+        let playback_runtime = Arc::clone(state.playback_runtime());
+        playback_runtime.spawn(async move {
+            tokio::time::sleep(FINISHED_STREAM_KEEPALIVE_GRACE).await;
+            loop {
+                if player
+                    .try_release_finished_stream_keepalive(expected_session_id, &playback_load_gate)
+                {
+                    break;
+                }
+                playback_load_gate.wait_until_inactive().await;
+            }
+        });
+    }
+
+    fn try_release_finished_stream_keepalive(
+        &self,
+        expected_session_id: u64,
+        playback_load_gate: &PlaybackLoadGate,
+    ) -> bool {
+        try_cleanup_finished_stream_keepalive(
+            playback_load_gate,
+            self.active_session_id.as_ref(),
+            &self.backend,
+            expected_session_id,
+        )
     }
 
     /// 返回当前播放会话共享的停止信号。
@@ -1143,11 +1253,7 @@ fn normalize_volume(value: f64) -> f64 {
     }
 }
 
-fn claim_finished_session(
-    active_session_id: &AtomicU64,
-    session_id: u64,
-    next_session_id: u64,
-) -> bool {
+fn claim_session_end(active_session_id: &AtomicU64, session_id: u64, next_session_id: u64) -> bool {
     active_session_id
         .compare_exchange(
             session_id,
@@ -1158,26 +1264,59 @@ fn claim_finished_session(
         .is_ok()
 }
 
+fn cleanup_finished_stream_keepalive(
+    active_session_id: &AtomicU64,
+    backend: &Mutex<Box<dyn PlaybackBackend>>,
+    expected_session_id: u64,
+) {
+    let cleanup_session_id = expected_session_id.saturating_add(1);
+    if !claim_session_end(active_session_id, expected_session_id, cleanup_session_id) {
+        return;
+    }
+
+    let mut backend = backend.lock().unwrap();
+    if active_session_id.load(Ordering::SeqCst) == cleanup_session_id {
+        let _ = backend.stop();
+    }
+}
+
+fn try_cleanup_finished_stream_keepalive(
+    playback_load_gate: &PlaybackLoadGate,
+    active_session_id: &AtomicU64,
+    backend: &Mutex<Box<dyn PlaybackBackend>>,
+    expected_session_id: u64,
+) -> bool {
+    playback_load_gate
+        .run_if_inactive(|| {
+            cleanup_finished_stream_keepalive(active_session_id, backend, expected_session_id);
+        })
+        .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_progress_callback, claim_finished_session, ensure_started_session_current,
-        normalize_volume, quiesce_or_stop_backend, rebuffer_target_samples, PlaybackQueueEntry,
+        build_progress_callback, claim_session_end, cleanup_finished_stream_keepalive,
+        ensure_started_session_current, normalize_volume, quiesce_or_stop_backend,
+        rebuffer_target_samples, try_cleanup_finished_stream_keepalive, PlaybackQueueEntry,
         PlaybackQueueState,
     };
+    use crate::playback_load_gate::PlaybackLoadGate;
     use crate::player::backend::{
         AudioMetricsHandler, AudioUnderrunHandler, OutputFormat, PlaybackBackend,
     };
     use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
     use anyhow::Result;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier, Mutex};
+    use std::time::{Duration, Instant};
 
     #[derive(Default)]
     struct TransitionBackend {
         events: Vec<&'static str>,
         fail_quiesce: bool,
         fail_stop: bool,
+        stop_count: Arc<AtomicUsize>,
     }
 
     impl PlaybackBackend for TransitionBackend {
@@ -1216,6 +1355,7 @@ mod tests {
 
         fn stop(&mut self) -> Result<()> {
             self.events.push("stop");
+            self.stop_count.fetch_add(1, Ordering::SeqCst);
             anyhow::ensure!(!self.fail_stop, "stop failed");
             Ok(())
         }
@@ -1316,12 +1456,162 @@ mod tests {
     }
 
     #[test]
-    fn finished_session_can_only_be_claimed_once() {
+    fn session_end_can_only_be_claimed_once() {
         let active_session_id = AtomicU64::new(7);
 
-        assert!(claim_finished_session(&active_session_id, 7, 8));
-        assert!(!claim_finished_session(&active_session_id, 7, 8));
+        assert!(claim_session_end(&active_session_id, 7, 8));
+        assert!(!claim_session_end(&active_session_id, 7, 8));
         assert_eq!(active_session_id.load(Ordering::SeqCst), 8);
+    }
+
+    #[test]
+    fn concurrent_session_end_claim_has_exactly_one_winner() {
+        const CONTENDERS: usize = 16;
+        let active_session_id = Arc::new(AtomicU64::new(7));
+        let winners = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(CONTENDERS + 1));
+        let handles = (0..CONTENDERS)
+            .map(|_| {
+                let active_session_id = Arc::clone(&active_session_id);
+                let winners = Arc::clone(&winners);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    if claim_session_end(&active_session_id, 7, 8) {
+                        winners.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        for handle in handles {
+            handle.join().expect("claim contender should finish");
+        }
+
+        assert_eq!(winners.load(Ordering::SeqCst), 1);
+        assert_eq!(active_session_id.load(Ordering::SeqCst), 8);
+    }
+
+    #[test]
+    fn finished_stream_cleanup_stops_owned_keepalive_once() {
+        let expected_session_id = 7;
+        let active_session_id = AtomicU64::new(expected_session_id);
+        let stop_count = Arc::new(AtomicUsize::new(0));
+        let backend: Mutex<Box<dyn PlaybackBackend>> = Mutex::new(Box::new(TransitionBackend {
+            stop_count: Arc::clone(&stop_count),
+            ..Default::default()
+        }));
+
+        cleanup_finished_stream_keepalive(&active_session_id, &backend, expected_session_id);
+        cleanup_finished_stream_keepalive(&active_session_id, &backend, expected_session_id);
+
+        assert_eq!(active_session_id.load(Ordering::SeqCst), 8);
+        assert_eq!(stop_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn finished_stream_cleanup_preserves_already_superseded_stream() {
+        let expected_session_id = 7;
+        let successor_session_id = 8;
+        let active_session_id = AtomicU64::new(successor_session_id);
+        let stop_count = Arc::new(AtomicUsize::new(0));
+        let backend: Mutex<Box<dyn PlaybackBackend>> = Mutex::new(Box::new(TransitionBackend {
+            stop_count: Arc::clone(&stop_count),
+            ..Default::default()
+        }));
+
+        cleanup_finished_stream_keepalive(&active_session_id, &backend, expected_session_id);
+
+        assert_eq!(
+            active_session_id.load(Ordering::SeqCst),
+            successor_session_id
+        );
+        assert_eq!(stop_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn finished_stream_cleanup_waits_for_pending_playback_request() {
+        let expected_session_id = 7;
+        let active_session_id = AtomicU64::new(expected_session_id);
+        let stop_count = Arc::new(AtomicUsize::new(0));
+        let backend: Mutex<Box<dyn PlaybackBackend>> = Mutex::new(Box::new(TransitionBackend {
+            stop_count: Arc::clone(&stop_count),
+            ..Default::default()
+        }));
+        let playback_load_gate = PlaybackLoadGate::new();
+        let pending_request = playback_load_gate.enter();
+
+        assert!(!try_cleanup_finished_stream_keepalive(
+            &playback_load_gate,
+            &active_session_id,
+            &backend,
+            expected_session_id,
+        ));
+        assert_eq!(
+            active_session_id.load(Ordering::SeqCst),
+            expected_session_id
+        );
+        assert_eq!(stop_count.load(Ordering::SeqCst), 0);
+
+        drop(pending_request);
+        assert!(try_cleanup_finished_stream_keepalive(
+            &playback_load_gate,
+            &active_session_id,
+            &backend,
+            expected_session_id,
+        ));
+        assert_eq!(active_session_id.load(Ordering::SeqCst), 8);
+        assert_eq!(stop_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn finished_stream_cleanup_rechecks_ownership_after_backend_lock() {
+        let expected_session_id = 7;
+        let cleanup_session_id = 8;
+        let successor_session_id = 9;
+        let active_session_id = Arc::new(AtomicU64::new(expected_session_id));
+        let stop_count = Arc::new(AtomicUsize::new(0));
+        let backend: Arc<Mutex<Box<dyn PlaybackBackend>>> =
+            Arc::new(Mutex::new(Box::new(TransitionBackend {
+                stop_count: Arc::clone(&stop_count),
+                ..Default::default()
+            })));
+        let cleanup_backend = Arc::clone(&backend);
+        let cleanup_active_session_id = Arc::clone(&active_session_id);
+        let cleanup_started = Arc::new(Barrier::new(2));
+        let cleanup_thread_started = Arc::clone(&cleanup_started);
+        let backend_guard = backend.lock().unwrap();
+        let cleanup = std::thread::spawn(move || {
+            cleanup_thread_started.wait();
+            cleanup_finished_stream_keepalive(
+                cleanup_active_session_id.as_ref(),
+                cleanup_backend.as_ref(),
+                expected_session_id,
+            );
+        });
+
+        cleanup_started.wait();
+        let claim_deadline = Instant::now() + Duration::from_secs(5);
+        while active_session_id.load(Ordering::SeqCst) != cleanup_session_id {
+            assert!(
+                Instant::now() < claim_deadline,
+                "cleanup did not claim the finished session"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            active_session_id.fetch_add(1, Ordering::SeqCst),
+            cleanup_session_id
+        );
+        drop(backend_guard);
+        cleanup.join().expect("cleanup thread should finish");
+
+        assert_eq!(
+            active_session_id.load(Ordering::SeqCst),
+            successor_session_id
+        );
+        assert_eq!(stop_count.load(Ordering::SeqCst), 0);
     }
 
     #[test]

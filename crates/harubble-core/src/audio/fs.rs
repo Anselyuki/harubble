@@ -117,6 +117,84 @@ fn normalize_oversized_ieee_float_fmt_chunk(data: &[u8]) -> Result<Cow<'_, [u8]>
     Ok(Cow::Borrowed(data))
 }
 
+fn encode_flac_with_sample_offsets(
+    samples: &[i32],
+    channels: usize,
+    bits_per_sample: usize,
+    sample_rate: usize,
+) -> Result<Vec<u8>> {
+    use flacenc::component::{BitRepr, Frame, FrameHeader, FrameOffset, Stream};
+    use flacenc::error::Verify;
+    use flacenc::source::{Context as FlacContext, FrameBuf, MemSource, Source};
+
+    let config = flacenc::config::Encoder::default()
+        .into_verified()
+        .map_err(|error| anyhow::anyhow!("FLAC encoder config error: {error:?}"))?;
+    let block_size = config.block_size;
+    let mut source = MemSource::from_samples(samples, channels, bits_per_sample, sample_rate);
+    let mut stream = Stream::new(sample_rate, channels, bits_per_sample)
+        .map_err(|error| anyhow::anyhow!("FLAC stream config error: {error:?}"))?;
+    stream
+        .stream_info_mut()
+        .set_block_sizes(block_size, block_size)
+        .map_err(|error| anyhow::anyhow!("FLAC block-size config error: {error:?}"))?;
+
+    let mut framebuf_and_context = (
+        FrameBuf::with_size(channels, block_size)
+            .map_err(|error| anyhow::anyhow!("FLAC frame buffer error: {error:?}"))?,
+        FlacContext::new(bits_per_sample, channels),
+    );
+    let mut start_sample = 0_u64;
+    let mut frame_number = 0_usize;
+
+    loop {
+        let read_samples = source
+            .read_samples(block_size, &mut framebuf_and_context)
+            .map_err(|error| anyhow::anyhow!("FLAC source read failed: {error:?}"))?;
+        if read_samples == 0 {
+            break;
+        }
+
+        let frame = flacenc::encode_fixed_size_frame(
+            &config,
+            &framebuf_and_context.0,
+            frame_number,
+            stream.stream_info(),
+        )
+        .map_err(|error| anyhow::anyhow!("FLAC frame encoding failed: {error:?}"))?;
+        let (header, subframes) = frame.into_parts();
+        let variable_header = FrameHeader::new(
+            header.block_size(),
+            header.channel_assignment().clone(),
+            bits_per_sample,
+            sample_rate,
+            FrameOffset::StartSample(start_sample),
+        )
+        .map_err(|error| anyhow::anyhow!("FLAC frame header error: {error:?}"))?;
+        let frame = Frame::new(variable_header, subframes.into_iter())
+            .map_err(|error| anyhow::anyhow!("FLAC frame reconstruction failed: {error:?}"))?;
+        stream.add_frame(frame);
+        start_sample += read_samples as u64;
+        frame_number += 1;
+    }
+
+    stream
+        .stream_info_mut()
+        .set_md5_digest(&framebuf_and_context.1.md5_digest());
+    stream
+        .stream_info_mut()
+        .set_total_samples(start_sample as usize);
+    stream
+        .verify()
+        .map_err(|error| anyhow::anyhow!("FLAC stream verification failed: {error:?}"))?;
+
+    let mut sink = flacenc::bitsink::ByteSink::new();
+    stream
+        .write(&mut sink)
+        .map_err(|error| anyhow::anyhow!("FLAC write failed: {error:?}"))?;
+    Ok(sink.as_slice().to_vec())
+}
+
 /// 将音频字节写入磁盘，并按需要执行 WAV → FLAC 转码。
 pub fn save_audio(
     data: &[u8],
@@ -138,8 +216,6 @@ pub fn save_audio(
     ensure_available_space(out_dir, data.len() as u64)?;
 
     if detected == AudioFormat::Wav && output_format == OutputFormat::Flac {
-        use flacenc::component::BitRepr;
-        use flacenc::error::Verify;
         let normalized_wav = normalize_oversized_ieee_float_fmt_chunk(data)?;
         let cursor = std::io::Cursor::new(normalized_wav.as_ref());
         let mut reader = hound::WavReader::new(cursor).context("Failed to read WAV data")?;
@@ -169,23 +245,14 @@ pub fn save_audio(
             }
         };
 
-        let config = flacenc::config::Encoder::default()
-            .into_verified()
-            .map_err(|e| anyhow::anyhow!("FLAC encoder config error: {:?}", e))?;
-        let source = flacenc::source::MemSource::from_samples(
+        let flac_bytes = encode_flac_with_sample_offsets(
             &samples,
             spec.channels as usize,
             bits_per_sample,
             spec.sample_rate as usize,
-        );
-        let flac_stream = flacenc::encode_with_fixed_block_size(&config, source, config.block_size)
-            .map_err(|e| anyhow::anyhow!("FLAC encoding failed: {:?}", e))?;
-        let mut sink = flacenc::bitsink::ByteSink::new();
-        flac_stream
-            .write(&mut sink)
-            .map_err(|e| anyhow::anyhow!("FLAC write failed: {:?}", e))?;
+        )?;
 
-        write_file_atomically(&out_path, sink.as_slice()).context("Failed to write FLAC file")?;
+        write_file_atomically(&out_path, &flac_bytes).context("Failed to write FLAC file")?;
     } else {
         write_file_atomically(&out_path, data).context("Failed to write audio file")?;
     }

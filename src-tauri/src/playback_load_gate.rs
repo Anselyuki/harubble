@@ -10,13 +10,11 @@ use tokio::sync::watch;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct GateSnapshot {
     active: bool,
-    ticket: u64,
 }
 
 #[derive(Debug)]
 struct GateState {
-    active: bool,
-    ticket: u64,
+    active_tickets: usize,
 }
 
 #[derive(Debug)]
@@ -33,47 +31,38 @@ pub(crate) struct PlaybackLoadGate {
 
 /// 一次播放启动窗口的 ticket。
 ///
-/// Drop 时只会释放自己创建的那一代 gate；如果已经有更新的播放启动进入，旧 ticket
-/// 的释放会被忽略，避免旧任务错误地放开新任务的退让门。
+/// 多个并发启动窗口会分别计数；只有最后一个 ticket Drop 后 gate 才会重新变为空闲。
 #[derive(Debug)]
 pub(crate) struct PlaybackLoadTicket {
     gate: PlaybackLoadGate,
-    ticket: u64,
 }
 
 impl PlaybackLoadGate {
     pub(crate) fn new() -> Self {
-        let snapshot = GateSnapshot {
-            active: false,
-            ticket: 0,
-        };
+        let snapshot = GateSnapshot { active: false };
         let (changes, _) = watch::channel(snapshot);
         Self {
             inner: Arc::new(GateInner {
-                state: Mutex::new(GateState {
-                    active: false,
-                    ticket: 0,
-                }),
+                state: Mutex::new(GateState { active_tickets: 0 }),
                 changes,
             }),
         }
     }
 
     pub(crate) fn enter(&self) -> PlaybackLoadTicket {
-        let ticket = {
-            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.ticket = state.ticket.saturating_add(1);
-            state.active = true;
-            state.ticket
-        };
-        self.publish(GateSnapshot {
-            active: true,
-            ticket,
-        });
-        PlaybackLoadTicket {
-            gate: self.clone(),
-            ticket,
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        let was_inactive = state.active_tickets == 0;
+        state.active_tickets = state
+            .active_tickets
+            .checked_add(1)
+            .expect("playback load gate ticket count overflow");
+        if was_inactive {
+            self.inner
+                .changes
+                .send_replace(GateSnapshot { active: true });
         }
+        drop(state);
+        PlaybackLoadTicket { gate: self.clone() }
     }
 
     pub(crate) fn is_active(&self) -> bool {
@@ -81,7 +70,22 @@ impl PlaybackLoadGate {
             .state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .active
+            .active_tickets
+            > 0
+    }
+
+    /// 仅在当前没有播放启动任务时执行操作。
+    ///
+    /// 操作执行期间会保留 gate 状态锁，使新的启动 ticket 无法与清理操作交错；
+    /// 调用方应只在控制路径使用，并避免在闭包中再次访问该 gate。
+    pub(crate) fn run_if_inactive<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.active_tickets > 0 {
+            return None;
+        }
+        let result = action();
+        drop(state);
+        Some(result)
     }
 
     pub(crate) async fn wait_until_inactive(&self) {
@@ -117,33 +121,21 @@ impl PlaybackLoadGate {
         }
     }
 
-    fn release(&self, ticket: u64) {
-        let should_publish = {
-            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-            if state.ticket == ticket && state.active {
-                state.active = false;
-                true
-            } else {
-                false
-            }
-        };
-
-        if should_publish {
-            self.publish(GateSnapshot {
-                active: false,
-                ticket,
-            });
+    fn release(&self) {
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        debug_assert!(state.active_tickets > 0, "playback load gate underflow");
+        state.active_tickets = state.active_tickets.saturating_sub(1);
+        if state.active_tickets == 0 {
+            self.inner
+                .changes
+                .send_replace(GateSnapshot { active: false });
         }
-    }
-
-    fn publish(&self, snapshot: GateSnapshot) {
-        self.inner.changes.send_replace(snapshot);
     }
 }
 
 impl Drop for PlaybackLoadTicket {
     fn drop(&mut self) {
-        self.gate.release(self.ticket);
+        self.gate.release();
     }
 }
 
@@ -168,6 +160,22 @@ mod tests {
         assert!(!gate.is_active());
     }
 
+    #[test]
+    fn newer_ticket_cannot_release_older_loading_window() {
+        let gate = PlaybackLoadGate::new();
+        let first = gate.enter();
+        let second = gate.enter();
+
+        drop(second);
+        assert!(
+            gate.is_active(),
+            "newer playback ticket must not hide an older pending load"
+        );
+
+        drop(first);
+        assert!(!gate.is_active());
+    }
+
     #[tokio::test]
     async fn wait_until_inactive_unblocks_when_current_ticket_drops() {
         let gate = PlaybackLoadGate::new();
@@ -184,5 +192,35 @@ mod tests {
 
         drop(ticket);
         waiter.await.expect("waiter should finish");
+    }
+
+    #[tokio::test]
+    async fn wait_until_inactive_waits_for_all_overlapping_tickets() {
+        let gate = PlaybackLoadGate::new();
+        let first = gate.enter();
+        let second = gate.enter();
+        let waiter_gate = gate.clone();
+        let waiter = tokio::spawn(async move {
+            waiter_gate.wait_until_inactive().await;
+        });
+
+        tokio::task::yield_now().await;
+        drop(second);
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        drop(first);
+        waiter.await.expect("waiter should finish");
+    }
+
+    #[test]
+    fn inactive_action_is_deferred_until_current_ticket_drops() {
+        let gate = PlaybackLoadGate::new();
+        let ticket = gate.enter();
+
+        assert_eq!(gate.run_if_inactive(|| 1), None);
+
+        drop(ticket);
+        assert_eq!(gate.run_if_inactive(|| 2), Some(2));
     }
 }

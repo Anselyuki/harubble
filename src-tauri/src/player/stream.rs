@@ -10,13 +10,14 @@ pub(crate) use crate::player::stream_helpers::{
     SINC_RESAMPLE_CHUNK_FRAMES,
 };
 use anyhow::{Context, Result};
-use crossbeam_queue::ArrayQueue;
+use rtrb::{Consumer, Producer, RingBuffer};
 use rubato::{Resampler, SincFixedIn};
+use std::cell::UnsafeCell;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -381,25 +382,65 @@ pub struct SampleBuffer {
 
 const MAX_BUFFER_SAMPLES: usize = 192_000 * 2 * 15;
 const SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES: usize = 1024;
+const SAMPLE_BUFFER_OPEN: u8 = 0;
+const SAMPLE_BUFFER_NATURAL_END: u8 = 1;
+const SAMPLE_BUFFER_CANCELLED: u8 = 2;
+const SAMPLE_BUFFER_FAILED: u8 = 3;
 
 struct SampleBufferInner {
-    queue: ArrayQueue<f32>,
-    finished: AtomicBool,
-    error_flag: AtomicBool,
-    error: Mutex<Option<String>>,
+    producer: Mutex<Producer<f32>>,
+    consumer: RealtimeSampleConsumer,
+    state: AtomicU8,
+    error: OnceLock<String>,
     wait_lock: Mutex<()>,
     condvar: Condvar,
+}
+
+struct RealtimeSampleConsumer {
+    consumer: UnsafeCell<Consumer<f32>>,
+    in_use: AtomicBool,
+}
+
+// SAFETY: `with_consumer` admits exactly one caller at a time with a non-blocking atomic claim.
+// The producer half is owned separately by `SampleBufferInner::producer`.
+unsafe impl Sync for RealtimeSampleConsumer {}
+
+impl RealtimeSampleConsumer {
+    fn new(consumer: Consumer<f32>) -> Self {
+        Self {
+            consumer: UnsafeCell::new(consumer),
+            in_use: AtomicBool::new(false),
+        }
+    }
+
+    fn with_consumer<T>(&self, action: impl FnOnce(&mut Consumer<f32>) -> T) -> Option<T> {
+        self.in_use
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok()?;
+        let _guard = RealtimeConsumerUseGuard(&self.in_use);
+        // SAFETY: the atomic claim above guarantees exclusive access for the closure lifetime.
+        Some(action(unsafe { &mut *self.consumer.get() }))
+    }
+}
+
+struct RealtimeConsumerUseGuard<'a>(&'a AtomicBool);
+
+impl Drop for RealtimeConsumerUseGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl SampleBuffer {
     /// 创建一个空的采样缓冲区。
     pub fn new() -> Self {
+        let (producer, consumer) = RingBuffer::new(MAX_BUFFER_SAMPLES);
         Self {
             inner: Arc::new(SampleBufferInner {
-                queue: ArrayQueue::new(MAX_BUFFER_SAMPLES),
-                finished: AtomicBool::new(false),
-                error_flag: AtomicBool::new(false),
-                error: Mutex::new(None),
+                producer: Mutex::new(producer),
+                consumer: RealtimeSampleConsumer::new(consumer),
+                state: AtomicU8::new(SAMPLE_BUFFER_OPEN),
+                error: OnceLock::new(),
                 wait_lock: Mutex::new(()),
                 condvar: Condvar::new(),
             }),
@@ -418,13 +459,14 @@ impl SampleBuffer {
         if samples.is_empty() {
             return;
         }
+        let mut producer = self.inner.producer.lock().unwrap();
         let mut offset = 0_usize;
 
         while offset < samples.len() {
-            while self.inner.queue.is_full()
-                && !self.inner.finished.load(Ordering::Acquire)
-                && !self.inner.error_flag.load(Ordering::Acquire)
+            while producer.slots() == 0
+                && self.inner.state.load(Ordering::Acquire) == SAMPLE_BUFFER_OPEN
             {
+                // 实时消费者不触碰 Condvar；短超时负责在其释放队列空间后恢复生产。
                 let guard = self.inner.wait_lock.lock().unwrap();
                 let _ = self
                     .inner
@@ -433,35 +475,66 @@ impl SampleBuffer {
                     .unwrap();
             }
 
-            if self.inner.finished.load(Ordering::Acquire)
-                || self.inner.error_flag.load(Ordering::Acquire)
-            {
+            if self.inner.state.load(Ordering::Acquire) != SAMPLE_BUFFER_OPEN {
                 self.inner.condvar.notify_all();
                 return;
             }
 
-            let end = (offset + SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES).min(samples.len());
-            while offset < end {
-                match self.inner.queue.push(sanitize_pcm_sample(samples[offset])) {
-                    Ok(()) => offset += 1,
-                    Err(_) => break,
-                }
-            }
+            let write_count = (samples.len() - offset)
+                .min(SAMPLE_BUFFER_PUSH_CHUNK_SAMPLES)
+                .min(producer.slots());
+            let written = producer
+                .write_chunk_uninit(write_count)
+                .expect("sample buffer slots changed with a single producer")
+                .fill_from_iter(
+                    samples[offset..offset + write_count]
+                        .iter()
+                        .copied()
+                        .map(sanitize_pcm_sample),
+                );
+            debug_assert_eq!(written, write_count);
+            offset += written;
             self.inner.condvar.notify_all();
         }
     }
 
     /// 标记采样缓冲区不会再写入新的数据。
+    ///
+    /// 该方法只应由生产端在最后一次 `push` 返回后调用。后端停止或切换会话时应调用
+    /// `cancel`，避免把取消误报成自然播放结束。
     pub fn finish(&self) {
-        self.inner.finished.store(true, Ordering::Release);
+        let _ = self.inner.state.compare_exchange(
+            SAMPLE_BUFFER_OPEN,
+            SAMPLE_BUFFER_NATURAL_END,
+            Ordering::Release,
+            Ordering::Relaxed,
+        );
+        self.inner.condvar.notify_all();
+    }
+
+    /// 取消采样缓冲区，但不把取消当作自然播放结束。
+    pub fn cancel(&self) {
+        let _ = self.inner.state.compare_exchange(
+            SAMPLE_BUFFER_OPEN,
+            SAMPLE_BUFFER_CANCELLED,
+            Ordering::Release,
+            Ordering::Relaxed,
+        );
         self.inner.condvar.notify_all();
     }
 
     /// 标记采样缓冲区失败并唤醒等待中的消费者。
     pub fn fail(&self, message: impl Into<String>) {
-        *self.inner.error.lock().unwrap() = Some(message.into());
-        self.inner.error_flag.store(true, Ordering::Release);
-        self.inner.finished.store(true, Ordering::Release);
+        if self.inner.state.load(Ordering::Acquire) != SAMPLE_BUFFER_OPEN {
+            return;
+        }
+        let _ = self.inner.error.set(message.into());
+        let _ = self.inner.state.compare_exchange(
+            SAMPLE_BUFFER_OPEN,
+            SAMPLE_BUFFER_FAILED,
+            Ordering::Release,
+            Ordering::Relaxed,
+        );
         self.inner.condvar.notify_all();
     }
 
@@ -472,7 +545,8 @@ impl SampleBuffer {
     /// 返回值会说明本次写入了多少采样，以及缓冲区是否已经结束或失败。
     #[cfg(test)]
     pub fn pop_complete_frames_into(&self, output: &mut [f32], frame_channels: usize) -> PopStatus {
-        self.pop_frames_into(output, frame_channels, false)
+        self.try_pop_frames_into(output, frame_channels, false)
+            .expect("sample buffer consumer is used concurrently")
     }
 
     /// 尝试从缓冲区弹出完整声道帧。
@@ -485,7 +559,7 @@ impl SampleBuffer {
         output: &mut [f32],
         frame_channels: usize,
     ) -> Option<PopStatus> {
-        Some(self.pop_frames_into(output, frame_channels, false))
+        self.try_pop_frames_into(output, frame_channels, false)
     }
 
     /// 尝试弹出一整个实时输出 callback 所需的完整声道帧。
@@ -498,64 +572,93 @@ impl SampleBuffer {
         output: &mut [f32],
         frame_channels: usize,
     ) -> Option<PopStatus> {
-        Some(self.pop_frames_into(output, frame_channels, true))
+        self.try_pop_frames_into(output, frame_channels, true)
     }
 
-    fn pop_frames_into(
+    fn try_pop_frames_into(
         &self,
         output: &mut [f32],
         frame_channels: usize,
         require_full_callback: bool,
-    ) -> PopStatus {
+    ) -> Option<PopStatus> {
         if let Some(error) = self.current_error() {
-            return PopStatus {
+            return Some(PopStatus {
                 written: 0,
                 finished: true,
                 error: Some(error),
-            };
+            });
         }
 
         let frame_channels = frame_channels.max(1);
         let writable_samples = output.len() - (output.len() % frame_channels);
-        let available_samples = self.inner.queue.len();
-        let available_complete_samples = available_samples - (available_samples % frame_channels);
-
-        if require_full_callback
-            && !self.inner.finished.load(Ordering::Acquire)
-            && available_complete_samples < writable_samples
-        {
-            return PopStatus {
-                written: 0,
-                finished: false,
-                error: self.current_error(),
-            };
-        }
-
-        let target_samples = writable_samples.min(available_complete_samples);
-        let mut written = 0_usize;
-        while written < target_samples {
-            match self.inner.queue.pop() {
-                Some(sample) => {
-                    output[written] = sample;
-                    written += 1;
-                }
-                None => break,
+        self.inner.consumer.with_consumer(|consumer| {
+            let state = self.inner.state.load(Ordering::Acquire);
+            if state == SAMPLE_BUFFER_FAILED {
+                return PopStatus {
+                    written: 0,
+                    finished: true,
+                    error: self.current_error(),
+                };
             }
-        }
+            if state == SAMPLE_BUFFER_CANCELLED {
+                return PopStatus {
+                    written: 0,
+                    finished: false,
+                    error: None,
+                };
+            }
 
-        if written == 0 && self.inner.finished.load(Ordering::Acquire) && available_samples > 0 {
-            while self.inner.queue.pop().is_some() {}
-        }
+            let available_samples = consumer.slots();
+            let available_complete_samples =
+                available_samples - (available_samples % frame_channels);
+            if require_full_callback
+                && state == SAMPLE_BUFFER_OPEN
+                && available_complete_samples < writable_samples
+            {
+                return PopStatus {
+                    written: 0,
+                    finished: false,
+                    error: None,
+                };
+            }
 
-        if written > 0 {
-            self.inner.condvar.notify_all();
-        }
+            let target_samples = writable_samples.min(available_complete_samples);
+            let written = if target_samples == 0 {
+                0
+            } else {
+                let (popped, _) = consumer.pop_partial_slice(&mut output[..target_samples]);
+                popped.len()
+            };
 
-        PopStatus {
-            written,
-            finished: self.inner.finished.load(Ordering::Acquire) && self.inner.queue.is_empty(),
-            error: self.current_error(),
-        }
+            let final_state = self.inner.state.load(Ordering::Acquire);
+            let remaining = consumer.slots();
+            if final_state == SAMPLE_BUFFER_NATURAL_END
+                && remaining > 0
+                && remaining < frame_channels
+            {
+                for _ in 0..remaining {
+                    let _ = consumer.pop();
+                }
+            }
+
+            match final_state {
+                SAMPLE_BUFFER_FAILED => PopStatus {
+                    written: 0,
+                    finished: true,
+                    error: self.current_error(),
+                },
+                SAMPLE_BUFFER_CANCELLED => PopStatus {
+                    written: 0,
+                    finished: false,
+                    error: None,
+                },
+                _ => PopStatus {
+                    written,
+                    finished: final_state == SAMPLE_BUFFER_NATURAL_END && consumer.is_empty(),
+                    error: None,
+                },
+            }
+        })
     }
 
     /// 等待缓冲区中至少出现指定数量的采样。
@@ -576,11 +679,34 @@ impl SampleBuffer {
         minimum_samples: usize,
         stop_flag: &AtomicBool,
     ) -> Result<SampleWaitOutcome> {
-        while self.inner.queue.len() < minimum_samples
-            && !self.inner.finished.load(Ordering::Acquire)
-            && !self.inner.error_flag.load(Ordering::Acquire)
-            && !stop_flag.load(Ordering::SeqCst)
-        {
+        loop {
+            let state = self.inner.state.load(Ordering::Acquire);
+            if state == SAMPLE_BUFFER_FAILED {
+                anyhow::bail!(self
+                    .current_error()
+                    .unwrap_or_else(|| "Audio sample buffer failed".to_string()));
+            }
+            if stop_flag.load(Ordering::SeqCst) || state == SAMPLE_BUFFER_CANCELLED {
+                anyhow::bail!("Playback stopped");
+            }
+
+            if let Some(available_samples) = self
+                .inner
+                .consumer
+                .with_consumer(|consumer| consumer.slots())
+            {
+                if state == SAMPLE_BUFFER_NATURAL_END {
+                    return if available_samples == 0 {
+                        Ok(SampleWaitOutcome::Ended)
+                    } else {
+                        Ok(SampleWaitOutcome::Ready)
+                    };
+                }
+                if available_samples >= minimum_samples {
+                    return Ok(SampleWaitOutcome::Ready);
+                }
+            }
+
             let guard = self.inner.wait_lock.lock().unwrap();
             let _ = self
                 .inner
@@ -588,27 +714,17 @@ impl SampleBuffer {
                 .wait_timeout(guard, Duration::from_millis(50))
                 .unwrap();
         }
-
-        if let Some(error) = self.current_error() {
-            anyhow::bail!(error);
-        }
-        if stop_flag.load(Ordering::SeqCst) {
-            anyhow::bail!("Playback stopped");
-        }
-        if self.inner.finished.load(Ordering::Acquire) && self.inner.queue.is_empty() {
-            return Ok(SampleWaitOutcome::Ended);
-        }
-        Ok(SampleWaitOutcome::Ready)
     }
 
     #[cfg(test)]
     pub(crate) fn hold_lock_for_test(&self, duration: Duration) {
+        let _producer = self.inner.producer.lock().unwrap();
         thread::sleep(duration);
     }
 
     fn current_error(&self) -> Option<String> {
-        if self.inner.error_flag.load(Ordering::Acquire) {
-            self.inner.error.lock().unwrap().clone()
+        if self.inner.state.load(Ordering::Acquire) == SAMPLE_BUFFER_FAILED {
+            self.inner.error.get().cloned()
         } else {
             None
         }
@@ -1234,6 +1350,7 @@ mod tests {
     use std::fs::File;
     use std::io::{self, Read, Seek, SeekFrom, Write};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
     use symphonia::core::audio::{Channels, SignalSpec};
@@ -1512,6 +1629,64 @@ mod tests {
     }
 
     #[test]
+    fn sample_buffer_busy_consumer_returns_none_without_losing_samples() {
+        let buffer = SampleBuffer::new();
+        buffer.push(&[0.25, -0.25]);
+        let held_buffer = buffer.clone();
+        let acquired = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let acquired_for_holder = Arc::clone(&acquired);
+        let release_for_holder = Arc::clone(&release);
+
+        let handle = thread::spawn(move || {
+            held_buffer
+                .inner
+                .consumer
+                .with_consumer(|_| {
+                    acquired_for_holder.wait();
+                    release_for_holder.wait();
+                })
+                .expect("test holder should claim the consumer");
+        });
+        acquired.wait();
+
+        let mut output = [1.0_f32; 2];
+        assert!(buffer
+            .try_pop_complete_frames_into(&mut output, 2)
+            .is_none());
+        assert_eq!(output, [1.0, 1.0]);
+
+        release.wait();
+        handle.join().expect("consumer holder should finish");
+        let status = buffer
+            .try_pop_complete_frames_into(&mut output, 2)
+            .expect("consumer claim should be released");
+        assert_eq!(status.written, 2);
+        assert_eq!(output, [0.25, -0.25]);
+    }
+
+    #[test]
+    fn sample_buffer_cancel_does_not_report_natural_end() {
+        let buffer = SampleBuffer::new();
+        buffer.push(&[0.25, -0.25]);
+        buffer.cancel();
+
+        let mut output = [1.0_f32; 2];
+        let status = buffer.pop_complete_frames_into(&mut output, 2);
+
+        assert_eq!(status.written, 0);
+        assert!(!status.finished);
+        assert!(status.error.is_none());
+        assert_eq!(output, [1.0, 1.0]);
+
+        let stop_flag = AtomicBool::new(false);
+        let error = buffer
+            .wait_for_samples_or_end(1, &stop_flag)
+            .expect_err("cancelled buffer should stop waiters");
+        assert!(format!("{error:#}").contains("Playback stopped"));
+    }
+
+    #[test]
     fn sample_buffer_fail_discards_queued_samples() {
         let buffer = SampleBuffer::new();
         buffer.push(&[0.25, -0.25]);
@@ -1557,16 +1732,25 @@ mod tests {
         let buffer = SampleBuffer::new();
         let producer = buffer.clone();
         let total_samples = SampleBuffer::max_capacity_samples() + 512;
-        let samples = vec![0.25_f32; total_samples];
+        let samples = Arc::new(
+            (0..total_samples)
+                .map(|index| (index % 1024) as f32 / 512.0 - 1.0)
+                .collect::<Vec<_>>(),
+        );
+        let producer_samples = Arc::clone(&samples);
 
         let handle = thread::spawn(move || {
-            producer.push(&samples);
+            producer.push(producer_samples.as_slice());
         });
 
         let mut drained = 0_usize;
         let mut output = vec![0.0_f32; 1024];
         while drained < total_samples {
             let status = buffer.pop_complete_frames_into(&mut output, 2);
+            assert_eq!(
+                &output[..status.written],
+                &samples[drained..drained + status.written]
+            );
             drained += status.written;
             if status.written == 0 {
                 thread::sleep(Duration::from_millis(5));

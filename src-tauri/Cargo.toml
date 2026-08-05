@@ -44,6 +44,7 @@ tantivy = "0.22"
 pinyin = { version = "0.11", default-features = false, features = ["plain"] }
 rusqlite = { version = "0.34", features = ["bundled"] }
 rubato = "0.16"
+rtrb = "0.3.4"
 uuid = { version = "1", features = ["v4"] }
 fluent-templates = "0.14.0"
 unic-langid = "0.9.6"

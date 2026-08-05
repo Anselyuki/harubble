@@ -12,13 +12,27 @@ use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{
-    FromSample, Sample, SampleFormat, SizedSample, Stream, SupportedStreamConfig,
+    FromSample, Sample, SampleFormat, SizedSample, Stream, StreamError, SupportedStreamConfig,
     SupportedStreamConfigRange, I24, U24,
 };
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use crossbeam_queue::ArrayQueue;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+// 该等待只运行在旧静音流的退休线程中，不会阻塞播放 actor；给慢唤醒、AirPlay
+// 和聚合设备留出足够时间完成首个 callback。
+#[cfg(target_os = "macos")]
+const STREAM_START_CALLBACK_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(target_os = "macos")]
+const STREAM_START_CALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(1);
+const OUTPUT_SQUARE_Q32_SCALE: f64 = (1_u64 << 32) as f64;
+const CALLBACK_METRIC_QUEUE_CAPACITY: usize = 16_384;
+const INITIAL_OUTPUT_SCRATCH_FRAMES: usize = 8_192;
+const STREAM_START_PENDING: u8 = 0;
+const STREAM_START_READY: u8 = 1;
+const STREAM_START_FAILED: u8 = 2;
 
 fn choose_negotiated_output_config(
     device: &cpal::Device,
@@ -168,83 +182,233 @@ impl From<OutputFormat> for ExactOutputFormat {
 }
 
 struct CallbackMetricCounters {
-    silence_due_to_lock: AtomicU64,
-    underrun_frames: AtomicU64,
-    callback_count: AtomicU64,
-    callback_elapsed_ns_total: AtomicU64,
-    callback_elapsed_ns_max: AtomicU64,
-    /// 回调运行时间 log2μs 直方图；桶预分配以避免回调路径分配。
-    callback_duration_buckets: [AtomicU64; CALLBACK_DURATION_BUCKETS],
+    output_rate: u64,
+    callback_observations: ArrayQueue<CallbackObservation>,
+    callback_metrics_dropped_count: AtomicU64,
+    stream_start_wait_ns: AtomicU64,
+    stream_start_timeout_count: AtomicU64,
+    stream_start_failure_count: AtomicU64,
+    output_xrun_count: AtomicU64,
 }
 
 impl Default for CallbackMetricCounters {
     fn default() -> Self {
-        Self {
-            silence_due_to_lock: AtomicU64::new(0),
-            underrun_frames: AtomicU64::new(0),
-            callback_count: AtomicU64::new(0),
-            callback_elapsed_ns_total: AtomicU64::new(0),
-            callback_elapsed_ns_max: AtomicU64::new(0),
-            callback_duration_buckets: std::array::from_fn(|_| AtomicU64::new(0)),
-        }
+        Self::new(48_000)
     }
 }
 
 impl CallbackMetricCounters {
-    fn record_silence_due_to_lock(&self) {
-        self.silence_due_to_lock.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn record_underrun_frames(&self, frames: u64) {
-        if frames > 0 {
-            self.underrun_frames.fetch_add(frames, Ordering::Relaxed);
+    fn new(output_rate: u32) -> Self {
+        Self {
+            output_rate: u64::from(output_rate.max(1)),
+            callback_observations: ArrayQueue::new(CALLBACK_METRIC_QUEUE_CAPACITY),
+            callback_metrics_dropped_count: AtomicU64::new(0),
+            stream_start_wait_ns: AtomicU64::new(0),
+            stream_start_timeout_count: AtomicU64::new(0),
+            stream_start_failure_count: AtomicU64::new(0),
+            output_xrun_count: AtomicU64::new(0),
         }
     }
 
-    /// 记录一次回调运行时间（纳秒），只在实时回调路径的收尾处调用。
-    ///
-    /// 所有操作使用 Relaxed 原子，不引入内存屏障；直方图桶预分配，路径内无堆分配。
-    fn record_callback_elapsed(&self, elapsed_ns: u64) {
-        self.callback_count.fetch_add(1, Ordering::Relaxed);
-        self.callback_elapsed_ns_total
-            .fetch_add(elapsed_ns, Ordering::Relaxed);
-        // fetch_max 更新历史峰值
-        let mut current = self.callback_elapsed_ns_max.load(Ordering::Relaxed);
-        while elapsed_ns > current {
-            match self.callback_elapsed_ns_max.compare_exchange_weak(
-                current,
-                elapsed_ns,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(observed) => current = observed,
+    fn record_callback(&self, observation: CallbackObservation) {
+        if self.callback_observations.push(observation).is_err() {
+            self.callback_metrics_dropped_count
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn record_stream_start_wait(&self, elapsed: Duration, outcome: StreamStartWaitOutcome) {
+        let elapsed_ns = elapsed.as_nanos().min(u64::MAX as u128) as u64;
+        update_atomic_max(&self.stream_start_wait_ns, elapsed_ns);
+        match outcome {
+            StreamStartWaitOutcome::TimedOut => {
+                self.stream_start_timeout_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
+            StreamStartWaitOutcome::Failed => {
+                self.stream_start_failure_count
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            StreamStartWaitOutcome::Ready | StreamStartWaitOutcome::Cancelled => {}
         }
-        let bucket = callback_duration_bucket(elapsed_ns);
-        self.callback_duration_buckets[bucket].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_nonfatal_stream_error(&self, disposition: StreamErrorDisposition) {
+        match disposition {
+            StreamErrorDisposition::Xrun => {
+                self.output_xrun_count.fetch_add(1, Ordering::Relaxed);
+            }
+            StreamErrorDisposition::Fatal => {}
+        }
     }
 
     fn drain(&self) -> AudioCallbackMetrics {
-        let mut buckets = [0u64; CALLBACK_DURATION_BUCKETS];
-        for (i, slot) in buckets.iter_mut().enumerate() {
-            *slot = self.callback_duration_buckets[i].swap(0, Ordering::Relaxed);
+        let mut metrics = AudioCallbackMetrics {
+            callback_frames_min: u64::MAX,
+            ..AudioCallbackMetrics::default()
+        };
+        let mut output_square_sum = 0.0_f64;
+
+        while let Some(observation) = self.callback_observations.pop() {
+            metrics.silence_due_to_lock = metrics
+                .silence_due_to_lock
+                .saturating_add(observation.silence_due_to_lock);
+            metrics.underrun_frames = metrics
+                .underrun_frames
+                .saturating_add(observation.underrun_frames);
+            metrics.callback_count = metrics.callback_count.saturating_add(1);
+            metrics.callback_elapsed_ns_total = metrics
+                .callback_elapsed_ns_total
+                .saturating_add(observation.elapsed_ns);
+            metrics.callback_elapsed_ns_max =
+                metrics.callback_elapsed_ns_max.max(observation.elapsed_ns);
+            metrics.callback_frames_total = metrics
+                .callback_frames_total
+                .saturating_add(observation.callback_frames);
+            metrics.callback_frames_min =
+                metrics.callback_frames_min.min(observation.callback_frames);
+            metrics.callback_frames_max =
+                metrics.callback_frames_max.max(observation.callback_frames);
+
+            let callback_period_ns = observation
+                .callback_frames
+                .saturating_mul(1_000_000_000)
+                .checked_div(self.output_rate)
+                .unwrap_or(0);
+            if callback_period_ns > 0 && observation.elapsed_ns > callback_period_ns {
+                metrics.callback_over_period_count =
+                    metrics.callback_over_period_count.saturating_add(1);
+            }
+            let bucket = callback_duration_bucket(observation.elapsed_ns);
+            metrics.callback_duration_buckets[bucket] =
+                metrics.callback_duration_buckets[bucket].saturating_add(1);
+
+            metrics.output_sample_count = metrics
+                .output_sample_count
+                .saturating_add(observation.output.sample_count);
+            output_square_sum += observation.output.square_sum;
+            metrics.output_peak_abs_bits = metrics
+                .output_peak_abs_bits
+                .max(observation.output.peak_abs_bits);
+            metrics.output_clipped_samples = metrics
+                .output_clipped_samples
+                .saturating_add(observation.output.clipped_samples);
+            metrics.output_nonfinite_samples = metrics
+                .output_nonfinite_samples
+                .saturating_add(observation.output.nonfinite_samples);
         }
-        AudioCallbackMetrics {
-            silence_due_to_lock: self.silence_due_to_lock.swap(0, Ordering::Relaxed),
-            underrun_frames: self.underrun_frames.swap(0, Ordering::Relaxed),
-            callback_count: self.callback_count.swap(0, Ordering::Relaxed),
-            callback_elapsed_ns_total: self.callback_elapsed_ns_total.swap(0, Ordering::Relaxed),
-            callback_elapsed_ns_max: self.callback_elapsed_ns_max.swap(0, Ordering::Relaxed),
-            callback_duration_buckets: buckets,
+
+        if metrics.callback_frames_min == u64::MAX {
+            metrics.callback_frames_min = 0;
         }
+        metrics.callback_metrics_dropped_count = self
+            .callback_metrics_dropped_count
+            .swap(0, Ordering::Relaxed);
+        metrics.stream_start_wait_ns = self.stream_start_wait_ns.swap(0, Ordering::Relaxed);
+        metrics.stream_start_timeout_count =
+            self.stream_start_timeout_count.swap(0, Ordering::Relaxed);
+        metrics.stream_start_failure_count =
+            self.stream_start_failure_count.swap(0, Ordering::Relaxed);
+        metrics.output_xrun_count = self.output_xrun_count.swap(0, Ordering::Relaxed);
+        metrics.output_square_sum_q32 =
+            (output_square_sum * OUTPUT_SQUARE_Q32_SCALE).round() as u64;
+        metrics
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn update_atomic_max(target: &AtomicU64, value: u64) {
+    let mut current = target.load(Ordering::Relaxed);
+    while value > current {
+        match target.compare_exchange_weak(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct OutputSampleObservation {
+    sample_count: u64,
+    square_sum: f64,
+    peak_abs_bits: u64,
+    clipped_samples: u64,
+    nonfinite_samples: u64,
+}
+
+impl OutputSampleObservation {
+    fn observe(&mut self, sample: f32) -> f32 {
+        self.observe_with_source(sample, sample)
+    }
+
+    fn observe_with_source(&mut self, output_sample: f32, source_sample: f32) -> f32 {
+        self.sample_count = self.sample_count.saturating_add(1);
+        if !source_sample.is_finite() {
+            self.nonfinite_samples = self.nonfinite_samples.saturating_add(1);
+        } else if source_sample.abs() > 1.0 {
+            self.clipped_samples = self.clipped_samples.saturating_add(1);
+        }
+
+        let sanitized = sanitize_output_sample(output_sample);
+        self.peak_abs_bits = self.peak_abs_bits.max(u64::from(sanitized.abs().to_bits()));
+        self.square_sum += f64::from(sanitized) * f64::from(sanitized);
+        sanitized
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct CallbackObservation {
+    silence_due_to_lock: u64,
+    underrun_frames: u64,
+    elapsed_ns: u64,
+    callback_frames: u64,
+    output: OutputSampleObservation,
+}
+
+struct CallbackMetricRecord<'a> {
+    counters: &'a CallbackMetricCounters,
+    started_at: Instant,
+    observation: CallbackObservation,
+}
+
+impl<'a> CallbackMetricRecord<'a> {
+    fn new(counters: &'a CallbackMetricCounters, callback_frames: u64) -> Self {
+        Self {
+            counters,
+            started_at: Instant::now(),
+            observation: CallbackObservation {
+                callback_frames,
+                ..CallbackObservation::default()
+            },
+        }
+    }
+
+    fn record_silence_due_to_lock(&mut self) {
+        self.observation.silence_due_to_lock = 1;
+    }
+
+    fn record_underrun_frames(&mut self, frames: u64) {
+        self.observation.underrun_frames = frames;
+    }
+
+    fn record_output_observation(&mut self, observation: OutputSampleObservation) {
+        self.observation.output = observation;
+    }
+}
+
+impl Drop for CallbackMetricRecord<'_> {
+    fn drop(&mut self) {
+        self.observation.elapsed_ns =
+            self.started_at.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+        self.counters.record_callback(self.observation);
     }
 }
 
 /// 把纳秒转成 log2μs 直方图桶索引。
 ///
 /// 桶 i 覆盖 `[2^i μs, 2^(i+1) μs)`；桶 15（最后一桶）为 ≥32768μs 的溢出桶。
-/// 不使用浮点，只用整数移位，回调路径开销可忽略。
+/// monitor 聚合完整回调观测时使用整数移位计算。
 fn callback_duration_bucket(elapsed_ns: u64) -> usize {
     let micros = elapsed_ns / 1000;
     if micros == 0 {
@@ -254,9 +418,90 @@ fn callback_duration_bucket(elapsed_ns: u64) -> usize {
     log2.min(CALLBACK_DURATION_BUCKETS - 1)
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamStartWaitOutcome {
+    Ready,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamErrorDisposition {
+    Xrun,
+    Fatal,
+}
+
+fn stream_error_disposition(error: &StreamError) -> StreamErrorDisposition {
+    match error {
+        StreamError::BufferUnderrun => StreamErrorDisposition::Xrun,
+        _ => StreamErrorDisposition::Fatal,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn current_stream_start_outcome(
+    state: &AtomicU8,
+    stop_flag: &AtomicBool,
+) -> Option<StreamStartWaitOutcome> {
+    if stop_flag.load(Ordering::SeqCst) {
+        return Some(StreamStartWaitOutcome::Cancelled);
+    }
+    match state.load(Ordering::Acquire) {
+        STREAM_START_READY => Some(StreamStartWaitOutcome::Ready),
+        STREAM_START_FAILED => Some(StreamStartWaitOutcome::Failed),
+        _ => None,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn wait_for_stream_start(
+    state: &AtomicU8,
+    stop_flag: &AtomicBool,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> (StreamStartWaitOutcome, Duration) {
+    let started_at = Instant::now();
+    loop {
+        if let Some(outcome) = current_stream_start_outcome(state, stop_flag) {
+            return (outcome, started_at.elapsed());
+        }
+
+        let elapsed = started_at.elapsed();
+        if elapsed >= timeout {
+            if let Some(outcome) = current_stream_start_outcome(state, stop_flag) {
+                return (outcome, started_at.elapsed());
+            }
+            return (StreamStartWaitOutcome::TimedOut, elapsed);
+        }
+        thread::sleep(poll_interval.min(timeout.saturating_sub(elapsed)));
+    }
+}
+
 pub struct CpalBackend {
     stream: Option<Stream>,
     samples: Option<SampleBuffer>,
+}
+
+struct PendingSampleBufferGuard(Option<SampleBuffer>);
+
+impl PendingSampleBufferGuard {
+    fn new(samples: SampleBuffer) -> Self {
+        Self(Some(samples))
+    }
+
+    fn disarm(&mut self) {
+        self.0.take();
+    }
+}
+
+impl Drop for PendingSampleBufferGuard {
+    fn drop(&mut self) {
+        if let Some(samples) = self.0.take() {
+            samples.cancel();
+        }
+    }
 }
 
 impl CpalBackend {
@@ -301,6 +546,8 @@ impl PlaybackBackend for CpalBackend {
         metrics_handler: AudioMetricsHandler,
         underrun_handler: AudioUnderrunHandler,
     ) -> Result<()> {
+        let mut pending_samples = PendingSampleBufferGuard::new(samples.clone());
+
         #[cfg(not(target_os = "macos"))]
         self.stop()?;
 
@@ -318,8 +565,9 @@ impl PlaybackBackend for CpalBackend {
         let frames_rendered = Arc::new(AtomicU64::new(0));
         let finish_fired = Arc::new(AtomicBool::new(false));
         let buffer_error_reported = Arc::new(AtomicBool::new(false));
-        let callback_metrics = Arc::new(CallbackMetricCounters::default());
+        let callback_metrics = Arc::new(CallbackMetricCounters::new(output_rate));
         let underrun_requested = Arc::new(AtomicBool::new(false));
+        let stream_start_state = Arc::new(AtomicU8::new(STREAM_START_PENDING));
 
         macro_rules! build_stream_for_sample {
             ($sample_type:ty) => {
@@ -335,6 +583,7 @@ impl PlaybackBackend for CpalBackend {
                     Arc::clone(&error_handler),
                     Arc::clone(&callback_metrics),
                     Arc::clone(&underrun_requested),
+                    Arc::clone(&stream_start_state),
                     output_channels,
                     output_dither_lsb(config.sample_format()),
                 )?
@@ -359,13 +608,27 @@ impl PlaybackBackend for CpalBackend {
 
         stream.play().context("Failed to start output stream")?;
 
-        // macOS 上旧流已被会话 stop flag 切到 equilibrium，等新流真正运行后再释放，
-        // 避免 USB 音频设备在歌曲加载期间失去稳定的静音时钟。其他平台已在开流前 stop。
+        // macOS 上旧流已被会话 stop flag 切到 equilibrium。新流先接管后，旧流交给
+        // 独立退休线程等待首个 callback，再释放它，避免慢唤醒设备阻塞播放 actor 或
+        // 在歌曲加载期间失去稳定的静音时钟。其他平台已在开流前 stop。
         let previous_stream = self.stream.replace(stream);
         let previous_samples = self.samples.replace(samples);
+        pending_samples.disarm();
         if let Some(previous_samples) = previous_samples {
-            previous_samples.finish();
+            previous_samples.cancel();
         }
+
+        #[cfg(target_os = "macos")]
+        if let Some(previous_stream) = previous_stream {
+            spawn_previous_stream_retirement(
+                previous_stream,
+                Arc::clone(&stream_start_state),
+                Arc::clone(&stop_flag),
+                Arc::clone(&callback_metrics),
+                Arc::clone(&error_handler),
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
         drop(previous_stream);
 
         spawn_stream_monitor(
@@ -386,7 +649,7 @@ impl PlaybackBackend for CpalBackend {
 
     fn quiesce_for_transition(&mut self) -> Result<()> {
         if let Some(samples) = self.samples.take() {
-            samples.finish();
+            samples.cancel();
         }
         if let Some(stream) = &self.stream {
             stream
@@ -398,7 +661,7 @@ impl PlaybackBackend for CpalBackend {
 
     fn stop(&mut self) -> Result<()> {
         if let Some(samples) = self.samples.take() {
-            samples.finish();
+            samples.cancel();
         }
         self.stream.take();
         Ok(())
@@ -419,6 +682,35 @@ impl PlaybackBackend for CpalBackend {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn spawn_previous_stream_retirement(
+    previous_stream: Stream,
+    stream_start_state: Arc<AtomicU8>,
+    stop_flag: Arc<AtomicBool>,
+    callback_metrics: Arc<CallbackMetricCounters>,
+    error_handler: PlaybackErrorHandler,
+) {
+    let _ = thread::Builder::new()
+        .name("player-stream-retirement".into())
+        .spawn(move || {
+            let (outcome, elapsed) = wait_for_stream_start(
+                &stream_start_state,
+                &stop_flag,
+                STREAM_START_CALLBACK_TIMEOUT,
+                STREAM_START_CALLBACK_POLL_INTERVAL,
+            );
+            callback_metrics.record_stream_start_wait(elapsed, outcome);
+            if outcome == StreamStartWaitOutcome::TimedOut {
+                stream_start_state.store(STREAM_START_FAILED, Ordering::Release);
+                error_handler(format!(
+                    "Output stream did not produce its first callback within {} seconds",
+                    STREAM_START_CALLBACK_TIMEOUT.as_secs()
+                ));
+            }
+            drop(previous_stream);
+        });
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_stream<T>(
     device: &cpal::Device,
@@ -432,6 +724,7 @@ fn build_stream<T>(
     error_handler: PlaybackErrorHandler,
     callback_metrics: Arc<CallbackMetricCounters>,
     underrun_requested: Arc<AtomicBool>,
+    stream_start_state: Arc<AtomicU8>,
     output_channels: u16,
     dither_lsb: f32,
 ) -> Result<Stream>
@@ -439,10 +732,14 @@ where
     T: Sample + SizedSample + FromSample<f32>,
 {
     let channels = usize::from(output_channels.max(1));
-    let mut scratch = Vec::<f32>::new();
+    let mut scratch =
+        Vec::<f32>::with_capacity(INITIAL_OUTPUT_SCRATCH_FRAMES.saturating_mul(channels));
     let mut smoother = OutputSmoother::new(channels);
     let mut dither = TpdfDither::new(dither_lsb);
     let error_handler_for_stream = Arc::clone(&error_handler);
+    let stream_start_state_for_error = Arc::clone(&stream_start_state);
+    let callback_metrics_for_error = Arc::clone(&callback_metrics);
+    let mut first_callback_pending = true;
 
     device
         .build_output_stream(
@@ -464,9 +761,24 @@ where
                     &mut smoother,
                     &mut dither,
                 );
+                if first_callback_pending {
+                    let _ = stream_start_state.compare_exchange(
+                        STREAM_START_PENDING,
+                        STREAM_START_READY,
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    );
+                    first_callback_pending = false;
+                }
             },
             move |err| {
-                error_handler_for_stream(format!("output stream error: {err}"));
+                let disposition = stream_error_disposition(&err);
+                if disposition == StreamErrorDisposition::Fatal {
+                    stream_start_state_for_error.store(STREAM_START_FAILED, Ordering::Release);
+                    error_handler_for_stream(format!("output stream error ({err:?}): {err}"));
+                } else {
+                    callback_metrics_for_error.record_nonfatal_stream_error(disposition);
+                }
             },
             None,
         )
@@ -600,13 +912,16 @@ fn write_smoothed_silence<T>(
     channels: usize,
     smoother: &mut OutputSmoother,
     output_gain: f32,
-) where
+) -> OutputSampleObservation
+where
     T: Sample + FromSample<f32>,
 {
     smoother.smooth_silence(output, channels);
+    let mut observation = OutputSampleObservation::default();
     for (target, sample) in data.iter_mut().zip(output.iter().copied()) {
-        *target = T::from_sample(sanitize_output_sample(sample * output_gain));
+        *target = T::from_sample(observation.observe(sample * output_gain));
     }
+    observation
 }
 
 #[cfg(test)]
@@ -666,17 +981,13 @@ fn write_output_data_with_metrics<T>(
 ) where
     T: Sample + FromSample<f32>,
 {
-    // P1-6 基准：记录回调运行时间。Instant::now() 在主流平台由 vDSO 实现，开销
-    // 约几十纳秒，远低于我们关心的微秒级抖动。收尾使用 record_callback_elapsed。
-    let callback_start = std::time::Instant::now();
+    let callback_frames = (data.len() / channels.max(1)) as u64;
 
     if stop_flag.load(Ordering::SeqCst) {
         data.fill(T::EQUILIBRIUM);
-        callback_metrics.record_callback_elapsed(
-            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
-        );
         return;
     }
+    let mut metric_record = CallbackMetricRecord::new(callback_metrics, callback_frames);
 
     if scratch.len() < data.len() {
         scratch.resize(data.len(), 0.0);
@@ -687,26 +998,23 @@ fn write_output_data_with_metrics<T>(
     let gain = output_gain(volume);
 
     let Some(status) = samples.try_pop_realtime_frames_into(output, channels) else {
-        write_smoothed_silence(data, output, channels, smoother, gain);
-        callback_metrics.record_silence_due_to_lock();
-        callback_metrics.record_callback_elapsed(
-            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
-        );
+        let observation = write_smoothed_silence(data, output, channels, smoother, gain);
+        metric_record.record_output_observation(observation);
+        metric_record.record_silence_due_to_lock();
         return;
     };
     if let Some(error) = status.error {
-        write_smoothed_silence(data, output, channels, smoother, gain);
+        let observation = write_smoothed_silence(data, output, channels, smoother, gain);
+        metric_record.record_output_observation(observation);
         if !buffer_error_reported.swap(true, Ordering::SeqCst) {
             error_handler(error);
         }
-        callback_metrics.record_callback_elapsed(
-            callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
-        );
         return;
     }
 
     smoother.smooth_audio(output, status.written, channels);
 
+    let mut observation = OutputSampleObservation::default();
     for (index, (target, sample)) in data.iter_mut().zip(output.iter().copied()).enumerate() {
         let scaled = sample * gain;
         let dithered = if index < status.written && gain > 0.0 {
@@ -714,15 +1022,16 @@ fn write_output_data_with_metrics<T>(
         } else {
             scaled
         };
-        *target = T::from_sample(sanitize_output_sample(dithered));
+        *target = T::from_sample(observation.observe_with_source(dithered, scaled));
     }
+    metric_record.record_output_observation(observation);
 
     let channels = channels.max(1);
     frames_rendered.fetch_add((status.written / channels) as u64, Ordering::Relaxed);
 
     let writable_samples = data.len() - (data.len() % channels);
     if status.written < writable_samples && !status.finished {
-        callback_metrics
+        metric_record
             .record_underrun_frames(((writable_samples - status.written) / channels) as u64);
         underrun_requested.store(true, Ordering::SeqCst);
     }
@@ -730,9 +1039,6 @@ fn write_output_data_with_metrics<T>(
     if status.finished {
         finish_fired.store(true, Ordering::SeqCst);
     }
-
-    callback_metrics
-        .record_callback_elapsed(callback_start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
 }
 
 fn output_gain(volume: &AtomicU64) -> f32 {
@@ -799,7 +1105,14 @@ fn report_callback_metrics(
     let metrics = callback_metrics.drain();
     // 只要有任意非零观测就上报：过去是"仅告警"（silence/underrun），P1-6 之后加入
     // 回调计数与耗时；无回调时（stop/未开始）保持沉默。
-    if metrics.callback_count > 0 || metrics.silence_due_to_lock > 0 || metrics.underrun_frames > 0
+    if metrics.callback_count > 0
+        || metrics.silence_due_to_lock > 0
+        || metrics.underrun_frames > 0
+        || metrics.stream_start_timeout_count > 0
+        || metrics.stream_start_failure_count > 0
+        || metrics.output_xrun_count > 0
+        || metrics.callback_metrics_dropped_count > 0
+        || metrics.output_sample_count > 0
     {
         metrics_handler(metrics);
     }
@@ -809,13 +1122,16 @@ fn report_callback_metrics(
 mod tests {
     use super::{
         choose_exact_output_config_from_default, choose_exact_output_config_from_ranges,
-        choose_output_config_from_ranges, output_dither_lsb, write_output_data,
-        write_output_data_with_metrics, CallbackMetricCounters, OutputSmoother, TpdfDither,
+        choose_output_config_from_ranges, output_dither_lsb, stream_error_disposition,
+        wait_for_stream_start, write_output_data, write_output_data_with_metrics,
+        CallbackMetricCounters, CallbackObservation, OutputSampleObservation, OutputSmoother,
+        PendingSampleBufferGuard, StreamErrorDisposition, StreamStartWaitOutcome, TpdfDither,
+        STREAM_START_FAILED, STREAM_START_PENDING, STREAM_START_READY,
     };
     use crate::player::backend::{OutputFormat, OutputSampleFormat};
     use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
-    use cpal::{SampleFormat, SupportedBufferSize};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use cpal::{SampleFormat, StreamError, SupportedBufferSize};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
     use std::sync::Arc;
 
     fn config(
@@ -1111,6 +1427,7 @@ mod tests {
         assert_eq!(frames_rendered.load(Ordering::Relaxed), 0);
         assert!(!finish_fired.load(Ordering::SeqCst));
         assert!(!underrun_requested.load(Ordering::SeqCst));
+        assert_eq!(callback_metrics.drain().callback_count, 0);
     }
 
     #[test]
@@ -1763,24 +2080,282 @@ mod tests {
     #[test]
     fn callback_metric_counters_record_and_drain() {
         let counters = CallbackMetricCounters::default();
-        counters.record_callback_elapsed(500); // 桶 0
-        counters.record_callback_elapsed(2_000); // 桶 1
-        counters.record_callback_elapsed(4_000); // 桶 2
-        counters.record_underrun_frames(10);
-        counters.record_silence_due_to_lock();
+        counters.record_callback(CallbackObservation {
+            silence_due_to_lock: 1,
+            underrun_frames: 10,
+            elapsed_ns: 500,
+            callback_frames: 512,
+            ..CallbackObservation::default()
+        });
+        counters.record_callback(CallbackObservation {
+            elapsed_ns: 2_000,
+            callback_frames: 512,
+            ..CallbackObservation::default()
+        });
+        counters.record_callback(CallbackObservation {
+            elapsed_ns: 4_000,
+            callback_frames: 512,
+            ..CallbackObservation::default()
+        });
+        counters.record_nonfatal_stream_error(StreamErrorDisposition::Xrun);
 
         let drained = counters.drain();
         assert_eq!(drained.callback_count, 3);
         assert_eq!(drained.callback_elapsed_ns_total, 6_500);
         assert_eq!(drained.callback_elapsed_ns_max, 4_000);
+        assert_eq!(drained.callback_over_period_count, 0);
+        assert_eq!(drained.callback_metrics_dropped_count, 0);
+        assert_eq!(drained.callback_frames_total, 1_536);
+        assert_eq!(drained.callback_frames_min, 512);
+        assert_eq!(drained.callback_frames_max, 512);
         assert_eq!(drained.underrun_frames, 10);
         assert_eq!(drained.silence_due_to_lock, 1);
         assert_eq!(drained.callback_duration_buckets[0], 1);
         assert_eq!(drained.callback_duration_buckets[1], 1);
         assert_eq!(drained.callback_duration_buckets[2], 1);
+        assert_eq!(drained.callback_duration_buckets.iter().sum::<u64>(), 3);
+        assert_eq!(drained.output_xrun_count, 1);
         // 二次 drain 应清零
         let empty = counters.drain();
         assert_eq!(empty.callback_count, 0);
+        assert_eq!(empty.callback_frames_min, 0);
         assert_eq!(empty.callback_duration_buckets[0], 0);
+    }
+
+    #[test]
+    fn concurrent_callback_metric_drain_keeps_each_observation_in_one_window() {
+        const OBSERVATIONS: u64 = 5_000;
+        let counters = Arc::new(CallbackMetricCounters::default());
+        let producer_counters = Arc::clone(&counters);
+        let producer_done = Arc::new(AtomicBool::new(false));
+        let producer_done_flag = Arc::clone(&producer_done);
+        let producer = std::thread::spawn(move || {
+            for _ in 0..OBSERVATIONS {
+                producer_counters.record_callback(CallbackObservation {
+                    elapsed_ns: 2_000,
+                    callback_frames: 512,
+                    output: OutputSampleObservation {
+                        sample_count: 2,
+                        square_sum: 1.0,
+                        peak_abs_bits: u64::from(1.0_f32.to_bits()),
+                        ..OutputSampleObservation::default()
+                    },
+                    ..CallbackObservation::default()
+                });
+            }
+            producer_done_flag.store(true, Ordering::Release);
+        });
+
+        let mut observed_callbacks = 0_u64;
+        let mut observed_samples = 0_u64;
+        while !producer_done.load(Ordering::Acquire) || !counters.callback_observations.is_empty() {
+            let metrics = counters.drain();
+            assert_eq!(
+                metrics.callback_duration_buckets.iter().sum::<u64>(),
+                metrics.callback_count
+            );
+            assert_eq!(metrics.output_sample_count, metrics.callback_count * 2);
+            if metrics.output_sample_count > 0 {
+                assert!((metrics.output_rms() - (0.5_f64).sqrt()).abs() < 1e-9);
+                assert_eq!(metrics.output_peak_abs(), 1.0);
+            }
+            observed_callbacks += metrics.callback_count;
+            observed_samples += metrics.output_sample_count;
+            std::thread::yield_now();
+        }
+        producer.join().expect("metric producer should finish");
+
+        assert_eq!(observed_callbacks, OBSERVATIONS);
+        assert_eq!(observed_samples, OBSERVATIONS * 2);
+        assert_eq!(
+            counters
+                .callback_metrics_dropped_count
+                .load(Ordering::Relaxed),
+            0
+        );
+    }
+
+    #[test]
+    fn stream_errors_preserve_cpal_nonfatal_semantics() {
+        assert_eq!(
+            stream_error_disposition(&StreamError::StreamInvalidated),
+            StreamErrorDisposition::Fatal
+        );
+        assert_eq!(
+            stream_error_disposition(&StreamError::BufferUnderrun),
+            StreamErrorDisposition::Xrun
+        );
+    }
+
+    #[test]
+    fn pending_sample_buffer_guard_cancels_only_undelivered_buffers() {
+        let failed_samples = SampleBuffer::new();
+        drop(PendingSampleBufferGuard::new(failed_samples.clone()));
+        let mut output = [0.0_f32; 2];
+        let cancelled = failed_samples.pop_complete_frames_into(&mut output, 2);
+        assert_eq!(cancelled.written, 0);
+        assert!(!cancelled.finished);
+        assert!(cancelled.error.is_none());
+
+        let delivered_samples = SampleBuffer::new();
+        let mut guard = PendingSampleBufferGuard::new(delivered_samples.clone());
+        guard.disarm();
+        drop(guard);
+        delivered_samples.push(&[0.25, -0.25]);
+        let status = delivered_samples.pop_complete_frames_into(&mut output, 2);
+        assert_eq!(status.written, 2);
+        assert!(!status.finished);
+    }
+
+    #[test]
+    fn stream_start_wait_observes_ready_failed_timeout_and_cancellation() {
+        let stop_flag = AtomicBool::new(false);
+
+        let ready = AtomicU8::new(STREAM_START_READY);
+        assert_eq!(
+            wait_for_stream_start(
+                &ready,
+                &stop_flag,
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+            )
+            .0,
+            StreamStartWaitOutcome::Ready
+        );
+
+        let failed = AtomicU8::new(STREAM_START_FAILED);
+        assert_eq!(
+            wait_for_stream_start(
+                &failed,
+                &stop_flag,
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+            )
+            .0,
+            StreamStartWaitOutcome::Failed
+        );
+
+        let pending = AtomicU8::new(STREAM_START_PENDING);
+        assert_eq!(
+            wait_for_stream_start(
+                &pending,
+                &stop_flag,
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+            )
+            .0,
+            StreamStartWaitOutcome::TimedOut
+        );
+
+        stop_flag.store(true, Ordering::SeqCst);
+        assert_eq!(
+            wait_for_stream_start(
+                &ready,
+                &stop_flag,
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+            )
+            .0,
+            StreamStartWaitOutcome::Cancelled
+        );
+    }
+
+    #[test]
+    fn stream_start_wait_observes_release_from_callback_thread() {
+        let state = Arc::new(AtomicU8::new(STREAM_START_PENDING));
+        let state_for_callback = Arc::clone(&state);
+        let callback = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            state_for_callback.store(STREAM_START_READY, Ordering::Release);
+        });
+        let stop_flag = AtomicBool::new(false);
+
+        let outcome = wait_for_stream_start(
+            &state,
+            &stop_flag,
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(1),
+        )
+        .0;
+
+        callback.join().expect("callback thread should finish");
+        assert_eq!(outcome, StreamStartWaitOutcome::Ready);
+    }
+
+    #[test]
+    fn output_metrics_capture_peak_and_rms_after_sample_buffer_sanitization() {
+        let samples = SampleBuffer::new();
+        samples.push(&[1.25, f32::NAN, -0.5, 0.5]);
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::new(48_000);
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::primed(2);
+        let mut dither = TpdfDither::disabled();
+        let mut output = [0.0_f32; 4];
+
+        write_output_data_with_metrics(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert_eq!(output, [1.0, 0.0, -0.5, 0.5]);
+        let drained = callback_metrics.drain();
+        assert_eq!(drained.callback_count, 1);
+        assert_eq!(drained.callback_frames_total, 2);
+        assert_eq!(drained.callback_frames_min, 2);
+        assert_eq!(drained.callback_frames_max, 2);
+        assert_eq!(drained.output_sample_count, 4);
+        assert_eq!(drained.output_clipped_samples, 0);
+        assert_eq!(drained.output_nonfinite_samples, 0);
+        assert_eq!(drained.output_peak_abs(), 1.0);
+        assert!((drained.output_rms() - (0.375_f64).sqrt()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn output_observation_counts_final_clipping_and_nonfinite_samples() {
+        let mut observation = OutputSampleObservation::default();
+        let sanitized = [1.25, f32::NAN, -0.5, 0.5].map(|sample| observation.observe(sample));
+
+        assert_eq!(sanitized, [1.0, 0.0, -0.5, 0.5]);
+        let callback_metrics = CallbackMetricCounters::default();
+        callback_metrics.record_callback(CallbackObservation {
+            callback_frames: 2,
+            output: observation,
+            ..CallbackObservation::default()
+        });
+        let drained = callback_metrics.drain();
+        assert_eq!(drained.output_sample_count, 4);
+        assert_eq!(drained.output_clipped_samples, 1);
+        assert_eq!(drained.output_nonfinite_samples, 1);
+        assert_eq!(drained.output_peak_abs(), 1.0);
+        assert!((drained.output_rms() - (0.375_f64).sqrt()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn output_observation_does_not_treat_dither_overshoot_as_source_clipping() {
+        let mut observation = OutputSampleObservation::default();
+        let sanitized = observation.observe_with_source(1.000_01, 1.0);
+
+        assert_eq!(sanitized, 1.0);
+        assert_eq!(observation.clipped_samples, 0);
+        assert_eq!(observation.nonfinite_samples, 0);
     }
 }
