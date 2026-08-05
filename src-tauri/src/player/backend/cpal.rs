@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 
 // 该等待只运行在旧静音流的退休线程中，不会阻塞播放 actor；给慢唤醒、AirPlay
 // 和聚合设备留出足够时间完成首个 callback。
+#[cfg(target_os = "macos")]
 const STREAM_START_CALLBACK_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(target_os = "macos")]
 const STREAM_START_CALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(1);
 const OUTPUT_SQUARE_Q32_SCALE: f64 = (1_u64 << 32) as f64;
 const CALLBACK_METRIC_QUEUE_CAPACITY: usize = 16_384;
@@ -215,6 +217,7 @@ impl CallbackMetricCounters {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn record_stream_start_wait(&self, elapsed: Duration, outcome: StreamStartWaitOutcome) {
         let elapsed_ns = elapsed.as_nanos().min(u64::MAX as u128) as u64;
         update_atomic_max(&self.stream_start_wait_ns, elapsed_ns);
@@ -314,6 +317,7 @@ impl CallbackMetricCounters {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn update_atomic_max(target: &AtomicU64, value: u64) {
     let mut current = target.load(Ordering::Relaxed);
     while value > current {
@@ -414,6 +418,7 @@ fn callback_duration_bucket(elapsed_ns: u64) -> usize {
     log2.min(CALLBACK_DURATION_BUCKETS - 1)
 }
 
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StreamStartWaitOutcome {
     Ready,
@@ -435,6 +440,7 @@ fn stream_error_disposition(error: &StreamError) -> StreamErrorDisposition {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn current_stream_start_outcome(
     state: &AtomicU8,
     stop_flag: &AtomicBool,
@@ -449,6 +455,7 @@ fn current_stream_start_outcome(
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn wait_for_stream_start(
     state: &AtomicU8,
     stop_flag: &AtomicBool,
