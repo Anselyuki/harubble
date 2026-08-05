@@ -38,6 +38,17 @@ fn build_float_wav(samples: &[f32]) -> Vec<u8> {
     cursor.into_inner()
 }
 
+fn build_long_float_wav() -> Vec<u8> {
+    let samples = (0..(4_096 * 3))
+        .flat_map(|frame| {
+            let left = ((frame % 257) as f32 / 128.0) - 1.0;
+            let right = ((frame % 193) as f32 / 96.0) - 1.0;
+            [left, right]
+        })
+        .collect::<Vec<_>>();
+    build_float_wav(&samples)
+}
+
 fn make_nonstandard_40_byte_float_fmt_chunk(mut wav: Vec<u8>) -> Vec<u8> {
     let fmt_offset = wav
         .windows(4)
@@ -159,6 +170,27 @@ fn converts_float_wav_to_compatible_24_bit_flac() -> Result<()> {
         comments.artist().map(|items| items.as_slice()),
         Some([String::from("Float Artist")].as_slice())
     );
+
+    Ok(())
+}
+
+#[test]
+fn converts_long_float_wav_to_multiframe_flac() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let flac_path = save_audio(
+        &build_long_float_wav(),
+        temp_dir.path(),
+        "long-float-source",
+        OutputFormat::Flac,
+    )?;
+
+    let tag = metaflac::Tag::read_from_path(&flac_path)?;
+    let stream_info = tag.get_blocks(metaflac::BlockType::StreamInfo).next();
+    let Some(metaflac::Block::StreamInfo(stream_info)) = stream_info else {
+        anyhow::bail!("missing FLAC stream info");
+    };
+    assert_eq!(stream_info.bits_per_sample, 24);
+    assert_eq!(stream_info.total_samples, 4_096 * 3);
 
     Ok(())
 }

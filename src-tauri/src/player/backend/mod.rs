@@ -85,10 +85,56 @@ pub struct AudioCallbackMetrics {
     pub callback_elapsed_ns_total: u64,
     /// 上报窗口内单次回调最长运行时间（纳秒）。
     pub callback_elapsed_ns_max: u64,
+    /// 上报窗口内超过 `frames / sample_rate` 理论回调周期的调用次数。
+    pub callback_over_period_count: u64,
+    /// 指标队列满时未能入队的完整回调观测数。
+    pub callback_metrics_dropped_count: u64,
+    /// 上报窗口内设备请求的输出帧数总和。
+    pub callback_frames_total: u64,
+    /// 上报窗口内单次回调请求的最小输出帧数。
+    pub callback_frames_min: u64,
+    /// 上报窗口内单次回调请求的最大输出帧数。
+    pub callback_frames_max: u64,
     /// 上报窗口内回调运行时间 log2μs 直方图（索引即桶编号）。
     ///
     /// 供 monitor 线程近似求 P50/P95/P99 百分位；直方图桶在回调路径内以 Relaxed 原子写入。
     pub callback_duration_buckets: [u64; CALLBACK_DURATION_BUCKETS],
+    /// 新流启动后等待首次设备回调的时间（纳秒）。
+    pub stream_start_wait_ns: u64,
+    /// 等待新流首次设备回调超时的次数。
+    pub stream_start_timeout_count: u64,
+    /// 新流在首次设备回调前收到后端错误的次数。
+    pub stream_start_failure_count: u64,
+    /// 输出流发生 underrun/overrun 后由后端继续恢复的次数。
+    pub output_xrun_count: u64,
+    /// 上报窗口内实际写入设备缓冲的样本数。
+    pub output_sample_count: u64,
+    /// 实际输出样本平方和，使用 Q32 定点表示。
+    pub output_square_sum_q32: u64,
+    /// 实际输出样本绝对峰值的 `f32` 位表示。
+    pub output_peak_abs_bits: u64,
+    /// 写入设备前被裁剪到 `[-1.0, 1.0]` 的样本数。
+    pub output_clipped_samples: u64,
+    /// 写入设备前被归零的 NaN/Inf 样本数。
+    pub output_nonfinite_samples: u64,
+}
+
+impl AudioCallbackMetrics {
+    /// 返回当前上报窗口内实际输出的绝对峰值。
+    pub fn output_peak_abs(self) -> f64 {
+        f64::from(f32::from_bits(self.output_peak_abs_bits as u32))
+    }
+
+    /// 返回当前完整回调上报窗口内实际输出的均方根值。
+    pub fn output_rms(self) -> f64 {
+        if self.output_sample_count == 0 {
+            return 0.0;
+        }
+        let mean_square = self.output_square_sum_q32 as f64
+            / (1_u64 << 32) as f64
+            / self.output_sample_count as f64;
+        mean_square.max(0.0).sqrt()
+    }
 }
 
 /// 音频实时回调指标的上报回调。

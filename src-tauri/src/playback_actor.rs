@@ -123,8 +123,10 @@ impl PlaybackActor {
         if self.sender.is_closed() {
             return Err(playback_actor_closed_error(command_name));
         }
-        let request_id = state.begin_playback_transition(command_name);
         let load_ticket = state.playback_load_gate().enter();
+        // 先登记启动 ticket，再推进请求代次。自然结束的静音流清理会与该 gate
+        // 原子协调，因此排队或网络准备中的后继请求不会被固定超时误释放保活流。
+        let request_id = state.begin_playback_transition(command_name);
         self.sender
             .send(PlaybackActorMessage {
                 state,
