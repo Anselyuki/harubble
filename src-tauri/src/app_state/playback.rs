@@ -1,4 +1,5 @@
 use crate::audio_cache;
+use crate::audio_cache::AudioCacheLease;
 use crate::i18n;
 use crate::logging::{LogLevel, LogPayload};
 use crate::player::backend::OutputFormat;
@@ -75,9 +76,10 @@ impl AppState {
             )
             .map_err(|error| classify_playback_error(error, None))?;
 
-        let result: Result<f64> = async {
+        let result: Result<f64, PlaybackStartFailure> = async {
             self.ensure_playback_request_active(request_id, Some(session_id))?;
             self.start_playback_session(
+                request_id,
                 session_id,
                 &song_cid,
                 &song_detail.source_url,
@@ -100,7 +102,7 @@ impl AppState {
                 Ok(PlaybackStartResult::new(duration, session_id))
             }
             Err(error) => {
-                let playback_error = classify_playback_error(error, Some(session_id));
+                let playback_error = classify_playback_error(error.error, Some(session_id));
                 let ticket_superseded = playback_error.code == PlaybackErrorCode::Superseded;
                 self.player.fail_session(session_id);
                 self.spawn_playback_startup_metric(
@@ -157,85 +159,139 @@ impl AppState {
             .await?;
         self.ensure_playback_request_active(request_id, Some(current_state.session_id))?;
 
-        let loading_started_at = Instant::now();
-        let session_id = self
-            .player
-            .begin_loading_session(
-                song_cid.clone(),
-                song_detail.name.clone(),
-                song_detail.artists.clone(),
-                current_state.cover_url.clone(),
-                target_position,
-                (current_state.duration > 0.0).then_some(current_state.duration),
-            )
-            .map_err(|error| classify_playback_error(error, Some(current_state.session_id)))?;
-
+        let cover_url = current_state.cover_url.clone();
+        let known_duration = (current_state.duration > 0.0).then_some(current_state.duration);
         let should_pause_after_seek = current_state.is_paused;
-        let result: Result<f64> = async {
-            self.ensure_playback_request_active(request_id, Some(session_id))?;
-            let duration = self
-                .start_playback_session(
-                    session_id,
-                    &song_cid,
-                    &song_detail.source_url,
+        let mut cache_recovery_attempted = false;
+
+        loop {
+            let attempt_started_at = Instant::now();
+            let previous_session_id = self.player.get_state().session_id;
+            let session_id = self
+                .player
+                .begin_loading_session(
+                    song_cid.clone(),
+                    song_detail.name.clone(),
+                    song_detail.artists.clone(),
+                    cover_url.clone(),
                     target_position,
-                    PlaybackStartIntent::InteractiveRestart,
+                    known_duration,
                 )
-                .await?;
+                .map_err(|error| classify_playback_error(error, Some(previous_session_id)))?;
 
-            if should_pause_after_seek {
-                self.player.pause()?;
+            let attempt_result: Result<f64, PlaybackStartFailure> = async {
+                self.ensure_playback_request_active(request_id, Some(session_id))?;
+                let duration = self
+                    .start_playback_session(
+                        request_id,
+                        session_id,
+                        &song_cid,
+                        &song_detail.source_url,
+                        target_position,
+                        PlaybackStartIntent::InteractiveRestart,
+                    )
+                    .await?;
+
+                if should_pause_after_seek {
+                    self.player.pause().map_err(PlaybackStartFailure::from)?;
+                }
+
+                Ok(duration)
             }
+            .await;
 
-            Ok(duration)
-        }
-        .await;
-
-        match result {
-            Ok(duration) => {
-                self.spawn_playback_startup_metric(
-                    request_id,
-                    session_id,
-                    loading_started_at,
-                    "playing",
-                    false,
-                );
-                Ok(PlaybackStartResult::new(duration, session_id))
-            }
-            Err(error) => {
-                let playback_error = classify_playback_error(error, Some(session_id));
-                let ticket_superseded = playback_error.code == PlaybackErrorCode::Superseded;
-                self.player.fail_session(session_id);
-                self.spawn_playback_startup_metric(
-                    request_id,
-                    session_id,
-                    loading_started_at,
-                    if ticket_superseded {
-                        "superseded"
-                    } else {
-                        "failed"
-                    },
-                    ticket_superseded,
-                );
-                Err(playback_error)
+            match attempt_result {
+                Ok(duration) => {
+                    self.spawn_playback_startup_metric(
+                        request_id,
+                        session_id,
+                        attempt_started_at,
+                        "playing",
+                        false,
+                    );
+                    return Ok(PlaybackStartResult::new(duration, session_id));
+                }
+                Err(error) if should_recover_seek_cache(cache_recovery_attempted, &error) => {
+                    cache_recovery_attempted = true;
+                    let cache_lease = error.cache_lease.clone().expect("checked by policy");
+                    let original_error = error.error;
+                    if let Err(clear_error) = self.clear_cache_for_seek_recovery(cache_lease).await
+                    {
+                        if self
+                            .ensure_playback_request_active(request_id, None)
+                            .is_err()
+                        {
+                            return Err(PlaybackError::superseded(session_id));
+                        }
+                        self.player.fail_session(session_id);
+                        self.log_seek_cache_recovery_failure(request_id, session_id, &clear_error);
+                        return Err(classify_playback_error(original_error, Some(session_id)));
+                    }
+                    self.log_seek_cache_recovery(request_id, session_id);
+                    self.ensure_playback_request_active(request_id, None)?;
+                    self.spawn_playback_startup_metric(
+                        request_id,
+                        session_id,
+                        attempt_started_at,
+                        "cache-retry",
+                        false,
+                    );
+                }
+                Err(error) => {
+                    let playback_error = classify_playback_error(error.error, Some(session_id));
+                    let ticket_superseded = playback_error.code == PlaybackErrorCode::Superseded;
+                    self.player.fail_session(session_id);
+                    self.spawn_playback_startup_metric(
+                        request_id,
+                        session_id,
+                        attempt_started_at,
+                        if ticket_superseded {
+                            "superseded"
+                        } else {
+                            "failed"
+                        },
+                        ticket_superseded,
+                    );
+                    return Err(playback_error);
+                }
             }
         }
     }
 
     async fn start_playback_session(
         &self,
+        request_id: u64,
         session_id: u64,
         song_cid: &str,
         source_url: &str,
         start_position_secs: f64,
         start_intent: PlaybackStartIntent,
-    ) -> Result<f64> {
+    ) -> Result<f64, PlaybackStartFailure> {
         let stop_flag = self.player.stop_signal();
         let pause_flag = self.player.pause_signal();
-        let prepared_input = self
-            .prepare_playback_input(song_cid.to_string(), source_url.to_string(), &stop_flag)
-            .await?;
-        let cache_path_for_failure = Some(prepared_input.cache_path.clone());
+        let prepared_input = match self
+            .prepare_playback_input(
+                request_id,
+                session_id,
+                song_cid.to_string(),
+                source_url.to_string(),
+                &stop_flag,
+            )
+            .await
+        {
+            Ok(input) => input,
+            Err(error) => {
+                let remove_canonical_cache = error.local_cache_failure;
+                self.cleanup_failed_playback_cache(
+                    error.cache_lease.clone(),
+                    session_id,
+                    &stop_flag,
+                    remove_canonical_cache,
+                );
+                return Err(error);
+            }
+        };
+        let cache_lease_for_failure = Some(prepared_input.cache_lease.clone());
         let input = prepared_input.input.clone();
 
         let inspect_input = input.clone();
@@ -252,21 +308,44 @@ impl AppState {
         {
             Ok(source_format) => source_format,
             Err(error) => {
+                let remove_canonical_cache = is_local_audio_cache_failure(&error);
                 self.cleanup_failed_playback_cache(
-                    cache_path_for_failure.clone(),
+                    cache_lease_for_failure.clone(),
                     session_id,
                     &stop_flag,
+                    remove_canonical_cache,
                 );
-                return Err(error);
+                return Err(PlaybackStartFailure::with_cache_context(
+                    error,
+                    cache_lease_for_failure,
+                ));
             }
         };
 
-        anyhow::ensure!(
-            self.player.is_session_active(session_id),
-            "Playback stopped"
-        );
+        if !self.player.is_session_active(session_id) {
+            self.cleanup_failed_playback_cache(
+                cache_lease_for_failure.clone(),
+                session_id,
+                &stop_flag,
+                false,
+            );
+            return Err(PlaybackStartFailure::from(anyhow::anyhow!(
+                "Playback stopped"
+            )));
+        }
 
-        let output_format = self.player.negotiate_output_format(source_format)?;
+        let output_format = match self.player.negotiate_output_format(source_format) {
+            Ok(format) => format,
+            Err(error) => {
+                self.cleanup_failed_playback_cache(
+                    cache_lease_for_failure.clone(),
+                    session_id,
+                    &stop_flag,
+                    false,
+                );
+                return Err(PlaybackStartFailure::from(error));
+            }
+        };
         self.player
             .set_playback_format(session_id, source_format, &output_format);
         self.record_playback_format_selection(session_id, source_format, &output_format);
@@ -277,24 +356,49 @@ impl AppState {
         let log_center = Arc::clone(&self.log_center);
         let player = Arc::clone(&self.player);
         let stop_flag_for_error = Arc::clone(&stop_flag);
-        let cache_path_for_error = cache_path_for_failure.clone();
+        let cache_lease_for_error = cache_lease_for_failure.clone();
         let app_for_error = self.clone();
+        let startup_pending = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let startup_pending_for_error = Arc::clone(&startup_pending);
         let error_handler: crate::player::stream::PlaybackErrorHandler = Arc::new(move |message| {
+            let is_cache_failure = is_local_audio_cache_failure(&anyhow::anyhow!(message.clone()));
+            let startup_failure = startup_pending_for_error.load(Ordering::SeqCst);
             log_center.record(
                 crate::logging::LogPayload::new(
-                    crate::logging::LogLevel::Error,
+                    if is_cache_failure && startup_failure {
+                        crate::logging::LogLevel::Debug
+                    } else if is_cache_failure {
+                        crate::logging::LogLevel::Warn
+                    } else {
+                        crate::logging::LogLevel::Error
+                    },
                     "player",
-                    "player.decode_worker_failed",
-                    "Audio decode worker failed",
+                    if is_cache_failure && startup_failure {
+                        "player.decode_worker_cache_recovery"
+                    } else if is_cache_failure {
+                        "player.decode_worker_cache_failure"
+                    } else {
+                        "player.decode_worker_failed"
+                    },
+                    if is_cache_failure && startup_failure {
+                        "Audio cache read failed; retrying playback startup"
+                    } else if is_cache_failure {
+                        "Audio cache read failed; playback recovery may retry"
+                    } else {
+                        "Audio decode worker failed"
+                    },
                 )
                 .details(message),
             );
             app_for_error.cleanup_failed_playback_cache(
-                cache_path_for_error.clone(),
+                cache_lease_for_error.clone(),
                 session_id,
                 &stop_flag_for_error,
+                is_cache_failure,
             );
-            player.fail_session(session_id);
+            if !startup_failure {
+                player.fail_session(session_id);
+            }
         });
 
         let _decode_worker = match input.spawn_decode_worker(
@@ -308,12 +412,17 @@ impl AppState {
         ) {
             Ok(worker) => worker,
             Err(error) => {
+                let remove_canonical_cache = is_local_audio_cache_failure(&error);
                 self.cleanup_failed_playback_cache(
-                    cache_path_for_failure.clone(),
+                    cache_lease_for_failure.clone(),
                     session_id,
                     &stop_flag,
+                    remove_canonical_cache,
                 );
-                return Err(error);
+                return Err(PlaybackStartFailure::with_cache_context(
+                    error,
+                    cache_lease_for_failure,
+                ));
             }
         };
 
@@ -328,16 +437,37 @@ impl AppState {
             )
             .await
         {
-            self.cleanup_failed_playback_cache(cache_path_for_failure, session_id, &stop_flag);
-            return Err(error);
+            let remove_canonical_cache = is_local_audio_cache_failure(&error);
+            self.cleanup_failed_playback_cache(
+                cache_lease_for_failure.clone(),
+                session_id,
+                &stop_flag,
+                remove_canonical_cache,
+            );
+            return Err(PlaybackStartFailure::with_cache_context(
+                error,
+                cache_lease_for_failure,
+            ));
         }
 
-        self.start_prepared_playback(
+        startup_pending.store(false, Ordering::SeqCst);
+        match self.start_prepared_playback(
             session_id,
             output_format,
             sample_buffer,
             start_position_secs,
-        )
+        ) {
+            Ok(duration) => Ok(duration),
+            Err(error) => {
+                self.cleanup_failed_playback_cache(
+                    cache_lease_for_failure.clone(),
+                    session_id,
+                    &stop_flag,
+                    false,
+                );
+                Err(PlaybackStartFailure::from(error))
+            }
+        }
     }
 
     pub(crate) async fn play_next_for_request(
@@ -401,58 +531,98 @@ impl AppState {
 
     async fn prepare_playback_input(
         &self,
+        request_id: u64,
+        session_id: u64,
         song_cid: String,
         source_url: String,
         stop_flag: &Arc<std::sync::atomic::AtomicBool>,
-    ) -> Result<PreparedPlaybackInput> {
-        let (cache_path, pending_download, prepared_input) = {
-            let song_cid = song_cid.clone();
-            let source_url = source_url.clone();
-            self.playback_runtime
-                .handle()
-                .spawn_blocking(move || prepare_cached_or_streaming_input(&song_cid, &source_url))
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))??
-        };
+    ) -> std::result::Result<PreparedPlaybackInput, PlaybackStartFailure> {
+        let cache_io_guard = audio_cache::io_lock().lock().await;
+        if !self.player.is_playback_request_active(request_id) {
+            return Err(PlaybackStartFailure::from(PlaybackError::superseded(
+                session_id,
+            )));
+        }
+        let cache_path = audio_cache::cached_song_path(&song_cid, &source_url)
+            .map_err(PlaybackStartFailure::from)?;
+        let cache_lease = acquire_active_cache_lease(&cache_path, stop_flag)
+            .map_err(PlaybackStartFailure::from)?;
+        let preparation_lease = cache_lease.clone();
+        let (prepared_cache_lease, pending_marker, prepared_input) = self
+            .playback_runtime
+            .handle()
+            .spawn_blocking(move || {
+                prepare_playback_input_from_cache_path_with_lease(cache_path, preparation_lease)
+            })
+            .await
+            .map_err(|error| {
+                PlaybackStartFailure::with_cache_context(
+                    anyhow::anyhow!(error.to_string()),
+                    Some(cache_lease.clone()),
+                )
+            })?
+            .map_err(|error| {
+                PlaybackStartFailure::with_cache_context(error, Some(cache_lease.clone()))
+            })?;
+        drop(cache_io_guard);
 
         let input = match prepared_input {
             PlaybackInput::GrowingFile(handle) => {
-                let Some((cache_path, pending_marker)) = pending_download else {
-                    anyhow::bail!("Streaming playback cache paths were not prepared");
+                let Some(_) = pending_marker else {
+                    return Err(PlaybackStartFailure::from(anyhow::anyhow!(
+                        "Streaming playback cache marker was not prepared"
+                    )));
                 };
                 self.spawn_stream_download(
                     source_url,
                     Arc::clone(stop_flag),
                     handle.clone(),
-                    cache_path.clone(),
-                    pending_marker,
+                    prepared_cache_lease.clone(),
                 );
                 PlaybackInput::growing_file(handle)
             }
             input => input,
         };
 
-        Ok(PreparedPlaybackInput { input, cache_path })
+        Ok(PreparedPlaybackInput {
+            input,
+            cache_lease: prepared_cache_lease,
+        })
     }
 
     fn cleanup_failed_playback_cache(
         &self,
-        cache_path: Option<PathBuf>,
+        cache_lease: Option<AudioCacheLease>,
         session_id: u64,
         stop_flag: &Arc<std::sync::atomic::AtomicBool>,
+        remove_canonical_cache: bool,
     ) {
-        if stop_flag.load(Ordering::SeqCst) || !self.player.is_session_active(session_id) {
-            return;
+        if self.player.is_session_active(session_id) {
+            stop_flag.store(true, Ordering::SeqCst);
         }
-        stop_flag.store(true, Ordering::SeqCst);
 
-        let Some(cache_path) = cache_path else {
+        let Some(cache_lease) = cache_lease else {
             return;
         };
-        let pending_marker = audio_cache::pending_marker_path(&cache_path);
-        self.playback_runtime.handle().spawn_blocking(move || {
-            let _ = std::fs::remove_file(&pending_marker);
-            let _ = std::fs::remove_file(&cache_path);
+        let log_center = Arc::clone(&self.log_center);
+        self.playback_runtime.spawn(async move {
+            let _cache_io_guard = audio_cache::io_lock().lock().await;
+            let cleanup_result = if remove_canonical_cache {
+                audio_cache::remove_song_cache_if_current(&cache_lease).map(|_| ())
+            } else {
+                audio_cache::remove_staging_cache(&cache_lease)
+            };
+            if let Err(error) = cleanup_result {
+                log_center.record(
+                    LogPayload::new(
+                        LogLevel::Warn,
+                        "player",
+                        "player.cache_cleanup_failed",
+                        "Failed to remove audio cache after playback failure",
+                    )
+                    .details(format!("{error:#}")),
+                );
+            }
         });
     }
 
@@ -519,8 +689,7 @@ impl AppState {
         source_url: String,
         stop_flag: Arc<std::sync::atomic::AtomicBool>,
         handle: GrowingFileHandle,
-        cache_path: PathBuf,
-        pending_marker: PathBuf,
+        cache_lease: AudioCacheLease,
     ) {
         let api = Arc::clone(&self.api_clients.playback_api);
         let log_center = Arc::clone(&self.log_center);
@@ -530,22 +699,34 @@ impl AppState {
         let _download_task = download_runtime.spawn(async move {
             let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
             let writer_handle = handle.clone();
-            let writer_cache_path = cache_path.clone();
+            let writer_cache_path = cache_lease.staging_path().to_path_buf();
+            let writer_cache_lease = cache_lease.clone();
+            let writer_stop_flag = Arc::clone(&stop_flag);
             let write_task = tokio::spawn(async move {
-                let mut writer = tokio::fs::OpenOptions::new()
-                    .create(false)
-                    .write(true)
-                    .open(&writer_cache_path)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to open streaming cache file {}",
-                            writer_cache_path.display()
-                        )
-                    })?;
+                let mut writer = {
+                    let _cache_io_guard = audio_cache::io_lock().lock().await;
+                    if writer_stop_flag.load(Ordering::SeqCst) || !writer_cache_lease.is_current() {
+                        return Ok::<_, anyhow::Error>(false);
+                    }
+                    tokio::fs::OpenOptions::new()
+                        .create(false)
+                        .write(true)
+                        .open(&writer_cache_path)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Failed to open streaming cache file {}",
+                                writer_cache_path.display()
+                            )
+                        })?
+                };
                 let mut position = 0_u64;
 
                 while let Some(chunk) = chunk_rx.recv().await {
+                    let _cache_io_guard = audio_cache::io_lock().lock().await;
+                    if writer_stop_flag.load(Ordering::SeqCst) || !writer_cache_lease.is_current() {
+                        return Ok(false);
+                    }
                     writer
                         .write_all(&chunk)
                         .await
@@ -554,25 +735,31 @@ impl AppState {
                     writer_handle.publish_available_len(position);
                 }
 
+                let _cache_io_guard = audio_cache::io_lock().lock().await;
+                if writer_stop_flag.load(Ordering::SeqCst) || !writer_cache_lease.is_current() {
+                    return Ok(false);
+                }
                 writer
                     .flush()
                     .await
                     .context("Failed to flush streaming cache file")?;
-                Ok::<_, anyhow::Error>(())
+                Ok(true)
             });
 
             let total_len_set = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let handle_for_download = handle.clone();
             let stop_flag_for_download = Arc::clone(&stop_flag);
+            let cache_lease_for_download = cache_lease.clone();
             let chunk_tx_for_download = chunk_tx.clone();
             let download_result = api
                 .download_stream_owned(&source_url, move |chunk, _, total| {
                     let chunk_tx = chunk_tx_for_download.clone();
                     let handle = handle_for_download.clone();
                     let stop_flag = Arc::clone(&stop_flag_for_download);
+                    let cache_lease = cache_lease_for_download.clone();
                     let total_len_set = Arc::clone(&total_len_set);
                     async move {
-                        if stop_flag.load(Ordering::SeqCst) {
+                        if stop_flag.load(Ordering::SeqCst) || !cache_lease.is_current() {
                             return Ok(false);
                         }
                         if !total_len_set.load(Ordering::Relaxed) {
@@ -597,36 +784,105 @@ impl AppState {
                 .map_err(|error| anyhow::anyhow!(error.to_string()))
                 .and_then(|result| result);
 
+            if stop_flag.load(Ordering::SeqCst) || !cache_lease.is_current() {
+                handle.mark_error("Playback stopped");
+                let _cache_io_guard = audio_cache::io_lock().lock().await;
+                let _ = audio_cache::remove_staging_cache(&cache_lease);
+                return;
+            }
+
             match (download_result, write_result) {
-                (Ok(()), Ok(())) if !stop_flag.load(Ordering::SeqCst) => {
-                    handle.mark_complete();
-                    cleanup_runtime.handle().spawn_blocking(move || {
-                        let _ = std::fs::remove_file(&pending_marker);
-                        audio_cache::spawn_cleanup_if_needed();
-                    });
+                (Ok(()), Ok(true)) => {
+                    let completion_result = {
+                        let _cache_io_guard = audio_cache::io_lock().lock().await;
+                        if stop_flag.load(Ordering::SeqCst) {
+                            Ok(false)
+                        } else {
+                            audio_cache::complete_song_cache_if_current(&cache_lease)
+                        }
+                    };
+                    match completion_result {
+                        Ok(true) => {
+                            handle.mark_complete();
+                            cleanup_runtime
+                                .handle()
+                                .spawn_blocking(audio_cache::spawn_cleanup_if_needed);
+                        }
+                        Ok(false) => {
+                            handle.mark_error("Playback stopped");
+                            let _cache_io_guard = audio_cache::io_lock().lock().await;
+                            let _ = audio_cache::remove_staging_cache(&cache_lease);
+                        }
+                        Err(error) => {
+                            let is_cache_failure =
+                                is_local_audio_cache_failure(&error);
+                            log_center.record(
+                                LogPayload::new(
+                                    if is_cache_failure {
+                                        LogLevel::Warn
+                                    } else {
+                                        LogLevel::Error
+                                    },
+                                    "player",
+                                    if is_cache_failure {
+                                        "player.stream_cache_io_failed"
+                                    } else {
+                                        "player.stream_cache_finalize_failed"
+                                    },
+                                    if is_cache_failure {
+                                        "Audio cache finalization failed; playback recovery may retry"
+                                    } else {
+                                        "Failed to finalize streaming playback cache"
+                                    },
+                                )
+                                .details(format!("{error:#}")),
+                            );
+                            handle.mark_error(error.to_string());
+                            let _cache_io_guard = audio_cache::io_lock().lock().await;
+                            if is_cache_failure {
+                                let _ = audio_cache::remove_song_cache_if_current(&cache_lease);
+                            } else {
+                                let _ = audio_cache::remove_staging_cache(&cache_lease);
+                            }
+                        }
+                    }
                 }
-                (Ok(()), Ok(())) => {
+                (Ok(()), Ok(false)) => {
                     handle.mark_error("Playback stopped");
-                    cleanup_runtime.handle().spawn_blocking(move || {
-                        let _ = std::fs::remove_file(&pending_marker);
-                        let _ = std::fs::remove_file(&cache_path);
-                    });
+                    let _cache_io_guard = audio_cache::io_lock().lock().await;
+                    let _ = audio_cache::remove_staging_cache(&cache_lease);
                 }
                 (Err(error), _) | (_, Err(error)) => {
+                    let is_cache_failure =
+                        is_local_audio_cache_failure(&anyhow::anyhow!(error.to_string()));
                     log_center.record(
                         LogPayload::new(
-                            LogLevel::Error,
+                            if is_cache_failure {
+                                LogLevel::Warn
+                            } else {
+                                LogLevel::Error
+                            },
                             "player",
-                            "player.stream_download_failed",
-                            "Streaming download failed during playback",
+                            if is_cache_failure {
+                                "player.stream_cache_io_failed"
+                            } else {
+                                "player.stream_download_failed"
+                            },
+                            if is_cache_failure {
+                                "Audio cache write failed; playback recovery may retry"
+                            } else {
+                                "Streaming download failed during playback"
+                            },
                         )
                         .details(format!("{error:#}")),
                     );
                     handle.mark_error(error.to_string());
-                    cleanup_runtime.handle().spawn_blocking(move || {
-                        let _ = std::fs::remove_file(&pending_marker);
-                        let _ = std::fs::remove_file(&cache_path);
-                    });
+                    let _cache_io_guard = audio_cache::io_lock().lock().await;
+                    if is_cache_failure {
+                        let _ = audio_cache::remove_song_cache_if_current(&cache_lease);
+                    } else {
+                        let _ = audio_cache::remove_staging_cache(&cache_lease);
+                    }
                 }
             }
         });
@@ -702,6 +958,109 @@ impl AppState {
             start_position_secs,
         )
     }
+
+    async fn clear_cache_for_seek_recovery(&self, cache_lease: AudioCacheLease) -> Result<()> {
+        let _cache_io_guard = audio_cache::io_lock().lock().await;
+        if audio_cache::remove_song_cache_if_current(&cache_lease)? {
+            Ok(())
+        } else {
+            anyhow::bail!("Audio cache lease was superseded before seek recovery")
+        }
+    }
+
+    fn log_seek_cache_recovery(&self, request_id: u64, session_id: u64) {
+        self.log_center.record(
+            LogPayload::new(
+                LogLevel::Warn,
+                "player",
+                "player.seek_cache_recovery",
+                "Reloading seek after local audio cache failure",
+            )
+            .context(json!({
+                "playback.request_id": request_id,
+                "playback.session_id": session_id,
+                "playback.cache_recovery_attempt": 1,
+            })),
+        );
+    }
+
+    fn log_seek_cache_recovery_failure(
+        &self,
+        request_id: u64,
+        session_id: u64,
+        error: &anyhow::Error,
+    ) {
+        self.log_center.record(
+            LogPayload::new(
+                LogLevel::Warn,
+                "player",
+                "player.seek_cache_recovery_failed",
+                "Failed to clear audio cache before retrying seek",
+            )
+            .details(format!("{error:#}"))
+            .context(json!({
+                "playback.request_id": request_id,
+                "playback.session_id": session_id,
+                "playback.cache_recovery_attempt": 1,
+            })),
+        );
+    }
+}
+
+#[derive(Debug)]
+struct PlaybackStartFailure {
+    error: anyhow::Error,
+    cache_lease: Option<AudioCacheLease>,
+    local_cache_failure: bool,
+}
+
+impl PlaybackStartFailure {
+    fn with_cache_context(error: anyhow::Error, cache_lease: Option<AudioCacheLease>) -> Self {
+        let local_cache_failure = is_local_audio_cache_failure(&error);
+        Self {
+            error,
+            cache_lease,
+            local_cache_failure,
+        }
+    }
+}
+
+impl From<anyhow::Error> for PlaybackStartFailure {
+    fn from(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            cache_lease: None,
+            local_cache_failure: false,
+        }
+    }
+}
+
+fn should_recover_seek_cache(recovery_attempted: bool, failure: &PlaybackStartFailure) -> bool {
+    !recovery_attempted && failure.local_cache_failure && failure.cache_lease.is_some()
+}
+
+impl From<PlaybackError> for PlaybackStartFailure {
+    fn from(error: PlaybackError) -> Self {
+        Self::from(anyhow::Error::new(error))
+    }
+}
+
+fn is_local_audio_cache_failure(error: &anyhow::Error) -> bool {
+    let message = format!("{error:#}").to_ascii_lowercase();
+    message.contains("failed to open cached audio file")
+        || message.contains("failed to read cached audio file")
+        || message.contains("failed to seek cached audio file")
+        || message.contains("failed to inspect cached audio file")
+        || message.contains("failed to open streaming cache file")
+        || message.contains("failed to read streaming cache file")
+        || message.contains("failed to seek streaming cache file")
+        || message.contains("failed to inspect streaming cache file")
+        || message.contains("failed to append audio chunk to cache file")
+        || message.contains("failed to flush streaming cache file")
+        || message.contains("failed to create cache marker")
+        || message.contains("failed to create cache file")
+        || message.contains("failed to promote streaming cache file")
+        || message.contains("failed to remove audio cache file")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -738,36 +1097,40 @@ fn initial_buffer_samples(
     target.max(minimum).min(maximum)
 }
 
-type PrepareInputResult = (PathBuf, Option<(PathBuf, PathBuf)>, PlaybackInput);
+type PrepareInputResult = (AudioCacheLease, Option<PathBuf>, PlaybackInput);
 
-fn prepare_cached_or_streaming_input(
-    song_cid: &str,
-    source_url: &str,
-) -> Result<PrepareInputResult> {
-    let cache_path = audio_cache::cached_song_path(song_cid, source_url)?;
-    prepare_playback_input_from_cache_path(cache_path)
+fn acquire_active_cache_lease(
+    cache_path: &std::path::Path,
+    stop_flag: &std::sync::atomic::AtomicBool,
+) -> Result<AudioCacheLease> {
+    anyhow::ensure!(!stop_flag.load(Ordering::SeqCst), "Playback stopped");
+    Ok(audio_cache::acquire_song_cache_lease(cache_path))
 }
 
+#[cfg(test)]
 fn prepare_playback_input_from_cache_path(cache_path: PathBuf) -> Result<PrepareInputResult> {
-    let pending_marker = audio_cache::pending_marker_path(&cache_path);
+    let cache_lease = audio_cache::acquire_song_cache_lease(&cache_path);
+    prepare_playback_input_from_cache_path_with_lease(cache_path, cache_lease)
+}
+
+fn prepare_playback_input_from_cache_path_with_lease(
+    cache_path: PathBuf,
+    cache_lease: AudioCacheLease,
+) -> Result<PrepareInputResult> {
     if audio_cache::is_song_cached(&cache_path) {
-        return Ok((
-            cache_path.clone(),
-            None,
-            PlaybackInput::cached_file(cache_path),
-        ));
+        return Ok((cache_lease, None, PlaybackInput::cached_file(cache_path)?));
     }
 
-    let _ = std::fs::remove_file(&cache_path);
-    let _ = std::fs::remove_file(&pending_marker);
+    audio_cache::remove_song_cache_if_current(&cache_lease)?;
+    let pending_marker = audio_cache::pending_marker_path(cache_lease.staging_path());
     std::fs::write(&pending_marker, b"pending")
         .with_context(|| format!("Failed to create cache marker {}", pending_marker.display()))?;
 
-    let (handle, writer) = GrowingFileHandle::new(cache_path.clone())?;
+    let (handle, writer) = GrowingFileHandle::new(cache_lease.staging_path().to_path_buf())?;
     drop(writer);
     Ok((
-        cache_path.clone(),
-        Some((cache_path, pending_marker)),
+        cache_lease,
+        Some(pending_marker),
         PlaybackInput::growing_file(handle),
     ))
 }
@@ -782,6 +1145,7 @@ fn playback_error(
 }
 
 fn classify_playback_error(error: anyhow::Error, session_id: Option<u64>) -> PlaybackError {
+    let local_cache_failure = is_local_audio_cache_failure(&error);
     let message = format!("{error:#}");
     let lowered = message.to_ascii_lowercase();
     let code = if lowered.contains("playback request was superseded")
@@ -789,12 +1153,7 @@ fn classify_playback_error(error: anyhow::Error, session_id: Option<u64>) -> Pla
         || lowered.contains("playback session expired")
     {
         PlaybackErrorCode::Superseded
-    } else if lowered.contains("failed to open")
-        || lowered.contains("failed to create cache")
-        || lowered.contains("failed to append")
-        || lowered.contains("failed to flush")
-        || lowered.contains("audio cache")
-    {
+    } else if local_cache_failure {
         PlaybackErrorCode::Io
     } else if lowered.contains("download")
         || lowered.contains("network")
@@ -824,10 +1183,15 @@ fn classify_playback_error(error: anyhow::Error, session_id: Option<u64>) -> Pla
 #[cfg(test)]
 mod tests {
     use super::{
-        initial_buffer_samples, prepare_playback_input_from_cache_path, PlaybackStartIntent,
+        acquire_active_cache_lease, classify_playback_error, initial_buffer_samples,
+        prepare_playback_input_from_cache_path, should_recover_seek_cache, PlaybackStartFailure,
+        PlaybackStartIntent,
     };
     use crate::audio_cache;
     use crate::player::stream::{AudioFormat, PlaybackInput, SampleBuffer};
+    use crate::player::PlaybackErrorCode;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     #[test]
@@ -837,13 +1201,13 @@ mod tests {
         let pending_marker = audio_cache::pending_marker_path(&cache_path);
         std::fs::write(&cache_path, b"not a real wav").expect("cached file");
 
-        let (failure_cache_path, pending_download, input) =
+        let (cache_lease, pending_download, input) =
             prepare_playback_input_from_cache_path(cache_path.clone())
                 .expect("prepared cached input");
 
-        assert_eq!(failure_cache_path, cache_path);
+        assert_eq!(cache_lease.cache_path(), cache_path);
         assert!(pending_download.is_none());
-        assert!(matches!(input, PlaybackInput::CachedFile(path) if path == failure_cache_path));
+        assert!(matches!(input, PlaybackInput::CachedFile(handle) if handle.path() == cache_path));
         assert!(!pending_marker.exists());
     }
 
@@ -851,20 +1215,98 @@ mod tests {
     fn streaming_playback_input_keeps_cache_path_for_failure_cleanup() {
         let temp_dir = tempdir().expect("tempdir");
         let cache_path = temp_dir.path().join("stream-song.wav");
-        let pending_marker = audio_cache::pending_marker_path(&cache_path);
 
-        let (failure_cache_path, pending_download, input) =
+        let (cache_lease, pending_download, input) =
             prepare_playback_input_from_cache_path(cache_path.clone())
                 .expect("prepared streaming input");
 
-        assert_eq!(failure_cache_path, cache_path);
-        assert_eq!(
-            pending_download,
-            Some((failure_cache_path.clone(), pending_marker.clone()))
-        );
+        assert_eq!(cache_lease.cache_path(), cache_path);
+        let pending_marker = audio_cache::pending_marker_path(cache_lease.staging_path());
+        assert_eq!(pending_download, Some(pending_marker.clone()));
         assert!(matches!(input, PlaybackInput::GrowingFile(_)));
         assert!(pending_marker.exists());
-        assert!(failure_cache_path.exists());
+        assert!(cache_lease.staging_path().exists());
+        assert!(!cache_path.exists());
+    }
+
+    #[tokio::test]
+    async fn queued_stopped_preparation_does_not_acquire_a_cache_generation() {
+        let temp_dir = tempdir().expect("tempdir");
+        let cache_path = temp_dir.path().join("stopped-song.wav");
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let cache_guard = audio_cache::io_lock().lock().await;
+        let queued_stop_flag = Arc::clone(&stop_flag);
+        let queued_cache_path = cache_path.clone();
+        let queued_prepare = tokio::spawn(async move {
+            let _cache_guard = audio_cache::io_lock().lock().await;
+            acquire_active_cache_lease(&queued_cache_path, &queued_stop_flag)
+        });
+
+        tokio::task::yield_now().await;
+        stop_flag.store(true, Ordering::SeqCst);
+        drop(cache_guard);
+
+        let error = queued_prepare
+            .await
+            .expect("queued task")
+            .expect_err("stopped preparation");
+        assert!(format!("{error:#}").contains("Playback stopped"));
+        assert!(!cache_path.exists());
+        assert!(!audio_cache::pending_marker_path(&cache_path).exists());
+    }
+
+    #[test]
+    fn seek_cache_recovery_is_limited_to_one_local_io_retry() {
+        let temp_dir = tempdir().expect("tempdir");
+        let cache_path = temp_dir.path().join("song.wav");
+        let cache_lease = audio_cache::acquire_song_cache_lease(&cache_path);
+        let failure = PlaybackStartFailure::with_cache_context(
+            anyhow::anyhow!(
+                "Failed to open streaming cache file {}: No such file or directory",
+                cache_path.display()
+            ),
+            Some(cache_lease),
+        );
+
+        assert!(should_recover_seek_cache(false, &failure));
+        assert!(!should_recover_seek_cache(true, &failure));
+    }
+
+    #[test]
+    fn seek_cache_recovery_does_not_swallow_other_playback_failures() {
+        let temp_dir = tempdir().expect("tempdir");
+        let cache_path = temp_dir.path().join("song.wav");
+
+        for message in [
+            "Failed to probe audio stream",
+            "Failed to open output device",
+            "HTTP request failed",
+            "Audio decoder reset required",
+        ] {
+            let failure = PlaybackStartFailure::with_cache_context(
+                anyhow::anyhow!(message),
+                Some(audio_cache::acquire_song_cache_lease(&cache_path)),
+            );
+            assert!(
+                !should_recover_seek_cache(false, &failure),
+                "unexpected cache recovery for {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn playback_error_classification_distinguishes_cache_and_output_io() {
+        let cache_error = classify_playback_error(
+            anyhow::anyhow!("Failed to open cached audio file /tmp/song.wav"),
+            Some(7),
+        );
+        let output_error = classify_playback_error(
+            anyhow::anyhow!("Failed to open audio output device"),
+            Some(8),
+        );
+
+        assert_eq!(cache_error.code, PlaybackErrorCode::Io);
+        assert_eq!(output_error.code, PlaybackErrorCode::Audio);
     }
 
     #[test]

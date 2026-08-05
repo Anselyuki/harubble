@@ -65,12 +65,19 @@ fn emit_download_state(app: &AppHandle, manager_snapshot: &DownloadManagerSnapsh
 /// 返回值为本次实际移除的缓存条目数量。
 /// 该接口会先终止当前播放会话，再删除缓存文件；如果调用方只想结束播放而不清理缓存，应改用播放控制接口。
 #[tauri::command]
-pub fn clear_audio_cache(state: State<'_, AppState>) -> Result<u64, DownloadError> {
+pub async fn clear_audio_cache(state: State<'_, AppState>) -> Result<u64, DownloadError> {
+    // Hold the same cache lock as playback preparation and streaming writes. Stop the player
+    // while the lock is held so no new generation can be created between stop and deletion.
+    let _cache_io_guard = audio_cache::io_lock().lock().await;
+    state.player().supersede_playback_request();
     state
         .player()
         .stop()
         .map_err(|e| DownloadError::Internal(e.to_string()))?;
-    audio_cache::clear_audio_cache().map_err(|e| DownloadError::Io(e.to_string()))
+    tokio::task::spawn_blocking(audio_cache::clear_audio_cache)
+        .await
+        .map_err(|e| DownloadError::Internal(e.to_string()))?
+        .map_err(|e| DownloadError::Io(e.to_string()))
 }
 
 /// 清空后端 API 响应缓存。

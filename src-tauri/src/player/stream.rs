@@ -85,15 +85,18 @@ type BoxedAudioReader = Box<dyn AudioReadStream>;
 #[derive(Clone)]
 pub enum PlaybackInput {
     /// 已完整缓存到本地磁盘的音频文件。
-    CachedFile(PathBuf),
+    CachedFile(StableFileHandle),
     /// 正在增长中的缓存文件句柄，适用于边下载边播放。
     GrowingFile(GrowingFileHandle),
 }
 
 impl PlaybackInput {
     /// 使用完整缓存文件构造播放输入。
-    pub fn cached_file(path: PathBuf) -> Self {
-        Self::CachedFile(path)
+    pub fn cached_file(path: PathBuf) -> Result<Self> {
+        Ok(Self::CachedFile(StableFileHandle::open(
+            path,
+            CacheFileKind::Cached,
+        )?))
     }
 
     /// 使用增长中的缓存文件构造播放输入。
@@ -140,12 +143,7 @@ impl PlaybackInput {
 
     fn open_reader(&self, stop_flag: Option<Arc<AtomicBool>>) -> Result<BoxedAudioReader> {
         match self {
-            Self::CachedFile(path) => {
-                let file = File::open(path).with_context(|| {
-                    format!("Failed to open cached audio file {}", path.display())
-                })?;
-                Ok(Box::new(file))
-            }
+            Self::CachedFile(handle) => Ok(Box::new(handle.open_reader(stop_flag))),
             Self::GrowingFile(handle) => Ok(Box::new(handle.open_reader(stop_flag)?)),
         }
     }
@@ -153,7 +151,7 @@ impl PlaybackInput {
     fn build_hint(&self) -> Hint {
         let mut hint = Hint::new();
         let extension = match self {
-            Self::CachedFile(path) => path.extension().and_then(|value| value.to_str()),
+            Self::CachedFile(handle) => handle.path().extension().and_then(|value| value.to_str()),
             Self::GrowingFile(handle) => handle.path().extension().and_then(|value| value.to_str()),
         };
         if let Some(extension) = extension {
@@ -163,10 +161,140 @@ impl PlaybackInput {
     }
 }
 
+#[derive(Clone, Copy)]
+enum CacheFileKind {
+    Cached,
+    Streaming,
+}
+
+impl CacheFileKind {
+    fn description(self) -> &'static str {
+        match self {
+            Self::Cached => "cached audio file",
+            Self::Streaming => "streaming cache file",
+        }
+    }
+}
+
+/// 绑定到一次播放准备所看到的文件实体，而不是后续可能被其他会话替换的路径。
+#[derive(Clone)]
+pub struct StableFileHandle {
+    path: PathBuf,
+    file: Arc<Mutex<File>>,
+    kind: CacheFileKind,
+}
+
+impl StableFileHandle {
+    fn open(path: PathBuf, kind: CacheFileKind) -> Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .with_context(|| format!("Failed to open {} {}", kind.description(), path.display()))?;
+        Ok(Self {
+            path,
+            file: Arc::new(Mutex::new(file)),
+            kind,
+        })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn open_reader(&self, stop_flag: Option<Arc<AtomicBool>>) -> StableFileReader {
+        StableFileReader {
+            path: self.path.clone(),
+            file: Arc::clone(&self.file),
+            kind: self.kind,
+            position: 0,
+            stop_flag,
+        }
+    }
+}
+
+struct StableFileReader {
+    path: PathBuf,
+    file: Arc<Mutex<File>>,
+    kind: CacheFileKind,
+    position: u64,
+    stop_flag: Option<Arc<AtomicBool>>,
+}
+
+impl StableFileReader {
+    fn ensure_active(&self) -> io::Result<()> {
+        if self
+            .stop_flag
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        {
+            return Err(io::Error::other("Playback stopped"));
+        }
+        Ok(())
+    }
+
+    fn cache_io_error(&self, action: &str, error: io::Error) -> io::Error {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "Failed to {action} {} {}: {error}",
+                self.kind.description(),
+                self.path.display()
+            ),
+        )
+    }
+}
+
+impl Read for StableFileReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.ensure_active()?;
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| io::Error::other("Audio cache file lock was poisoned"))?;
+        file.seek(SeekFrom::Start(self.position))
+            .map_err(|error| self.cache_io_error("seek", error))?;
+        let read = file
+            .read(buf)
+            .map_err(|error| self.cache_io_error("read", error))?;
+        self.position += read as u64;
+        Ok(read)
+    }
+}
+
+impl Seek for StableFileReader {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.ensure_active()?;
+        let next = match position {
+            SeekFrom::Start(value) => value as i128,
+            SeekFrom::Current(offset) => self.position as i128 + offset as i128,
+            SeekFrom::End(offset) => {
+                let file = self
+                    .file
+                    .lock()
+                    .map_err(|_| io::Error::other("Audio cache file lock was poisoned"))?;
+                let len = file
+                    .metadata()
+                    .map_err(|error| self.cache_io_error("inspect", error))?
+                    .len();
+                len as i128 + offset as i128
+            }
+        };
+        if next < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Seek before start of stream",
+            ));
+        }
+        self.position = next as u64;
+        Ok(self.position)
+    }
+}
+
 /// 供边下载边播放场景共享的增长文件句柄。
 #[derive(Clone)]
 pub struct GrowingFileHandle {
     path: PathBuf,
+    stable_file: StableFileHandle,
     state: Arc<(Mutex<GrowingFileState>, Condvar)>,
 }
 
@@ -195,10 +323,12 @@ impl GrowingFileHandle {
             .write(true)
             .open(&path)
             .with_context(|| format!("Failed to create cache file {}", path.display()))?;
+        let stable_file = StableFileHandle::open(path.clone(), CacheFileKind::Streaming)?;
 
         Ok((
             Self {
                 path,
+                stable_file,
                 state: Arc::new((Mutex::new(GrowingFileState::default()), Condvar::new())),
             },
             writer,
@@ -210,17 +340,8 @@ impl GrowingFileHandle {
     /// 可选的 `stop_flag` 使读取端能在外部播放会话终止时中断阻塞等待；若传入
     /// `None`，则读取端仅依赖写入端的 `mark_complete` / `mark_error` 唤醒。
     pub fn open_reader(&self, stop_flag: Option<Arc<AtomicBool>>) -> Result<GrowingFileReader> {
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&self.path)
-            .with_context(|| {
-                format!(
-                    "Failed to open streaming cache file {}",
-                    self.path.display()
-                )
-            })?;
         Ok(GrowingFileReader {
-            file,
+            file: self.stable_file.open_reader(stop_flag.clone()),
             position: 0,
             state: Arc::clone(&self.state),
             stop_flag,
@@ -277,7 +398,7 @@ impl GrowingFileHandle {
 /// 可选的 `stop_flag` 允许外部播放会话终止时中断阻塞的 condvar 等待，避免网络
 /// 挂起场景下解码线程无限驻留。
 pub struct GrowingFileReader {
-    file: File,
+    file: StableFileReader,
     position: u64,
     state: Arc<(Mutex<GrowingFileState>, Condvar)>,
     stop_flag: Option<Arc<AtomicBool>>,
@@ -910,19 +1031,40 @@ fn spawn_decode_worker(
                     }
                 }
 
-                let converted = converter.finish();
-                sample_buffer.push(&converted);
-                sample_buffer.finish();
+                finish_decode_output(&sample_buffer, converter, &stop_flag);
                 Ok(())
             })();
 
             if let Err(error) = result {
+                if stop_flag.load(Ordering::SeqCst) {
+                    sample_buffer.cancel();
+                    return;
+                }
                 let message = format!("{error:#}");
                 sample_buffer.fail(message.clone());
                 error_handler(message);
             }
         })
         .expect("Failed to spawn audio decode worker")
+}
+
+fn finish_decode_output(
+    sample_buffer: &SampleBuffer,
+    mut converter: SampleConverter,
+    stop_flag: &AtomicBool,
+) {
+    if stop_flag.load(Ordering::SeqCst) {
+        sample_buffer.cancel();
+        return;
+    }
+
+    let converted = converter.finish();
+    sample_buffer.push(&converted);
+    if stop_flag.load(Ordering::SeqCst) {
+        sample_buffer.cancel();
+    } else {
+        sample_buffer.finish();
+    }
 }
 
 fn seek_to_time(
@@ -1342,10 +1484,11 @@ impl SampleConverter {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_decoded_format_matches_source, open_audio_reader, open_audio_reader_with_retry,
-        timestamp_delta_to_frames, AudioFormat, BoxedAudioReader, GrowingFileHandle, Hint,
+        ensure_decoded_format_matches_source, finish_decode_output, open_audio_reader,
+        open_audio_reader_with_retry, spawn_decode_worker, timestamp_delta_to_frames, AudioFormat,
+        BoxedAudioReader, GrowingFileHandle, Hint, PlaybackErrorHandler, PlaybackInput,
         SampleBuffer, SampleConverter, SampleWaitOutcome, SymphoniaSampleBuffer,
-        SINC_RESAMPLE_CHUNK_FRAMES,
+        SAMPLE_BUFFER_CANCELLED, SINC_RESAMPLE_CHUNK_FRAMES,
     };
     use std::fs::File;
     use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -1360,6 +1503,22 @@ mod tests {
     struct FlakyReader {
         inner: File,
         fail_once: AtomicBool,
+    }
+
+    #[test]
+    fn cached_input_keeps_the_file_generation_it_opened() {
+        let temp_dir = tempdir().expect("tempdir");
+        let cache_path = temp_dir.path().join("song.wav");
+        std::fs::write(&cache_path, b"old cache").expect("old cache");
+        let input = PlaybackInput::cached_file(cache_path.clone()).expect("cached input");
+
+        std::fs::remove_file(&cache_path).expect("remove old cache");
+        std::fs::write(&cache_path, b"new cache").expect("new cache");
+
+        let mut reader = input.open_reader(None).expect("stable reader");
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).expect("read stable cache");
+        assert_eq!(bytes, b"old cache");
     }
 
     impl FlakyReader {
@@ -1422,6 +1581,51 @@ mod tests {
         assert_eq!(read, 10);
         assert_eq!(&buf, b"abcdefghij");
         reader_thread.join().expect("reader thread");
+    }
+
+    #[test]
+    fn growing_file_reader_keeps_promoted_generation_open() {
+        let temp_dir = tempdir().expect("tempdir");
+        let staging_path = temp_dir.path().join("song.generation-1.wav");
+        let canonical_path = temp_dir.path().join("song.wav");
+        let (handle, mut writer) =
+            GrowingFileHandle::new(staging_path.clone()).expect("growing file");
+        writer.write_all(b"promoted audio").expect("audio");
+        writer.flush().expect("flush");
+        drop(writer);
+        std::fs::rename(&staging_path, &canonical_path).expect("promote");
+        handle.publish_available_len(14);
+        handle.mark_complete();
+
+        let mut reader = handle.open_reader(None).expect("reopened reader");
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).expect("read promoted audio");
+        assert_eq!(bytes, b"promoted audio");
+    }
+
+    #[test]
+    fn old_promoted_generation_does_not_read_new_canonical_bytes() {
+        let temp_dir = tempdir().expect("tempdir");
+        let old_staging = temp_dir.path().join("song.generation-1.wav");
+        let canonical_path = temp_dir.path().join("song.wav");
+        let (old_handle, mut old_writer) =
+            GrowingFileHandle::new(old_staging.clone()).expect("old growing file");
+        old_writer.write_all(b"old audio").expect("old audio");
+        old_writer.flush().expect("old flush");
+        drop(old_writer);
+        std::fs::rename(&old_staging, &canonical_path).expect("old promote");
+        old_handle.publish_available_len(9);
+        old_handle.mark_complete();
+
+        let new_staging = temp_dir.path().join("song.generation-2.wav");
+        std::fs::write(&new_staging, b"new audio").expect("new audio");
+        std::fs::remove_file(&canonical_path).expect("remove old canonical");
+        std::fs::rename(&new_staging, &canonical_path).expect("new promote");
+
+        let mut reader = old_handle.open_reader(None).expect("old reader");
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).expect("read old generation");
+        assert_eq!(bytes, b"old audio");
     }
 
     #[test]
@@ -1684,6 +1888,64 @@ mod tests {
             .wait_for_samples_or_end(1, &stop_flag)
             .expect_err("cancelled buffer should stop waiters");
         assert!(format!("{error:#}").contains("Playback stopped"));
+    }
+
+    #[test]
+    fn stopped_decode_worker_cancels_without_reporting_an_error() {
+        let temp_dir = tempdir().expect("tempdir");
+        let audio_path = temp_dir.path().join("cancelled.wav");
+        let (handle, _writer) = GrowingFileHandle::new(audio_path).expect("growing file");
+        let input = PlaybackInput::growing_file(handle);
+        let format = AudioFormat::with_bits_per_sample(2, 44_100, 1.0, Some(16));
+        let sample_buffer = SampleBuffer::new();
+        let stop_flag = Arc::new(AtomicBool::new(true));
+        let error_count = Arc::new(AtomicUsize::new(0));
+        let error_count_for_handler = Arc::clone(&error_count);
+        let error_handler: PlaybackErrorHandler = Arc::new(move |_message: String| {
+            error_count_for_handler.fetch_add(1, Ordering::SeqCst);
+        });
+
+        spawn_decode_worker(
+            input,
+            Hint::new(),
+            format,
+            format,
+            sample_buffer.clone(),
+            Arc::clone(&stop_flag),
+            Arc::new(AtomicBool::new(false)),
+            0.0,
+            error_handler,
+        )
+        .join()
+        .expect("decode worker");
+
+        assert_eq!(error_count.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            sample_buffer.inner.state.load(Ordering::Acquire),
+            SAMPLE_BUFFER_CANCELLED
+        );
+    }
+
+    #[test]
+    fn stopping_after_decode_output_cancels_instead_of_finishing() {
+        let format = AudioFormat::with_bits_per_sample(2, 44_100, 1.0, Some(16));
+        let mut converter = SampleConverter::new(format, format);
+        let _ = converter.push_chunk(&[0.25, -0.25]);
+        let sample_buffer = SampleBuffer::new();
+        sample_buffer.push(&[0.25, -0.25]);
+
+        let stop_flag = AtomicBool::new(true);
+        finish_decode_output(&sample_buffer, converter, &stop_flag);
+
+        assert_eq!(
+            sample_buffer.inner.state.load(Ordering::Acquire),
+            SAMPLE_BUFFER_CANCELLED
+        );
+        let mut output = [1.0_f32; 2];
+        let status = sample_buffer.pop_complete_frames_into(&mut output, 2);
+        assert!(!status.finished);
+        assert_eq!(status.written, 0);
+        assert_eq!(output, [1.0, 1.0]);
     }
 
     #[test]
