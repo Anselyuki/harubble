@@ -696,6 +696,34 @@ impl SampleBuffer {
         self.try_pop_frames_into(output, frame_channels, true)
     }
 
+    /// 返回实时输出是否可以在不耗尽缓冲的前提下继续播放。
+    ///
+    /// 生产端结束后允许排空尾部，避免低水位门控截断歌曲末尾。
+    pub fn is_realtime_buffer_ready(
+        &self,
+        frame_channels: usize,
+        minimum_buffered_samples: usize,
+    ) -> Option<bool> {
+        if minimum_buffered_samples == 0 {
+            return Some(true);
+        }
+
+        let frame_channels = frame_channels.max(1);
+        let minimum_buffered_samples = minimum_buffered_samples
+            .max(frame_channels)
+            .saturating_sub(minimum_buffered_samples % frame_channels);
+        self.inner.consumer.with_consumer(|consumer| {
+            if self.inner.state.load(Ordering::Acquire) != SAMPLE_BUFFER_OPEN {
+                return true;
+            }
+
+            let available_samples = consumer.slots();
+            let available_complete_samples =
+                available_samples - (available_samples % frame_channels);
+            available_complete_samples >= minimum_buffered_samples
+        })
+    }
+
     fn try_pop_frames_into(
         &self,
         output: &mut [f32],
@@ -1668,6 +1696,43 @@ mod tests {
     }
 
     #[test]
+    fn classic_float_wav_probe_reports_source_bit_depth() {
+        let temp_dir = tempdir().expect("tempdir");
+        let audio_path = temp_dir.path().join("float-probe-test.wav");
+
+        // Hound emits WAVEFORMATEXTENSIBLE for 32-bit samples. Build the classic
+        // WAVE_FORMAT_IEEE_FLOAT header whose Symphonia metadata omits the bit depth.
+        let samples = [0.25_f32, -0.25_f32];
+        let data_len = (samples.len() * std::mem::size_of::<f32>()) as u32;
+        let mut wav = Vec::with_capacity((44 + data_len) as usize);
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&3_u16.to_le_bytes());
+        wav.extend_from_slice(&2_u16.to_le_bytes());
+        wav.extend_from_slice(&48_000_u32.to_le_bytes());
+        wav.extend_from_slice(&384_000_u32.to_le_bytes());
+        wav.extend_from_slice(&8_u16.to_le_bytes());
+        wav.extend_from_slice(&32_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        for sample in samples {
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+        std::fs::write(&audio_path, wav).expect("classic float wav");
+
+        let mut hint = Hint::new();
+        hint.with_extension("wav");
+        let reader = File::open(&audio_path).expect("open float wav");
+        let opened = open_audio_reader(Box::new(reader), &hint).expect("probe float wav");
+
+        assert_eq!(opened.audio_format.sample_rate, 48_000);
+        assert_eq!(opened.audio_format.channels, 2);
+        assert_eq!(opened.audio_format.bits_per_sample, Some(32));
+    }
+
+    #[test]
     fn sample_converter_uses_sinc_resampler_for_rate_conversion() {
         let mut converter = SampleConverter::new(
             AudioFormat {
@@ -1795,6 +1860,27 @@ mod tests {
 
         assert_eq!(status.written, 2);
         assert_eq!(output, [0.25, -0.25]);
+    }
+
+    #[test]
+    fn realtime_buffer_low_watermark_preserves_samples_until_rebuffering() {
+        let buffer = SampleBuffer::new();
+        buffer.push(&[0.25, -0.25, 0.5, -0.5]);
+
+        assert_eq!(buffer.is_realtime_buffer_ready(2, 6), Some(false));
+
+        buffer.push(&[0.75, -0.75]);
+        assert_eq!(buffer.is_realtime_buffer_ready(2, 6), Some(true));
+
+        let mut output = [0.0_f32; 2];
+        let status = buffer
+            .try_pop_realtime_frames_into(&mut output, 2)
+            .expect("consumer should be available");
+        assert_eq!(status.written, 2);
+        assert_eq!(output, [0.25, -0.25]);
+
+        buffer.finish();
+        assert_eq!(buffer.is_realtime_buffer_ready(2, 6), Some(true));
     }
 
     #[test]

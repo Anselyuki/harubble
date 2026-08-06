@@ -154,7 +154,7 @@ pub struct AudioPlayer {
     volume: Arc<AtomicU64>,
     active_session_id: Arc<AtomicU64>,
     active_request_id: AtomicU64,
-    rebuffering: AtomicBool,
+    rebuffering_session_id: AtomicU64,
     stop_flag: Mutex<Arc<AtomicBool>>,
     pause_flag: Mutex<Arc<AtomicBool>>,
 }
@@ -175,7 +175,7 @@ impl AudioPlayer {
             volume: Arc::new(AtomicU64::new(1.0_f64.to_bits())),
             active_session_id: Arc::new(AtomicU64::new(0)),
             active_request_id: AtomicU64::new(0),
-            rebuffering: AtomicBool::new(false),
+            rebuffering_session_id: AtomicU64::new(0),
             stop_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
             pause_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
         })
@@ -572,57 +572,36 @@ impl AudioPlayer {
         if !self.is_session_active(session_id) {
             return;
         }
-        if self
-            .rebuffering
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
+        if !claim_rebuffering_session(&self.rebuffering_session_id, session_id) {
             return;
         }
 
         let Some(app_state) = self.app.try_state::<crate::app_state::AppState>() else {
-            self.rebuffering.store(false, Ordering::SeqCst);
+            clear_rebuffering_session(&self.rebuffering_session_id, session_id);
             return;
         };
 
-        let should_rebuffer = {
-            let mut state = self.state.lock().unwrap();
-            if state.session_id != session_id || !state.is_playing || state.is_loading {
-                false
-            } else {
-                state.is_playing = false;
-                state.is_paused = false;
-                state.is_loading = true;
-                true
+        match begin_rebuffering_session(
+            &self.backend,
+            &self.state,
+            &self.active_session_id,
+            &self.rebuffering_session_id,
+            session_id,
+        ) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                app_state.log_center().record(
+                    crate::logging::LogPayload::new(
+                        crate::logging::LogLevel::Warn,
+                        "player",
+                        "player.rebuffer_pause_failed",
+                        "Failed to pause output stream for rebuffering",
+                    )
+                    .details(format!("{error:#}")),
+                );
+                return;
             }
-        };
-
-        if !should_rebuffer {
-            self.rebuffering.store(false, Ordering::SeqCst);
-            return;
-        }
-
-        if let Err(error) = self.backend.lock().unwrap().pause() {
-            {
-                let mut state = self.state.lock().unwrap();
-                if state.session_id == session_id && state.is_loading {
-                    state.is_loading = false;
-                    state.is_playing = true;
-                    state.is_paused = false;
-                }
-            }
-            self.rebuffering.store(false, Ordering::SeqCst);
-            app_state.log_center().record(
-                crate::logging::LogPayload::new(
-                    crate::logging::LogLevel::Warn,
-                    "player",
-                    "player.rebuffer_pause_failed",
-                    "Failed to pause output stream for rebuffering",
-                )
-                .details(format!("{error:#}")),
-            );
-            emit_state_and_sync(&self.app, &self.state, &self.media_session);
-            return;
         }
         emit_state_and_sync(&self.app, &self.state, &self.media_session);
 
@@ -645,19 +624,19 @@ impl AudioPlayer {
                 .and_then(|result| result);
 
             if stop_flag.load(Ordering::SeqCst) || !player.is_session_active(session_id) {
-                player.rebuffering.store(false, Ordering::SeqCst);
+                clear_rebuffering_session(&player.rebuffering_session_id, session_id);
                 return;
             }
 
             match wait_result {
                 Ok(SampleWaitOutcome::Ready) => {}
                 Ok(SampleWaitOutcome::Ended) => {
-                    player.rebuffering.store(false, Ordering::SeqCst);
+                    clear_rebuffering_session(&player.rebuffering_session_id, session_id);
                     player.finish_session(session_id);
                     return;
                 }
                 Err(error) => {
-                    player.rebuffering.store(false, Ordering::SeqCst);
+                    clear_rebuffering_session(&player.rebuffering_session_id, session_id);
                     log_center.record(
                         crate::logging::LogPayload::new(
                             crate::logging::LogLevel::Warn,
@@ -672,17 +651,16 @@ impl AudioPlayer {
                 }
             }
 
-            let should_resume = {
-                let state = player.state.lock().unwrap();
-                state.session_id == session_id && state.is_loading && !state.is_paused
-            };
-            if !should_resume {
-                player.rebuffering.store(false, Ordering::SeqCst);
+            let Some(resume_result) = resume_rebuffered_session(
+                &player.backend,
+                &player.state,
+                &player.active_session_id,
+                &player.rebuffering_session_id,
+                session_id,
+            ) else {
                 return;
-            }
-
-            if let Err(error) = player.backend.lock().unwrap().resume() {
-                player.rebuffering.store(false, Ordering::SeqCst);
+            };
+            if let Err(error) = resume_result {
                 log_center.record(
                     crate::logging::LogPayload::new(
                         crate::logging::LogLevel::Error,
@@ -696,16 +674,7 @@ impl AudioPlayer {
                 return;
             }
 
-            {
-                let mut state = player.state.lock().unwrap();
-                if state.session_id == session_id && state.is_loading {
-                    state.is_loading = false;
-                    state.is_playing = true;
-                    state.is_paused = false;
-                }
-            }
             emit_state_and_sync(&player.app, &player.state, &player.media_session);
-            player.rebuffering.store(false, Ordering::SeqCst);
         });
     }
 
@@ -752,45 +721,20 @@ impl AudioPlayer {
     ///
     /// 仅当播放器处于非加载中的播放态时才会真正调用后端暂停；否则直接返回成功。
     pub fn pause(&self) -> Result<()> {
-        if self.rebuffering.load(Ordering::SeqCst) {
-            let did_pause_rebuffer = {
-                let mut state = self.state.lock().unwrap();
-                if state.is_loading && state.song_cid.is_some() {
-                    state.is_loading = false;
-                    state.is_playing = false;
-                    state.is_paused = true;
-                    true
-                } else {
-                    false
-                }
-            };
-            if did_pause_rebuffer {
-                emit_state_and_sync(&self.app, &self.state, &self.media_session);
-            }
-            return Ok(());
+        let observed_rebuffering_session = self.rebuffering_session_id.load(Ordering::SeqCst);
+        let outcome = pause_with_rebuffer_snapshot(
+            &self.backend,
+            &self.state,
+            &self.active_session_id,
+            &self.rebuffering_session_id,
+            observed_rebuffering_session,
+        )?;
+        if outcome == PlaybackControlOutcome::BackendStateChanged {
+            self.pause_signal().store(true, Ordering::SeqCst);
         }
-
-        let should_pause = {
-            let state = self.state.lock().unwrap();
-            state.is_playing && !state.is_loading
-        };
-        if !should_pause {
-            return Ok(());
+        if outcome != PlaybackControlOutcome::Unchanged {
+            emit_state_and_sync(&self.app, &self.state, &self.media_session);
         }
-
-        self.backend
-            .lock()
-            .unwrap()
-            .pause()
-            .context("Failed to pause audio backend")?;
-        self.pause_signal().store(true, Ordering::SeqCst);
-
-        {
-            let mut state = self.state.lock().unwrap();
-            state.is_playing = false;
-            state.is_paused = true;
-        }
-        emit_state_and_sync(&self.app, &self.state, &self.media_session);
         Ok(())
     }
 
@@ -798,45 +742,20 @@ impl AudioPlayer {
     ///
     /// 仅当播放器仍保留歌曲上下文且状态为已暂停时才会真正调用后端恢复；否则直接返回成功。
     pub fn resume(&self) -> Result<()> {
-        if self.rebuffering.load(Ordering::SeqCst) {
-            let did_request_rebuffer_resume = {
-                let mut state = self.state.lock().unwrap();
-                if state.is_paused && state.song_cid.is_some() {
-                    state.is_loading = true;
-                    state.is_playing = false;
-                    state.is_paused = false;
-                    true
-                } else {
-                    false
-                }
-            };
-            if did_request_rebuffer_resume {
-                emit_state_and_sync(&self.app, &self.state, &self.media_session);
-            }
-            return Ok(());
+        let observed_rebuffering_session = self.rebuffering_session_id.load(Ordering::SeqCst);
+        let outcome = resume_with_rebuffer_snapshot(
+            &self.backend,
+            &self.state,
+            &self.active_session_id,
+            &self.rebuffering_session_id,
+            observed_rebuffering_session,
+        )?;
+        if outcome == PlaybackControlOutcome::BackendStateChanged {
+            self.pause_signal().store(false, Ordering::SeqCst);
         }
-
-        let should_resume = {
-            let state = self.state.lock().unwrap();
-            state.is_paused && state.song_cid.is_some()
-        };
-        if !should_resume {
-            return Ok(());
+        if outcome != PlaybackControlOutcome::Unchanged {
+            emit_state_and_sync(&self.app, &self.state, &self.media_session);
         }
-
-        self.backend
-            .lock()
-            .unwrap()
-            .resume()
-            .context("Failed to resume audio backend")?;
-        self.pause_signal().store(false, Ordering::SeqCst);
-
-        {
-            let mut state = self.state.lock().unwrap();
-            state.is_playing = true;
-            state.is_paused = false;
-        }
-        emit_state_and_sync(&self.app, &self.state, &self.media_session);
         Ok(())
     }
 
@@ -872,7 +791,7 @@ impl AudioPlayer {
             if self.active_session_id.load(Ordering::SeqCst) != claimed_session_id {
                 return;
             }
-            self.rebuffering.store(false, Ordering::SeqCst);
+            clear_rebuffering_session(&self.rebuffering_session_id, session_id);
             let _ = backend.stop();
             let mut state = self.state.lock().unwrap();
             *state = PlayerState::default();
@@ -902,7 +821,7 @@ impl AudioPlayer {
             if self.active_session_id.load(Ordering::SeqCst) != next_session_id {
                 return;
             }
-            self.rebuffering.store(false, Ordering::SeqCst);
+            clear_rebuffering_session(&self.rebuffering_session_id, session_id);
             let mut state = self.state.lock().unwrap();
             let ended_event = if state.session_id != session_id {
                 None
@@ -1052,7 +971,7 @@ impl AudioPlayer {
     fn stop_active_backend(&self) -> Result<()> {
         self.stop_signal().store(true, Ordering::SeqCst);
         self.pause_signal().store(false, Ordering::SeqCst);
-        self.rebuffering.store(false, Ordering::SeqCst);
+        self.rebuffering_session_id.store(0, Ordering::SeqCst);
         self.active_session_id.fetch_add(1, Ordering::SeqCst);
         self.backend.lock().unwrap().stop()
     }
@@ -1060,7 +979,7 @@ impl AudioPlayer {
     fn quiesce_active_backend_for_transition(&self) -> Result<()> {
         self.stop_signal().store(true, Ordering::SeqCst);
         self.pause_signal().store(false, Ordering::SeqCst);
-        self.rebuffering.store(false, Ordering::SeqCst);
+        self.rebuffering_session_id.store(0, Ordering::SeqCst);
         self.active_session_id.fetch_add(1, Ordering::SeqCst);
         let quiesce_error = {
             let mut backend = self.backend.lock().unwrap();
@@ -1084,7 +1003,7 @@ impl AudioPlayer {
     }
 
     fn install_session_flags(&self) {
-        self.rebuffering.store(false, Ordering::SeqCst);
+        self.rebuffering_session_id.store(0, Ordering::SeqCst);
         *self.stop_flag.lock().unwrap() = Arc::new(AtomicBool::new(false));
         *self.pause_flag.lock().unwrap() = Arc::new(AtomicBool::new(false));
     }
@@ -1227,6 +1146,174 @@ fn build_progress_callback(
     })
 }
 
+fn claim_rebuffering_session(owner: &AtomicU64, session_id: u64) -> bool {
+    session_id != 0
+        && owner
+            .compare_exchange(0, session_id, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+}
+
+fn clear_rebuffering_session(owner: &AtomicU64, session_id: u64) {
+    let _ = owner.compare_exchange(session_id, 0, Ordering::SeqCst, Ordering::SeqCst);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlaybackControlOutcome {
+    Unchanged,
+    RebufferStateChanged,
+    BackendStateChanged,
+}
+
+fn begin_rebuffering_session(
+    backend: &Mutex<Box<dyn PlaybackBackend>>,
+    state: &Mutex<PlayerState>,
+    active_session_id: &AtomicU64,
+    owner: &AtomicU64,
+    session_id: u64,
+) -> Result<bool> {
+    let mut backend = backend.lock().unwrap();
+    let mut state = state.lock().unwrap();
+    if active_session_id.load(Ordering::SeqCst) != session_id
+        || owner.load(Ordering::SeqCst) != session_id
+        || state.session_id != session_id
+        || !state.is_playing
+        || state.is_loading
+    {
+        clear_rebuffering_session(owner, session_id);
+        return Ok(false);
+    }
+
+    if let Err(error) = backend.pause() {
+        clear_rebuffering_session(owner, session_id);
+        return Err(error).context("Failed to pause audio backend for rebuffering");
+    }
+    if active_session_id.load(Ordering::SeqCst) != session_id
+        || owner.load(Ordering::SeqCst) != session_id
+    {
+        clear_rebuffering_session(owner, session_id);
+        return Ok(false);
+    }
+
+    state.is_playing = false;
+    state.is_paused = false;
+    state.is_loading = true;
+    Ok(true)
+}
+
+fn pause_with_rebuffer_snapshot(
+    backend: &Mutex<Box<dyn PlaybackBackend>>,
+    state: &Mutex<PlayerState>,
+    active_session_id: &AtomicU64,
+    owner: &AtomicU64,
+    observed_rebuffering_session: u64,
+) -> Result<PlaybackControlOutcome> {
+    if observed_rebuffering_session != 0 {
+        let mut state = state.lock().unwrap();
+        if owner.load(Ordering::SeqCst) == observed_rebuffering_session
+            && active_session_id.load(Ordering::SeqCst) == observed_rebuffering_session
+            && state.session_id == observed_rebuffering_session
+            && state.is_loading
+            && state.song_cid.is_some()
+        {
+            state.is_loading = false;
+            state.is_playing = false;
+            state.is_paused = true;
+            return Ok(PlaybackControlOutcome::RebufferStateChanged);
+        }
+    }
+
+    let mut backend = backend.lock().unwrap();
+    let mut state = state.lock().unwrap();
+    let session_id = state.session_id;
+    if active_session_id.load(Ordering::SeqCst) != session_id
+        || !state.is_playing
+        || state.is_loading
+    {
+        return Ok(PlaybackControlOutcome::Unchanged);
+    }
+
+    backend.pause().context("Failed to pause audio backend")?;
+    if active_session_id.load(Ordering::SeqCst) != session_id {
+        return Ok(PlaybackControlOutcome::Unchanged);
+    }
+    state.is_playing = false;
+    state.is_paused = true;
+    Ok(PlaybackControlOutcome::BackendStateChanged)
+}
+
+fn resume_with_rebuffer_snapshot(
+    backend: &Mutex<Box<dyn PlaybackBackend>>,
+    state: &Mutex<PlayerState>,
+    active_session_id: &AtomicU64,
+    owner: &AtomicU64,
+    observed_rebuffering_session: u64,
+) -> Result<PlaybackControlOutcome> {
+    if observed_rebuffering_session != 0 {
+        let mut state = state.lock().unwrap();
+        if owner.load(Ordering::SeqCst) == observed_rebuffering_session
+            && active_session_id.load(Ordering::SeqCst) == observed_rebuffering_session
+            && state.session_id == observed_rebuffering_session
+            && state.is_paused
+            && state.song_cid.is_some()
+        {
+            state.is_loading = true;
+            state.is_playing = false;
+            state.is_paused = false;
+            return Ok(PlaybackControlOutcome::RebufferStateChanged);
+        }
+    }
+
+    let mut backend = backend.lock().unwrap();
+    let mut state = state.lock().unwrap();
+    let session_id = state.session_id;
+    if active_session_id.load(Ordering::SeqCst) != session_id
+        || !state.is_paused
+        || state.song_cid.is_none()
+    {
+        return Ok(PlaybackControlOutcome::Unchanged);
+    }
+
+    backend.resume().context("Failed to resume audio backend")?;
+    if active_session_id.load(Ordering::SeqCst) != session_id {
+        return Ok(PlaybackControlOutcome::Unchanged);
+    }
+    state.is_playing = true;
+    state.is_paused = false;
+    Ok(PlaybackControlOutcome::BackendStateChanged)
+}
+
+fn resume_rebuffered_session(
+    backend: &Mutex<Box<dyn PlaybackBackend>>,
+    state: &Mutex<PlayerState>,
+    active_session_id: &AtomicU64,
+    owner: &AtomicU64,
+    session_id: u64,
+) -> Option<Result<()>> {
+    let mut backend = backend.lock().unwrap();
+    let mut state = state.lock().unwrap();
+    if active_session_id.load(Ordering::SeqCst) != session_id
+        || owner.load(Ordering::SeqCst) != session_id
+        || state.session_id != session_id
+        || !state.is_loading
+        || state.is_paused
+    {
+        clear_rebuffering_session(owner, session_id);
+        return None;
+    }
+
+    let result = backend.resume();
+    if result.is_ok()
+        && active_session_id.load(Ordering::SeqCst) == session_id
+        && owner.load(Ordering::SeqCst) == session_id
+    {
+        state.is_loading = false;
+        state.is_playing = true;
+        state.is_paused = false;
+    }
+    clear_rebuffering_session(owner, session_id);
+    Some(result)
+}
+
 fn rebuffer_target_samples(audio_format: AudioFormat) -> usize {
     let sample_rate = audio_format.sample_rate.max(1) as usize;
     let channels = audio_format.channels.max(1) as usize;
@@ -1296,15 +1383,18 @@ fn try_cleanup_finished_stream_keepalive(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_progress_callback, claim_session_end, cleanup_finished_stream_keepalive,
-        ensure_started_session_current, normalize_volume, quiesce_or_stop_backend,
-        rebuffer_target_samples, try_cleanup_finished_stream_keepalive, PlaybackQueueEntry,
-        PlaybackQueueState,
+        begin_rebuffering_session, build_progress_callback, claim_rebuffering_session,
+        claim_session_end, cleanup_finished_stream_keepalive, clear_rebuffering_session,
+        ensure_started_session_current, normalize_volume, pause_with_rebuffer_snapshot,
+        quiesce_or_stop_backend, rebuffer_target_samples, resume_rebuffered_session,
+        resume_with_rebuffer_snapshot, try_cleanup_finished_stream_keepalive,
+        PlaybackControlOutcome, PlaybackQueueEntry, PlaybackQueueState,
     };
     use crate::playback_load_gate::PlaybackLoadGate;
     use crate::player::backend::{
         AudioMetricsHandler, AudioUnderrunHandler, OutputFormat, PlaybackBackend,
     };
+    use crate::player::state::PlayerState;
     use crate::player::stream::{AudioFormat, PlaybackErrorHandler, SampleBuffer};
     use anyhow::Result;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -1316,6 +1406,8 @@ mod tests {
         events: Vec<&'static str>,
         fail_quiesce: bool,
         fail_stop: bool,
+        pause_count: Arc<AtomicUsize>,
+        resume_count: Arc<AtomicUsize>,
         stop_count: Arc<AtomicUsize>,
     }
 
@@ -1346,10 +1438,12 @@ mod tests {
         }
 
         fn pause(&mut self) -> Result<()> {
+            self.pause_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
 
         fn resume(&mut self) -> Result<()> {
+            self.resume_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
 
@@ -1647,6 +1741,152 @@ mod tests {
             rebuffer_target_samples(high_rate),
             SampleBuffer::max_capacity_samples() / 2
         );
+    }
+
+    #[test]
+    fn stale_rebuffer_task_cannot_clear_new_session_owner() {
+        let owner = AtomicU64::new(0);
+
+        assert!(claim_rebuffering_session(&owner, 7));
+        clear_rebuffering_session(&owner, 7);
+        assert!(claim_rebuffering_session(&owner, 8));
+
+        clear_rebuffering_session(&owner, 7);
+        assert_eq!(owner.load(Ordering::SeqCst), 8);
+
+        clear_rebuffering_session(&owner, 8);
+        assert_eq!(owner.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn stale_rebuffer_claim_cannot_pause_after_session_transition() {
+        let pause_count = Arc::new(AtomicUsize::new(0));
+        let backend: Mutex<Box<dyn PlaybackBackend>> = Mutex::new(Box::new(TransitionBackend {
+            pause_count: Arc::clone(&pause_count),
+            ..Default::default()
+        }));
+        let state = Mutex::new(PlayerState {
+            session_id: 7,
+            is_playing: true,
+            ..Default::default()
+        });
+        let active_session_id = AtomicU64::new(8);
+        let owner = AtomicU64::new(7);
+
+        assert!(
+            !begin_rebuffering_session(&backend, &state, &active_session_id, &owner, 7,)
+                .expect("stale rebuffer claim should be ignored")
+        );
+        assert_eq!(pause_count.load(Ordering::SeqCst), 0);
+        assert_eq!(owner.load(Ordering::SeqCst), 0);
+        assert!(state.lock().unwrap().is_playing);
+    }
+
+    #[test]
+    fn stale_rebuffer_snapshot_falls_through_to_backend_pause() {
+        let pause_count = Arc::new(AtomicUsize::new(0));
+        let backend: Mutex<Box<dyn PlaybackBackend>> = Mutex::new(Box::new(TransitionBackend {
+            pause_count: Arc::clone(&pause_count),
+            ..Default::default()
+        }));
+        let state = Mutex::new(PlayerState {
+            session_id: 7,
+            song_cid: Some("track".into()),
+            is_playing: true,
+            ..Default::default()
+        });
+        let active_session_id = AtomicU64::new(7);
+        let owner = AtomicU64::new(0);
+
+        let outcome = pause_with_rebuffer_snapshot(&backend, &state, &active_session_id, &owner, 7)
+            .expect("pause should fall through after automatic resume clears owner");
+
+        assert_eq!(outcome, PlaybackControlOutcome::BackendStateChanged);
+        assert_eq!(pause_count.load(Ordering::SeqCst), 1);
+        let state = state.lock().unwrap();
+        assert!(!state.is_playing);
+        assert!(state.is_paused);
+    }
+
+    #[test]
+    fn stale_rebuffer_snapshot_falls_through_to_backend_resume() {
+        let resume_count = Arc::new(AtomicUsize::new(0));
+        let backend: Mutex<Box<dyn PlaybackBackend>> = Mutex::new(Box::new(TransitionBackend {
+            resume_count: Arc::clone(&resume_count),
+            ..Default::default()
+        }));
+        let state = Mutex::new(PlayerState {
+            session_id: 7,
+            song_cid: Some("track".into()),
+            is_paused: true,
+            ..Default::default()
+        });
+        let active_session_id = AtomicU64::new(7);
+        let owner = AtomicU64::new(0);
+
+        let outcome =
+            resume_with_rebuffer_snapshot(&backend, &state, &active_session_id, &owner, 7)
+                .expect("resume should fall through after rebuffer worker clears owner");
+
+        assert_eq!(outcome, PlaybackControlOutcome::BackendStateChanged);
+        assert_eq!(resume_count.load(Ordering::SeqCst), 1);
+        let state = state.lock().unwrap();
+        assert!(state.is_playing);
+        assert!(!state.is_loading);
+        assert!(!state.is_paused);
+    }
+
+    #[test]
+    fn pause_committed_while_resume_waits_prevents_backend_resume() {
+        let resume_count = Arc::new(AtomicUsize::new(0));
+        let backend: Arc<Mutex<Box<dyn PlaybackBackend>>> =
+            Arc::new(Mutex::new(Box::new(TransitionBackend {
+                resume_count: Arc::clone(&resume_count),
+                ..Default::default()
+            })));
+        let state = Arc::new(Mutex::new(PlayerState {
+            session_id: 7,
+            is_loading: true,
+            ..Default::default()
+        }));
+        let owner = Arc::new(AtomicU64::new(7));
+        let active_session_id = Arc::new(AtomicU64::new(7));
+        let mut state_guard = state.lock().unwrap();
+        let resume_backend = Arc::clone(&backend);
+        let resume_state = Arc::clone(&state);
+        let resume_active_session_id = Arc::clone(&active_session_id);
+        let resume_owner = Arc::clone(&owner);
+        let resume_thread = std::thread::spawn(move || {
+            resume_rebuffered_session(
+                &resume_backend,
+                &resume_state,
+                &resume_active_session_id,
+                &resume_owner,
+                7,
+            )
+        });
+
+        let lock_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match backend.try_lock() {
+                Err(std::sync::TryLockError::WouldBlock) => break,
+                Err(std::sync::TryLockError::Poisoned(error)) => panic!("{error}"),
+                Ok(guard) => drop(guard),
+            }
+            assert!(
+                Instant::now() < lock_deadline,
+                "resume thread did not acquire the backend lock"
+            );
+            std::thread::yield_now();
+        }
+        state_guard.is_loading = false;
+        state_guard.is_paused = true;
+        drop(state_guard);
+
+        assert!(resume_thread.join().expect("resume thread").is_none());
+        assert_eq!(resume_count.load(Ordering::SeqCst), 0);
+        assert_eq!(owner.load(Ordering::SeqCst), 0);
+        assert!(state.lock().unwrap().is_paused);
     }
 
     #[test]
