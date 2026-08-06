@@ -1132,7 +1132,7 @@ impl PlaybackStartIntent {
     fn streaming_buffer_seconds(self) -> usize {
         match self {
             Self::NewSelection => 5,
-            Self::InteractiveRestart => 1,
+            Self::InteractiveRestart => 2,
         }
     }
 }
@@ -1147,7 +1147,7 @@ fn initial_buffer_samples(
     let seconds = if is_streaming_input {
         start_intent.streaming_buffer_seconds()
     } else {
-        1
+        2
     };
     let target = sample_rate * channels * seconds;
     let minimum = channels * 4096;
@@ -1410,11 +1410,11 @@ mod tests {
         );
         assert_eq!(
             initial_buffer_samples(format, true, PlaybackStartIntent::InteractiveRestart),
-            96_000
+            192_000
         );
         assert_eq!(
             initial_buffer_samples(format, false, PlaybackStartIntent::NewSelection),
-            96_000
+            192_000
         );
     }
 

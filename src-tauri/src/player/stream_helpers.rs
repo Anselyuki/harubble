@@ -7,7 +7,11 @@ use crate::player::stream::AudioFormat;
 use anyhow::{Context, Result};
 use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 use symphonia::core::audio::SignalSpec;
-use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::{
+    CodecParameters, CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F32BE_PLANAR, CODEC_TYPE_PCM_F32LE,
+    CODEC_TYPE_PCM_F32LE_PLANAR, CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_F64BE_PLANAR,
+    CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_F64LE_PLANAR,
+};
 use symphonia::core::units::TimeBase;
 
 /// sinc 重采样器每次处理的块大小（以源帧为单位）。
@@ -81,10 +85,25 @@ pub(crate) fn audio_format_from_codec_params(
         channels,
         sample_rate,
         codec_duration_secs(codec_params),
-        codec_params
-            .bits_per_sample
-            .and_then(|value| u16::try_from(value).ok()),
+        codec_bits_per_sample(codec_params),
     ))
+}
+
+fn codec_bits_per_sample(codec_params: &CodecParameters) -> Option<u16> {
+    match codec_params.bits_per_sample {
+        Some(value) => u16::try_from(value).ok(),
+        None => match codec_params.codec {
+            CODEC_TYPE_PCM_F32LE
+            | CODEC_TYPE_PCM_F32LE_PLANAR
+            | CODEC_TYPE_PCM_F32BE
+            | CODEC_TYPE_PCM_F32BE_PLANAR => Some(32),
+            CODEC_TYPE_PCM_F64LE
+            | CODEC_TYPE_PCM_F64LE_PLANAR
+            | CODEC_TYPE_PCM_F64BE
+            | CODEC_TYPE_PCM_F64BE_PLANAR => Some(64),
+            _ => None,
+        },
+    }
 }
 
 /// 创建基于 sinc 插值的重采样器。
@@ -140,5 +159,46 @@ pub(crate) fn sanitize_pcm_sample(sample: f32) -> f32 {
         sample.clamp(-1.0, 1.0)
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::codec_bits_per_sample;
+    use symphonia::core::codecs::{
+        CodecParameters, CODEC_TYPE_MP3, CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F32BE_PLANAR,
+        CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_F32LE_PLANAR, CODEC_TYPE_PCM_F64BE,
+        CODEC_TYPE_PCM_F64BE_PLANAR, CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_F64LE_PLANAR,
+    };
+
+    #[test]
+    fn infers_missing_float_pcm_bit_depth_from_codec() {
+        for (codec, expected) in [
+            (CODEC_TYPE_PCM_F32LE, 32),
+            (CODEC_TYPE_PCM_F32LE_PLANAR, 32),
+            (CODEC_TYPE_PCM_F32BE, 32),
+            (CODEC_TYPE_PCM_F32BE_PLANAR, 32),
+            (CODEC_TYPE_PCM_F64LE, 64),
+            (CODEC_TYPE_PCM_F64LE_PLANAR, 64),
+            (CODEC_TYPE_PCM_F64BE, 64),
+            (CODEC_TYPE_PCM_F64BE_PLANAR, 64),
+        ] {
+            let mut params = CodecParameters::new();
+            params.for_codec(codec);
+            assert_eq!(codec_bits_per_sample(&params), Some(expected));
+        }
+    }
+
+    #[test]
+    fn preserves_explicit_bit_depth_and_unknown_compressed_depth() {
+        let mut explicit = CodecParameters::new();
+        explicit
+            .for_codec(CODEC_TYPE_PCM_F32LE)
+            .with_bits_per_sample(24);
+        assert_eq!(codec_bits_per_sample(&explicit), Some(24));
+
+        let mut compressed = CodecParameters::new();
+        compressed.for_codec(CODEC_TYPE_MP3);
+        assert_eq!(codec_bits_per_sample(&compressed), None);
     }
 }

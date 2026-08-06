@@ -30,6 +30,7 @@ const STREAM_START_CALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(1);
 const OUTPUT_SQUARE_Q32_SCALE: f64 = (1_u64 << 32) as f64;
 const CALLBACK_METRIC_QUEUE_CAPACITY: usize = 16_384;
 const INITIAL_OUTPUT_SCRATCH_FRAMES: usize = 8_192;
+const REBUFFER_LOW_WATERMARK_SECONDS: usize = 1;
 const STREAM_START_PENDING: u8 = 0;
 const STREAM_START_READY: u8 = 1;
 const STREAM_START_FAILED: u8 = 2;
@@ -732,6 +733,8 @@ where
     T: Sample + SizedSample + FromSample<f32>,
 {
     let channels = usize::from(output_channels.max(1));
+    let rebuffer_low_watermark_samples =
+        rebuffer_low_watermark_samples(config.sample_rate, channels);
     let mut scratch =
         Vec::<f32>::with_capacity(INITIAL_OUTPUT_SCRATCH_FRAMES.saturating_mul(channels));
     let mut smoother = OutputSmoother::new(channels);
@@ -745,7 +748,7 @@ where
         .build_output_stream(
             config,
             move |data: &mut [T], _| {
-                write_output_data_with_metrics(
+                write_output_data_with_metrics_and_rebuffer_watermark(
                     data,
                     &samples,
                     &stop_flag,
@@ -757,6 +760,7 @@ where
                     &callback_metrics,
                     &underrun_requested,
                     channels,
+                    rebuffer_low_watermark_samples,
                     &mut scratch,
                     &mut smoother,
                     &mut dither,
@@ -962,6 +966,7 @@ fn write_output_data<T>(
     );
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn write_output_data_with_metrics<T>(
     data: &mut [T],
@@ -975,6 +980,45 @@ fn write_output_data_with_metrics<T>(
     callback_metrics: &CallbackMetricCounters,
     underrun_requested: &AtomicBool,
     channels: usize,
+    scratch: &mut Vec<f32>,
+    smoother: &mut OutputSmoother,
+    dither: &mut TpdfDither,
+) where
+    T: Sample + FromSample<f32>,
+{
+    write_output_data_with_metrics_and_rebuffer_watermark(
+        data,
+        samples,
+        stop_flag,
+        volume,
+        frames_rendered,
+        finish_fired,
+        buffer_error_reported,
+        error_handler,
+        callback_metrics,
+        underrun_requested,
+        channels,
+        0,
+        scratch,
+        smoother,
+        dither,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_output_data_with_metrics_and_rebuffer_watermark<T>(
+    data: &mut [T],
+    samples: &SampleBuffer,
+    stop_flag: &AtomicBool,
+    volume: &AtomicU64,
+    frames_rendered: &AtomicU64,
+    finish_fired: &AtomicBool,
+    buffer_error_reported: &AtomicBool,
+    error_handler: &PlaybackErrorHandler,
+    callback_metrics: &CallbackMetricCounters,
+    underrun_requested: &AtomicBool,
+    channels: usize,
+    rebuffer_low_watermark_samples: usize,
     scratch: &mut Vec<f32>,
     smoother: &mut OutputSmoother,
     dither: &mut TpdfDither,
@@ -996,6 +1040,22 @@ fn write_output_data_with_metrics<T>(
     output.fill(0.0);
 
     let gain = output_gain(volume);
+
+    let Some(is_buffer_ready) =
+        samples.is_realtime_buffer_ready(channels, rebuffer_low_watermark_samples)
+    else {
+        let observation = write_smoothed_silence(data, output, channels, smoother, gain);
+        metric_record.record_output_observation(observation);
+        metric_record.record_silence_due_to_lock();
+        return;
+    };
+    if !is_buffer_ready {
+        let observation = write_smoothed_silence(data, output, channels, smoother, gain);
+        metric_record.record_output_observation(observation);
+        metric_record.record_underrun_frames(callback_frames);
+        underrun_requested.store(true, Ordering::SeqCst);
+        return;
+    }
 
     let Some(status) = samples.try_pop_realtime_frames_into(output, channels) else {
         let observation = write_smoothed_silence(data, output, channels, smoother, gain);
@@ -1039,6 +1099,13 @@ fn write_output_data_with_metrics<T>(
     if status.finished {
         finish_fired.store(true, Ordering::SeqCst);
     }
+}
+
+fn rebuffer_low_watermark_samples(sample_rate: u32, channels: usize) -> usize {
+    (sample_rate.max(1) as usize)
+        .saturating_mul(channels.max(1))
+        .saturating_mul(REBUFFER_LOW_WATERMARK_SECONDS)
+        .min(SampleBuffer::max_capacity_samples() / 4)
 }
 
 fn output_gain(volume: &AtomicU64) -> f32 {
@@ -1122,8 +1189,9 @@ fn report_callback_metrics(
 mod tests {
     use super::{
         choose_exact_output_config_from_default, choose_exact_output_config_from_ranges,
-        choose_output_config_from_ranges, output_dither_lsb, stream_error_disposition,
-        wait_for_stream_start, write_output_data, write_output_data_with_metrics,
+        choose_output_config_from_ranges, output_dither_lsb, rebuffer_low_watermark_samples,
+        stream_error_disposition, wait_for_stream_start, write_output_data,
+        write_output_data_with_metrics, write_output_data_with_metrics_and_rebuffer_watermark,
         CallbackMetricCounters, CallbackObservation, OutputSampleObservation, OutputSmoother,
         PendingSampleBufferGuard, StreamErrorDisposition, StreamStartWaitOutcome, TpdfDither,
         STREAM_START_FAILED, STREAM_START_PENDING, STREAM_START_READY,
@@ -1349,6 +1417,103 @@ mod tests {
             let sample = dither.next();
             assert!((-lsb..=lsb).contains(&sample));
         }
+    }
+
+    #[test]
+    fn rebuffer_low_watermark_is_capped_for_high_rate_multichannel_output() {
+        assert_eq!(rebuffer_low_watermark_samples(48_000, 2), 96_000);
+
+        let maximum = SampleBuffer::max_capacity_samples() / 4;
+        assert_eq!(rebuffer_low_watermark_samples(768_000, 4), maximum);
+        assert_eq!(rebuffer_low_watermark_samples(768_000, 8), maximum);
+    }
+
+    #[test]
+    fn production_callback_holds_samples_below_rebuffer_low_watermark() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25, -0.25, 0.5, -0.5]);
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::new(2);
+        let mut dither = TpdfDither::disabled();
+        let mut output = [1.0_f32; 4];
+
+        write_output_data_with_metrics_and_rebuffer_watermark(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            6,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert_eq!(output, [0.0; 4]);
+        assert_eq!(frames_rendered.load(Ordering::Relaxed), 0);
+        assert!(underrun_requested.load(Ordering::SeqCst));
+        assert_eq!(callback_metrics.drain().underrun_frames, 2);
+
+        let mut buffered = [0.0_f32; 4];
+        let status = samples.pop_complete_frames_into(&mut buffered, 2);
+        assert_eq!(status.written, 4);
+        assert_eq!(buffered, [0.25, -0.25, 0.5, -0.5]);
+    }
+
+    #[test]
+    fn production_callback_drains_natural_tail_below_rebuffer_low_watermark() {
+        let samples = SampleBuffer::new();
+        samples.push(&[0.25, -0.25]);
+        samples.finish();
+        let stop_flag = AtomicBool::new(false);
+        let volume = AtomicU64::new(1.0_f64.to_bits());
+        let frames_rendered = AtomicU64::new(0);
+        let finish_fired = AtomicBool::new(false);
+        let buffer_error_reported = AtomicBool::new(false);
+        let callback_metrics = CallbackMetricCounters::default();
+        let underrun_requested = AtomicBool::new(false);
+        let error_handler: PlaybackErrorHandler = Arc::new(|_| {});
+        let mut scratch = Vec::new();
+        let mut smoother = OutputSmoother::primed(2);
+        let mut dither = TpdfDither::disabled();
+        let mut output = [0.0_f32; 2];
+
+        write_output_data_with_metrics_and_rebuffer_watermark(
+            &mut output,
+            &samples,
+            &stop_flag,
+            &volume,
+            &frames_rendered,
+            &finish_fired,
+            &buffer_error_reported,
+            &error_handler,
+            &callback_metrics,
+            &underrun_requested,
+            2,
+            96_000,
+            &mut scratch,
+            &mut smoother,
+            &mut dither,
+        );
+
+        assert_eq!(output, [0.25, -0.25]);
+        assert_eq!(frames_rendered.load(Ordering::Relaxed), 1);
+        assert!(finish_fired.load(Ordering::SeqCst));
+        assert!(!underrun_requested.load(Ordering::SeqCst));
     }
 
     #[test]
