@@ -1,3 +1,5 @@
+
+
 # Harubble
 
 <div>
@@ -6,7 +8,7 @@
   <img alt="stars" src="https://img.shields.io/github/stars/Anselyuki/harubble?style=social">
 </div>
 
-Harubble 是面向 [塞壬唱片](https://monster-siren.hypergryph.com/) 的桌面音乐播放器与下载器。
+Harubble 是面向 [塞壬唱片](https://monster-siren.hypergryph.com/) 的跨平台无损桌面音乐播放器与下载器。
 
 ## 特性
 
