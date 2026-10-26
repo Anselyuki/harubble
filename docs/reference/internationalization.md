@@ -79,7 +79,7 @@ src-tauri/src/i18n/
 
 Fluent 约定：
 
-- message id 使用 kebab-case，按业务域前缀：`notification-*`、`preferences-*`、`search-*`
+- message id 使用 kebab-case，按业务域前缀命名；当前已使用 `appmenu-*`、`desktop-*`、`download-*`、`inventory-*`、`notification-*`、`player-*`、`preferences-*`、`search-*`
 - `.ftl` 只存用户可见文案
 - `tr()` 统一负责参数注入和 fallback
 - 缺 key 时回退 `zh-CN`；仍缺失时返回 message id，不 panic

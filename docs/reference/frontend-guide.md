@@ -66,8 +66,9 @@ src/
    │
    ├ features/                      # 业务域 controller / store / 纯函数
    │  ├ env/      store.svelte.ts
-   │  ├ library/  controller + selectors + helpers
-   │  ├ player/   controller + queue + lyrics + volume + formatUtils + miniPlayerBridge + playback-contract
+   │  ├ library/  controller + albumCatalog + refreshScheduler + selectors + helpers
+   │  ├ player/   controller + controllers/ + queue + lyrics + volume + formatUtils
+   │  │           + miniPlayerBridge + playback-contract + playToggleGlyph + repeatMode + themeSnapshotGuard
    │  ├ download/ controller + presenters + formatters + guards
    │  ├ home/     controller + store
    │  ├ search/   controller + store
@@ -76,8 +77,10 @@ src/
    │  └ shell/    appRuntime + appRuntimeBootstrap + appRuntimeComposites
    │              + store + settings + albumStageMotion + eventSequence + menuCommands
    │              + navigation / navigationManager / selectionManager
-   │              + themeManager / themePackageManager / visualContract / downloadBridge
+   │              + themeManager / themePackageManager / themePackageRuntime / themePackageTransition
+   │              + visualContract / downloadBridge / domainErrors
    │
+   ├ theme-packages/                # 内置主题包 JSON 与契约测试
    ├ contexts/                      # Svelte context 键 + setter/getter（强类型）
    ├ design/                        # gsap 适配层 + 侧栏动画器 + 侧栏 resize 手柄 + view-transition 原语 + actions + variants
    ├ styles/                        # 字体声明（HarmonyOS Sans SC 等）
